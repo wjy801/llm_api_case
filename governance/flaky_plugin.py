@@ -13,6 +13,7 @@ from governance.flaky_reporter import redact_failure_message, write_flaky_report
 
 FLAKY_REPORT_DIR_NAME = "reports/flaky/current"
 LATEST_RETRY_QUEUE_PATH = "reports/flaky/latest-retry-nodeids.csv"
+FLAKY_REPORT_DIR_OPTION = "--flaky-governance-report-dir"
 STORE_KEY = pytest.StashKey["FlakyAttemptStore"]()
 _CONFIG: pytest.Config | None = None
 
@@ -92,6 +93,15 @@ def pytest_configure(config: pytest.Config) -> None:
     config.stash[STORE_KEY] = FlakyAttemptStore()
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        FLAKY_REPORT_DIR_OPTION,
+        action="store",
+        default=FLAKY_REPORT_DIR_NAME,
+        help="Flaky governance report output directory.",
+    )
+
+
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:
     if _CONFIG is None:
         return
@@ -110,6 +120,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         _flaky_report_dir(session.config),
         results,
         latest_retry_queue_path=_latest_retry_queue_path(session.config),
+        allure_results_dir=_allure_results_dir(session.config),
     )
 
 
@@ -143,11 +154,25 @@ def _failure_message(report: pytest.TestReport) -> str | None:
 
 
 def _flaky_report_dir(config: pytest.Config) -> Path:
-    return config.rootpath / FLAKY_REPORT_DIR_NAME
+    report_dir = Path(config.getoption(FLAKY_REPORT_DIR_OPTION))
+    if report_dir.is_absolute():
+        return report_dir
+    return config.rootpath / report_dir
 
 
 def _latest_retry_queue_path(config: pytest.Config) -> Path:
     return config.rootpath / LATEST_RETRY_QUEUE_PATH
+
+
+def _allure_results_dir(config: pytest.Config) -> Path | None:
+    alluredir = config.getoption("--alluredir", default=None)
+    if not alluredir:
+        return None
+
+    results_dir = Path(alluredir)
+    if results_dir.is_absolute():
+        return results_dir
+    return config.rootpath / results_dir
 
 
 def _attempt_index(report: pytest.TestReport) -> int:

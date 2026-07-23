@@ -59,3 +59,22 @@ class TestRetryOnceIntegration:
         summary = json.loads((pytester.path / "reports" / "flaky" / "current" / "flaky-summary.json").read_text(encoding="utf-8"))
         assert summary["retry_failed"] == 1
         assert summary["failed"] == 0
+
+    def test_flaky_report_dir_option_changes_report_output_dir(self, pytester: pytest.Pytester):
+        pytester.makeconftest(
+            """
+            pytest_plugins = ["governance.flaky_plugin"]
+            """
+        )
+        pytester.makepyfile(
+            test_demo="""
+            def test_passes():
+                assert True
+            """
+        )
+
+        result = pytester.runpytest("--flaky-governance-report-dir", "custom-flaky-report", "-q")
+
+        result.assert_outcomes(passed=1)
+        summary = json.loads((pytester.path / "custom-flaky-report" / "flaky-summary.json").read_text(encoding="utf-8"))
+        assert summary["passed"] == 1

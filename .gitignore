@@ -28,6 +28,7 @@ allure-results/
 allure-report/
 history_report/
 reports/
+flaky_retry_queues/
 data/
 
 # Frontend dependencies
