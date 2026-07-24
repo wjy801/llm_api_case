@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-def build_text_chat_completions_payload(model_id: str) -> dict[str, Any]:
+def build_text_v1_chat_completions_payload(model_id: str) -> dict[str, Any]:
     return {
         "model": model_id,
         "messages": [
@@ -30,7 +30,7 @@ def build_text_chat_completions_payload(model_id: str) -> dict[str, Any]:
     }
 
 
-def build_text_responses_payload(model_id: str) -> dict[str, Any]:
+def build_text_v1_responses_payload(model_id: str) -> dict[str, Any]:
     return {
         "model": model_id,
         "input": "hi",
@@ -38,7 +38,7 @@ def build_text_responses_payload(model_id: str) -> dict[str, Any]:
     }
 
 
-def build_anthropic_messages_payload(model_id: str) -> dict[str, Any]:
+def build_text_anthropic_messages_payload(model_id: str) -> dict[str, Any]:
     return {
         "model": model_id,
         "max_tokens": 500,
@@ -55,4 +55,22 @@ def build_anthropic_messages_payload(model_id: str) -> dict[str, Any]:
                 ],
             }
         ],
+    }
+
+
+def build_text_gemini_generate_content_payload(model_id: str) -> dict[str, Any]:
+    return {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": "hi",
+                    }
+                ],
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.7,
+        },
     }

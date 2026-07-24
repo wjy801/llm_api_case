@@ -29,6 +29,16 @@ HISTORY_LATEST_DIR = "latest"
 TEST_RESOURCE_STATE_ATTR = "_api_case_resource_state"
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    group = parser.getgroup("protocol-testing")
+    group.addoption(
+        "--protocol-model-csv",
+        action="store",
+        default=None,
+        help="指定协议测试通用模型 CSV 文件路径，相对路径基于 module/protocol_testing。",
+    )
+
+
 @pytest.fixture(scope="function", autouse=True)
 def collect_test_resources(request: pytest.FixtureRequest):
     setattr(

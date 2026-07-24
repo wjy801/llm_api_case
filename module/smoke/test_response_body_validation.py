@@ -8,8 +8,8 @@ from module.smoke import SmokeAssertions, SmokeRequest, SmokeTask
 
 
 UNKNOWN_TEXT_MODEL_ID = "GLM-5-unknown"
-ZERO_BALANCE_API_KEY = os.getenv("ZERO_BALANCE_API_KEY", "").strip()
-ZERO_BALANCE_CONTROL_KEY = os.getenv("ZERO_BALANCE_CONTROL_KEY", "").strip()
+ZERO_BALANCE_API_KEY = os.getenv("OVERSEAS_ZERO_BALANCE_API_KEY", "").strip()
+ZERO_BALANCE_CONTROL_KEY = os.getenv("OVERSEAS_ZERO_BALANCE_CONTROL_KEY", "").strip()
 
 
 class TestResponseBodyValidation:
@@ -86,7 +86,7 @@ class TestResponseBodyValidation:
         self.smoke_assertions.assert_json_path_exists(response, "$.error.type")
         self.smoke_assertions.assert_json_path_exists(response, "$.error.code")
 
-    @pytest.mark.xfail(reason="账户为0，响应体信息不精确")
+    # @pytest.mark.xfail(reason="账户为0，响应体信息不精确")
     def test_zero_balance_account_call_response_body_contains_error_object(self):
         if not ZERO_BALANCE_API_KEY.strip() or not ZERO_BALANCE_CONTROL_KEY.strip():
             pytest.skip("Please configure ZERO_BALANCE_API_KEY and ZERO_BALANCE_CONTROL_KEY in this test first.")
