@@ -5,6 +5,7 @@ import os
 import pytest
 
 from module.smoke import SmokeAssertions, SmokeRequest, SmokeTask
+from module.smoke.response_schemas import CHAT_COMPLETION_SUCCESS_SCHEMA, STANDARD_ERROR_RESPONSE_SCHEMA
 
 
 UNKNOWN_TEXT_MODEL_ID = "GLM-5-unknown"
@@ -38,13 +39,8 @@ class TestResponseBodyValidation:
         )
 
         self.smoke_assertions.assert_status_code(response, 200)
+        self.smoke_assertions.assert_schema(response, CHAT_COMPLETION_SUCCESS_SCHEMA)
         self.smoke_assertions.assert_json_value(response, "$.model", "glm-5")
-        self.smoke_assertions.assert_json_path_exists(response, "$.id")
-        self.smoke_assertions.assert_json_value(response, "$.object", "chat.completion")
-        self.smoke_assertions.assert_json_path_exists(response, "$.choices[0].message")
-        self.smoke_assertions.assert_json_path_exists(response, "$.usage.prompt_tokens")
-        self.smoke_assertions.assert_json_path_exists(response, "$.usage.total_tokens")
-        self.smoke_assertions.assert_json_path_exists(response, "$.usage.completion_tokens")
 
     def test_stream_chat_completions_chunk_fields(self):
         response = self.smoke_task.create_small_stream_chat_completion(self.smoke_request)
@@ -81,10 +77,7 @@ class TestResponseBodyValidation:
         )
 
         assert response.status_code != 200, f"Expected non-200 status code, actual: {response.status_code}."
-        self.smoke_assertions.assert_json_path_exists(response, "$.error")
-        self.smoke_assertions.assert_json_path_exists(response, "$.error.message")
-        self.smoke_assertions.assert_json_path_exists(response, "$.error.type")
-        self.smoke_assertions.assert_json_path_exists(response, "$.error.code")
+        self.smoke_assertions.assert_schema(response, STANDARD_ERROR_RESPONSE_SCHEMA)
 
     @pytest.mark.xfail(reason="账户为0，响应体信息不精确")
     def test_zero_balance_account_call_response_body_contains_error_object(self):
@@ -102,7 +95,4 @@ class TestResponseBodyValidation:
             zero_balance_request.close()
 
         assert response.status_code != 200, f"Expected non-200 status code, actual: {response.status_code}."
-        self.smoke_assertions.assert_json_path_exists(response, "$.error")
-        self.smoke_assertions.assert_json_path_exists(response, "$.error.message")
-        self.smoke_assertions.assert_json_path_exists(response, "$.error.type")
-        self.smoke_assertions.assert_json_path_exists(response, "$.error.code")
+        self.smoke_assertions.assert_schema(response, STANDARD_ERROR_RESPONSE_SCHEMA)

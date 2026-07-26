@@ -60,6 +60,8 @@ class FakeGenerationRequest:
         poll_timeout: float | None = None,
         success_json_path: str = "$.result.urls",
         failure_json_path: str | None = "$.error",
+        polling_policy: Any = None,
+        retry_policy: Any = None,
     ) -> FakeResponse:
         self.poll_calls.append(
             {
@@ -68,6 +70,8 @@ class FakeGenerationRequest:
                 "poll_timeout": poll_timeout,
                 "success_json_path": success_json_path,
                 "failure_json_path": failure_json_path,
+                "polling_policy": polling_policy,
+                "retry_policy": retry_policy,
             }
         )
         return FakeResponse({"result": {"urls": ["https://example.com/image.png"]}})
@@ -125,6 +129,33 @@ class TestBaseTask:
                 "poll_timeout": 120,
                 "success_json_path": "$.result.images",
                 "failure_json_path": "$.error.category",
+                "polling_policy": None,
+                "retry_policy": None,
+            }
+        ]
+
+    def test_poll_media_generation_result_passes_polling_and_retry_policy(self):
+        task = BaseTask()
+        request_client = FakeGenerationRequest()
+        polling_policy = object()
+        retry_policy = object()
+
+        task.poll_media_generation_result(
+            request_client,
+            "task-001",
+            polling_policy=polling_policy,
+            retry_policy=retry_policy,
+        )
+
+        assert request_client.poll_calls == [
+            {
+                "path": "/v1/media/tasks/task-001",
+                "poll_interval": 2,
+                "poll_timeout": None,
+                "success_json_path": "$.result.urls",
+                "failure_json_path": "$.error",
+                "polling_policy": polling_policy,
+                "retry_policy": retry_policy,
             }
         ]
 
