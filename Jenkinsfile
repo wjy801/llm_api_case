@@ -13,6 +13,7 @@ pipeline {
         booleanParam(name: 'RUN_REAL_SMOKE', defaultValue: false, description: 'Run real smoke cases. Keep disabled by default.')
         choice(name: 'USE_CHINA_ENVIRONMENT', choices: ['TRUE', 'FALSE'], description: 'TRUE uses China environment, FALSE uses default environment.')
         string(name: 'SMOKE_TARGET', defaultValue: 'module/smoke', description: 'Smoke test target path.', trim: true)
+        choice(name: 'TEST_PARALLEL_WORKERS', choices: ['off', 'auto', '2', '4', '8'], description: 'off disables pytest-xdist; auto/2/4/8 enables parallel test execution.')
     }
 
     environment {
@@ -68,7 +69,14 @@ pipeline {
                 ciPowerShell('''
                 $env:GENERATE_ALLURE_REPORT = 'FALSE'
                 $env:GENERATE_HISTORY_REPORT = 'FALSE'
-                ./.venv/Scripts/python.exe -m pytest tests -q --junitxml=reports/unit-tests.xml
+                $parallelArgs = @()
+                if (![string]::IsNullOrWhiteSpace($env:TEST_PARALLEL_WORKERS) -and $env:TEST_PARALLEL_WORKERS -ne 'off' -and $env:TEST_PARALLEL_WORKERS -ne 'null') {
+                    $parallelArgs = @('-n', $env:TEST_PARALLEL_WORKERS)
+                    Write-Host "Parallel test execution enabled: workers=$env:TEST_PARALLEL_WORKERS"
+                } else {
+                    Write-Host 'Parallel test execution disabled.'
+                }
+                ./.venv/Scripts/python.exe -m pytest tests @parallelArgs -q --junitxml=reports/unit-tests.xml
                 ''')
             }
             post {
@@ -92,7 +100,14 @@ pipeline {
             steps {
                 ciPowerShell('''
                 $target = $env:SMOKE_TARGET
-                ./.venv/Scripts/python.exe run_master.py $target --junitxml=reports/smoke-tests.xml
+                $parallelArgs = @()
+                if (![string]::IsNullOrWhiteSpace($env:TEST_PARALLEL_WORKERS) -and $env:TEST_PARALLEL_WORKERS -ne 'off' -and $env:TEST_PARALLEL_WORKERS -ne 'null') {
+                    $parallelArgs = @('-n', $env:TEST_PARALLEL_WORKERS)
+                    Write-Host "Parallel test execution enabled: workers=$env:TEST_PARALLEL_WORKERS"
+                } else {
+                    Write-Host 'Parallel test execution disabled.'
+                }
+                ./.venv/Scripts/python.exe run_master.py $target @parallelArgs --junitxml=reports/smoke-tests.xml
                 ''')
             }
             post {
@@ -120,6 +135,7 @@ void ciPowerShell(String body) {
     \$env:PYTHONIOENCODING = 'utf-8'
     \$env:PYTHONUTF8 = '1'
     \$env:USE_CHINA_ENVIRONMENT = '${params.USE_CHINA_ENVIRONMENT}'
+    \$env:TEST_PARALLEL_WORKERS = '${params.TEST_PARALLEL_WORKERS ?: 'off'}'
     ${body}
     """)
 }
