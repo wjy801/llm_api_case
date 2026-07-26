@@ -11,6 +11,15 @@ from common.polling import PollingFailedError, PollingPolicy, PollingTimeoutErro
 from common.request_context import RequestContext
 from common.request_middleware import LoggingMiddleware
 from common.retry import RetryPolicy
+from tests.mock_helpers import (
+    FakeApiCallLogger,
+    SequenceTransport,
+    SleepRecorder,
+    create_fake_logger,
+    make_response,
+    polling_responses,
+    timeout_error,
+)
 
 
 @dataclass(frozen=True)
@@ -38,15 +47,17 @@ def test_default_request_does_not_retry():
 
 
 def test_get_retries_503_then_returns_success(monkeypatch):
-    sleep_calls: list[float] = []
-    monkeypatch.setattr("common.base_request.time.sleep", sleep_calls.append)
+    sleep = SleepRecorder()
+    monkeypatch.setattr("common.base_request.time.sleep", sleep)
     client = BaseRequest(config=DummyConfig(), middlewares=[])
-    responses = [
-        make_response("https://example.com/v1/models", status_code=503),
-        make_response("https://example.com/v1/models", status_code=200),
-    ]
+    transport = SequenceTransport(
+        [
+            make_response("https://example.com/v1/models", status_code=503),
+            make_response("https://example.com/v1/models", status_code=200),
+        ]
+    )
 
-    client.session.request = lambda method, url, **kwargs: responses.pop(0)  # type: ignore[method-assign]
+    client.session.request = transport  # type: ignore[method-assign]
 
     response = client.get(
         "/v1/models",
@@ -54,7 +65,8 @@ def test_get_retries_503_then_returns_success(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert sleep_calls == [0.2]
+    assert sleep.calls == [0.2]
+    assert [call.method for call in transport.calls] == ["GET", "GET"]
 
 
 def test_get_retries_429_respecting_retry_after(monkeypatch):
@@ -78,19 +90,17 @@ def test_get_retries_429_respecting_retry_after(monkeypatch):
 
 
 def test_timeout_retries_then_returns_success(monkeypatch):
-    sleep_calls: list[float] = []
-    monkeypatch.setattr("common.base_request.time.sleep", sleep_calls.append)
+    sleep = SleepRecorder()
+    monkeypatch.setattr("common.base_request.time.sleep", sleep)
     client = BaseRequest(config=DummyConfig(), middlewares=[])
-    timeout_error = requests.Timeout("temporary timeout")
-    results: list[Any] = [timeout_error, make_response("https://example.com/v1/models", status_code=200)]
+    transport = SequenceTransport(
+        [
+            timeout_error("temporary timeout"),
+            make_response("https://example.com/v1/models", status_code=200),
+        ]
+    )
 
-    def fake_request(method: str, url: str, **kwargs: Any) -> requests.Response:
-        result = results.pop(0)
-        if isinstance(result, BaseException):
-            raise result
-        return result
-
-    client.session.request = fake_request  # type: ignore[method-assign]
+    client.session.request = transport  # type: ignore[method-assign]
 
     response = client.get(
         "/v1/models",
@@ -98,7 +108,8 @@ def test_timeout_retries_then_returns_success(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert sleep_calls == [0.1]
+    assert sleep.calls == [0.1]
+    assert len(transport.calls) == 2
 
 
 def test_max_attempts_returns_last_retryable_response(monkeypatch):
@@ -211,14 +222,12 @@ def test_retry_uses_independent_context_for_each_attempt(monkeypatch):
 
 def test_retry_records_can_be_observed_by_logger(monkeypatch):
     monkeypatch.setattr("common.base_request.time.sleep", lambda seconds: None)
-    created_loggers: list[DummyLogger] = []
+    created_loggers: list[FakeApiCallLogger] = []
 
-    def create_logger(*args: Any, **kwargs: Any) -> DummyLogger:
-        logger = DummyLogger(*args, **kwargs)
-        created_loggers.append(logger)
-        return logger
-
-    monkeypatch.setattr("common.request_middleware.ApiCallLogger", create_logger)
+    monkeypatch.setattr(
+        "common.request_middleware.ApiCallLogger",
+        lambda *args, **kwargs: create_fake_logger(created_loggers, *args, **kwargs),
+    )
     client = BaseRequest(config=DummyConfig(), middlewares=[LoggingMiddleware()])
     responses = [
         make_response("https://example.com/v1/models", status_code=503),
@@ -233,20 +242,21 @@ def test_retry_records_can_be_observed_by_logger(monkeypatch):
 
 
 def test_polling_policy_success_records_transitions(monkeypatch):
-    sleep_calls: list[float] = []
-    monkeypatch.setattr("common.base_request.time.sleep", sleep_calls.append)
-    created_loggers: list[DummyLogger] = []
+    sleep = SleepRecorder()
+    monkeypatch.setattr("common.base_request.time.sleep", sleep)
+    created_loggers: list[FakeApiCallLogger] = []
     monkeypatch.setattr(
         "common.request_middleware.ApiCallLogger",
-        lambda *args, **kwargs: created_logger(created_loggers, *args, **kwargs),
+        lambda *args, **kwargs: create_fake_logger(created_loggers, *args, **kwargs),
     )
     client = BaseRequest(config=DummyConfig(), middlewares=[LoggingMiddleware()])
-    responses = [
-        make_response("https://example.com/v1/media/tasks/task-001", json_text='{"status": "queued"}'),
-        make_response("https://example.com/v1/media/tasks/task-001", json_text='{"status": "running"}'),
-        make_response("https://example.com/v1/media/tasks/task-001", json_text='{"status": "succeeded"}'),
-    ]
-    client.session.request = lambda method, url, **kwargs: responses.pop(0)  # type: ignore[method-assign]
+    transport = SequenceTransport(
+        polling_responses(
+            "https://example.com/v1/media/tasks/task-001",
+            ["queued", "running", "succeeded"],
+        )
+    )
+    client.session.request = transport  # type: ignore[method-assign]
 
     response = client.poll_get(
         "/v1/media/tasks/task-001",
@@ -256,7 +266,8 @@ def test_polling_policy_success_records_transitions(monkeypatch):
     )
 
     assert response.json() == {"status": "succeeded"}
-    assert sleep_calls == [0.1, 0.1]
+    assert sleep.calls == [0.1, 0.1]
+    assert len(transport.calls) == 3
     assert created_loggers[-1].success_responses == [response]
     assert "queued" in created_loggers[-1].polling_transitions[-1]
     assert "succeeded" in created_loggers[-1].polling_transitions[-1]
@@ -329,10 +340,10 @@ def test_polling_policy_timeout_raises_with_last_response(monkeypatch):
 def test_polling_request_uses_retry_policy(monkeypatch):
     sleep_calls: list[float] = []
     monkeypatch.setattr("common.base_request.time.sleep", sleep_calls.append)
-    created_loggers: list[DummyLogger] = []
+    created_loggers: list[FakeApiCallLogger] = []
     monkeypatch.setattr(
         "common.request_middleware.ApiCallLogger",
-        lambda *args, **kwargs: created_logger(created_loggers, *args, **kwargs),
+        lambda *args, **kwargs: create_fake_logger(created_loggers, *args, **kwargs),
     )
     client = BaseRequest(config=DummyConfig(), middlewares=[LoggingMiddleware()])
     responses = [
@@ -368,49 +379,3 @@ class MutatePayloadMiddleware:
 
     def on_exception(self, context: RequestContext, error: BaseException) -> None:
         return None
-
-
-class DummyLogger:
-    def __init__(self, *args: Any, **kwargs: Any):
-        self.args = args
-        self.kwargs = kwargs
-        self.success_responses: list[requests.Response] = []
-        self.failure_errors: list[BaseException] = []
-        self.retry_records: list[list[Any]] = []
-        self.polling_transitions: list[str] = []
-
-    def attach_success(self, response: requests.Response) -> None:
-        self.success_responses.append(response)
-
-    def attach_failure(self, error: BaseException) -> None:
-        self.failure_errors.append(error)
-
-    def attach_retry_records(self, records: list[Any]) -> None:
-        self.retry_records.append(list(records))
-
-    def attach_polling_transitions(self, transitions_text: str) -> None:
-        self.polling_transitions.append(transitions_text)
-
-
-def created_logger(created_loggers: list[DummyLogger], *args: Any, **kwargs: Any) -> DummyLogger:
-    logger = DummyLogger(*args, **kwargs)
-    created_loggers.append(logger)
-    return logger
-
-
-def make_response(
-    url: str,
-    *,
-    method: str = "GET",
-    status_code: int = 200,
-    headers: dict[str, str] | None = None,
-    json_text: str = '{"ok": true}',
-) -> requests.Response:
-    response = requests.Response()
-    response.status_code = status_code
-    response.reason = "Reason"
-    response._content = json_text.encode("utf-8")
-    response.headers["Content-Type"] = "application/json"
-    response.headers.update(headers or {})
-    response.request = requests.Request(method, url).prepare()
-    return response

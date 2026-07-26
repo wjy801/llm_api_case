@@ -10,6 +10,7 @@ import requests
 from common.base_request import BaseRequest
 from common.request_context import RequestContext
 from common.request_middleware import LoggingMiddleware
+from tests.mock_helpers import FakeApiCallLogger, create_fake_logger, make_response
 
 
 @dataclass(frozen=True)
@@ -168,14 +169,12 @@ class TestBaseRequestMiddlewarePipeline:
 
 class TestBaseRequestLoggingCompatibility:
     def test_attach_log_false_still_sends_request_without_auto_attach(self, monkeypatch):
-        created_loggers: list[DummyLogger] = []
+        created_loggers: list[FakeApiCallLogger] = []
 
-        def create_logger(*args: Any, **kwargs: Any) -> DummyLogger:
-            logger = DummyLogger(*args, **kwargs)
-            created_loggers.append(logger)
-            return logger
-
-        monkeypatch.setattr("common.request_middleware.ApiCallLogger", create_logger)
+        monkeypatch.setattr(
+            "common.request_middleware.ApiCallLogger",
+            lambda *args, **kwargs: create_fake_logger(created_loggers, *args, **kwargs),
+        )
         client = BaseRequest(config=DummyConfig(), middlewares=[LoggingMiddleware()])
         sent_requests: list[tuple[str, str]] = []
 
@@ -193,14 +192,12 @@ class TestBaseRequestLoggingCompatibility:
         assert created_loggers[0].success_responses == []
 
     def test_poll_get_attaches_only_final_poll_response(self, monkeypatch):
-        created_loggers: list[DummyLogger] = []
+        created_loggers: list[FakeApiCallLogger] = []
 
-        def create_logger(*args: Any, **kwargs: Any) -> DummyLogger:
-            logger = DummyLogger(*args, **kwargs)
-            created_loggers.append(logger)
-            return logger
-
-        monkeypatch.setattr("common.request_middleware.ApiCallLogger", create_logger)
+        monkeypatch.setattr(
+            "common.request_middleware.ApiCallLogger",
+            lambda *args, **kwargs: create_fake_logger(created_loggers, *args, **kwargs),
+        )
         client = BaseRequest(config=DummyConfig(), middlewares=[LoggingMiddleware()])
         client.session.request = lambda method, url, **kwargs: make_response(  # type: ignore[method-assign]
             url=url,
@@ -237,14 +234,12 @@ class TestBaseRequestLoggingCompatibility:
         assert response.json() == {"done": True}
 
     def test_poll_get_request_exception_attaches_failure_log_then_reraises(self, monkeypatch):
-        created_loggers: list[DummyLogger] = []
+        created_loggers: list[FakeApiCallLogger] = []
 
-        def create_logger(*args: Any, **kwargs: Any) -> DummyLogger:
-            logger = DummyLogger(*args, **kwargs)
-            created_loggers.append(logger)
-            return logger
-
-        monkeypatch.setattr("common.request_middleware.ApiCallLogger", create_logger)
+        monkeypatch.setattr(
+            "common.request_middleware.ApiCallLogger",
+            lambda *args, **kwargs: create_fake_logger(created_loggers, *args, **kwargs),
+        )
         client = BaseRequest(config=DummyConfig(), middlewares=[LoggingMiddleware()])
         request_error = requests.Timeout("poll timeout")
         client.session.request = lambda method, url, **kwargs: (_ for _ in ()).throw(request_error)  # type: ignore[method-assign]
@@ -263,14 +258,12 @@ class TestBaseRequestLoggingCompatibility:
         assert created_loggers[0].failure_errors == [request_error]
 
     def test_poll_get_failure_status_attaches_final_response_once(self, monkeypatch):
-        created_loggers: list[DummyLogger] = []
+        created_loggers: list[FakeApiCallLogger] = []
 
-        def create_logger(*args: Any, **kwargs: Any) -> DummyLogger:
-            logger = DummyLogger(*args, **kwargs)
-            created_loggers.append(logger)
-            return logger
-
-        monkeypatch.setattr("common.request_middleware.ApiCallLogger", create_logger)
+        monkeypatch.setattr(
+            "common.request_middleware.ApiCallLogger",
+            lambda *args, **kwargs: create_fake_logger(created_loggers, *args, **kwargs),
+        )
         client = BaseRequest(config=DummyConfig(), middlewares=[LoggingMiddleware()])
         client.session.request = lambda method, url, **kwargs: make_response(  # type: ignore[method-assign]
             url=url,
@@ -290,14 +283,12 @@ class TestBaseRequestLoggingCompatibility:
         assert len(created_loggers[0].success_responses) == 1
 
     def test_poll_get_timeout_attaches_last_response_once(self, monkeypatch):
-        created_loggers: list[DummyLogger] = []
+        created_loggers: list[FakeApiCallLogger] = []
 
-        def create_logger(*args: Any, **kwargs: Any) -> DummyLogger:
-            logger = DummyLogger(*args, **kwargs)
-            created_loggers.append(logger)
-            return logger
-
-        monkeypatch.setattr("common.request_middleware.ApiCallLogger", create_logger)
+        monkeypatch.setattr(
+            "common.request_middleware.ApiCallLogger",
+            lambda *args, **kwargs: create_fake_logger(created_loggers, *args, **kwargs),
+        )
         client = BaseRequest(config=DummyConfig(), middlewares=[LoggingMiddleware()])
         client.session.request = lambda method, url, **kwargs: make_response(  # type: ignore[method-assign]
             url=url,
@@ -405,32 +396,3 @@ class ConcurrentMutationMiddleware:
 
     def on_exception(self, context: RequestContext, error: BaseException) -> None:
         return None
-
-
-class DummyLogger:
-    def __init__(self, *args: Any, **kwargs: Any):
-        self.args = args
-        self.kwargs = kwargs
-        self.success_responses: list[requests.Response] = []
-        self.failure_errors: list[BaseException] = []
-
-    def attach_success(self, response: requests.Response) -> None:
-        self.success_responses.append(response)
-
-    def attach_failure(self, error: BaseException) -> None:
-        self.failure_errors.append(error)
-
-
-def make_response(
-    *,
-    url: str,
-    method: str = "GET",
-    json_text: str = '{"ok": true}',
-) -> requests.Response:
-    response = requests.Response()
-    response.status_code = 200
-    response.reason = "OK"
-    response._content = json_text.encode("utf-8")
-    response.headers["Content-Type"] = "application/json"
-    response.request = requests.Request(method, url).prepare()
-    return response
