@@ -98,7 +98,8 @@ pipeline {
                 ciPowerShell('''
                 $collectOutput = ./.venv/Scripts/python.exe run_master.py module/smoke --collect-only -q 2>&1
                 $collectExitCode = $LASTEXITCODE
-                $collectOutput | Tee-Object -FilePath reports/smoke-collect.txt
+                $collectOutput | ForEach-Object { Write-Host $_ }
+                $collectOutput | Set-Content -LiteralPath reports/smoke-collect.txt -Encoding UTF8
                 if ($collectExitCode -ne 0) {
                     exit $collectExitCode
                 }

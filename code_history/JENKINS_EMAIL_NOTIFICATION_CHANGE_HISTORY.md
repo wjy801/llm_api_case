@@ -11,6 +11,7 @@
   - `CI_MAIL_FROM=18617962759@163.com`
 - 在构建准备阶段清理并重建 `reports` 目录，避免邮件摘要读取历史构建残留报告。
 - `Collect Smoke Cases` 阶段将 `run_master.py --collect-only` 输出落盘到 `reports/smoke-collect.txt`，用于邮件中的 Smoke 收集摘要。
+- `reports/smoke-collect.txt` 明确使用 UTF-8 写入，避免 Windows PowerShell 默认 UTF-16LE 导致 Jenkins 邮件摘要解析不到 Smoke 数量。
 - 新增构建后邮件通知逻辑：
   - 构建失败发送 `FAILED` 通知。
   - 构建不稳定发送 `UNSTABLE` 通知。
