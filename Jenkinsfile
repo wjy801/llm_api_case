@@ -103,9 +103,9 @@ pipeline {
                 $parallelArgs = @()
                 if (![string]::IsNullOrWhiteSpace($env:TEST_PARALLEL_WORKERS) -and $env:TEST_PARALLEL_WORKERS -ne 'off' -and $env:TEST_PARALLEL_WORKERS -ne 'null') {
                     $parallelArgs = @('-n', $env:TEST_PARALLEL_WORKERS)
-                    Write-Host "Parallel test execution enabled: workers=$env:TEST_PARALLEL_WORKERS"
+                    Write-Host "Parallel-first smoke execution enabled: workers=$env:TEST_PARALLEL_WORKERS"
                 } else {
-                    Write-Host 'Parallel test execution disabled.'
+                    Write-Host 'Parallel-first smoke execution disabled.'
                 }
                 ./.venv/Scripts/python.exe run_master.py $target @parallelArgs --junitxml=reports/smoke-tests.xml
                 ''')

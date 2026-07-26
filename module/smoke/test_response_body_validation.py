@@ -80,6 +80,7 @@ class TestResponseBodyValidation:
         self.smoke_assertions.assert_schema(response, STANDARD_ERROR_RESPONSE_SCHEMA)
 
     @pytest.mark.xfail(reason="账户为0，响应体信息不精确")
+    @pytest.mark.serial
     def test_zero_balance_account_call_response_body_contains_error_object(self):
         if not ZERO_BALANCE_API_KEY.strip() or not ZERO_BALANCE_CONTROL_KEY.strip():
             pytest.skip("Please configure ZERO_BALANCE_API_KEY and ZERO_BALANCE_CONTROL_KEY in this test first.")

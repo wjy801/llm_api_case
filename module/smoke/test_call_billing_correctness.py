@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import pytest
+
 from module.smoke import SmokeAssertions, SmokeRequest, SmokeTask
 
 
 UNKNOWN_IMAGE_MODEL_ID = "wan2.7-image111"
 CONCURRENT_TEXT_MODEL_CALL_COUNT = 5
+pytestmark = pytest.mark.serial
 
 
 class TestCallBillingCorrectness:

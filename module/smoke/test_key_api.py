@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import pytest
+
 from module.smoke import SmokeAssertions, SmokeRequest, SmokeTask
+
+
+pytestmark = pytest.mark.serial
 
 
 class TestKeyAPI:
