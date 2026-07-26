@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from common.base_task import BaseTask
+from common.polling import DEFAULT_MEDIA_POLLING_POLICY
 
 
 class FakeResponse:
@@ -58,8 +59,6 @@ class FakeGenerationRequest:
         *,
         poll_interval: float = 2,
         poll_timeout: float | None = None,
-        success_json_path: str = "$.result.urls",
-        failure_json_path: str | None = "$.error",
         polling_policy: Any = None,
         retry_policy: Any = None,
     ) -> FakeResponse:
@@ -68,8 +67,6 @@ class FakeGenerationRequest:
                 "path": path,
                 "poll_interval": poll_interval,
                 "poll_timeout": poll_timeout,
-                "success_json_path": success_json_path,
-                "failure_json_path": failure_json_path,
                 "polling_policy": polling_policy,
                 "retry_policy": retry_policy,
             }
@@ -117,8 +114,6 @@ class TestBaseTask:
             "task-001",
             poll_interval=5,
             poll_timeout=120,
-            success_json_path="$.result.images",
-            failure_json_path="$.error.category",
         )
 
         assert response.json() == {"result": {"urls": ["https://example.com/image.png"]}}
@@ -127,9 +122,7 @@ class TestBaseTask:
                 "path": "/v1/media/tasks/task-001",
                 "poll_interval": 5,
                 "poll_timeout": 120,
-                "success_json_path": "$.result.images",
-                "failure_json_path": "$.error.category",
-                "polling_policy": None,
+                "polling_policy": DEFAULT_MEDIA_POLLING_POLICY,
                 "retry_policy": None,
             }
         ]
@@ -152,8 +145,6 @@ class TestBaseTask:
                 "path": "/v1/media/tasks/task-001",
                 "poll_interval": 2,
                 "poll_timeout": None,
-                "success_json_path": "$.result.urls",
-                "failure_json_path": "$.error",
                 "polling_policy": polling_policy,
                 "retry_policy": retry_policy,
             }

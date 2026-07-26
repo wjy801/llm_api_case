@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     )
     from common.base_request import BaseRequest
     from common.base_task import BaseTask
-    from common.polling import PollingPolicy, PollingState, PollingTimeoutError
+    from common.polling import DEFAULT_MEDIA_POLLING_POLICY, PollingPolicy, PollingState, PollingTimeoutError
     from common.retry import RetryPolicy
     from common.test_context import (
         ContextCleanupError,
@@ -44,6 +44,7 @@ __all__ = [
     "PollingPolicy",
     "PollingState",
     "PollingTimeoutError",
+    "DEFAULT_MEDIA_POLLING_POLICY",
     "RetryPolicy",
     "ContextCleanupError",
     "ContextExtractionError",
@@ -93,6 +94,10 @@ def __getattr__(name: str):
         from common.polling import PollingPolicy
 
         return PollingPolicy
+    if name == "DEFAULT_MEDIA_POLLING_POLICY":
+        from common.polling import DEFAULT_MEDIA_POLLING_POLICY
+
+        return DEFAULT_MEDIA_POLLING_POLICY
     if name == "PollingState":
         from common.polling import PollingState
 

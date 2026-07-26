@@ -5,7 +5,6 @@ import time
 from typing import Any
 from urllib.parse import urljoin
 
-from jsonpath_ng.ext import parse
 import requests
 
 from config import Settings, settings
@@ -29,13 +28,8 @@ from common.request_middleware import (
 from common.retry import (
     RetryAttemptRecord,
     RetryPolicy,
-    calculate_retry_delay,
-    is_method_retry_allowed,
-    retry_reason_for_exception,
-    retry_reason_for_response,
-    should_retry_exception,
-    should_retry_response,
 )
+from common.retry_executor import RetryExecutor
 from util import (
     API_REQUEST_STEP_NAME,
     ApiCallLogger,
@@ -50,12 +44,14 @@ class BaseRequest:
         self,
         config: Settings = settings,
         middlewares: list[RequestMiddleware] | None = None,
+        retry_executor: RetryExecutor | None = None,
     ):
         self.config = config
         self.session = requests.Session()
         self.default_headers = self._build_default_headers()
         self.session.headers.update(self.default_headers)
         self.middlewares = list(self._default_middlewares() if middlewares is None else middlewares)
+        self.retry_executor = retry_executor or RetryExecutor(sleeper=time.sleep, monotonic=time.monotonic)
 
     def _default_middlewares(self) -> list[RequestMiddleware]:
         return default_request_middlewares()
@@ -92,9 +88,7 @@ class BaseRequest:
         *,
         poll_interval: float = 2,
         poll_timeout: float | None = None,
-        success_json_path: str | None = None,
-        failure_json_path: str | None = None,
-        polling_policy: PollingPolicy | None = None,
+        polling_policy: PollingPolicy,
         retry_policy: RetryPolicy | None = None,
         **kwargs: Any,
     ) -> requests.Response:
@@ -105,61 +99,14 @@ class BaseRequest:
         if timeout <= 0:
             raise ValueError("poll_timeout must be greater than 0")
 
-        if polling_policy is not None:
-            return self._poll_get_with_policy(
-                path,
-                poll_interval=poll_interval,
-                timeout=timeout,
-                polling_policy=polling_policy,
-                retry_policy=retry_policy,
-                **kwargs,
-            )
-
-        deadline = time.monotonic() + timeout
-        last_response: requests.Response
-        last_status: Any
-        last_logger: ApiCallLogger | None = None
-
-        while True:
-            last_response, last_logger = self._request_without_attach(
-                "GET",
-                path,
-                step_name=POLL_GET_REQUEST_STEP_NAME,
-                response_step_name=POLL_GET_RESPONSE_STEP_NAME,
-                retry_policy=retry_policy,
-                **kwargs,
-            )
-            failure_status = None
-            try:
-                if failure_json_path is not None:
-                    failure_status = self._extract_json_path_value(last_response, failure_json_path)
-                last_status = self._extract_json_path_value(last_response, success_json_path)
-            except Exception:
-                last_logger.attach_success(last_response)
-                raise
-
-            if failure_json_path is not None and failure_status is not None:
-                last_logger.attach_success(last_response)
-                raise AssertionError(
-                    f"poll_get failed: path={path!r}, "
-                    f"{failure_json_path}={failure_status!r}, "
-                    f"response={last_response.text}"
-                )
-
-            if last_status is not None:
-                last_logger.attach_success(last_response)
-                return last_response
-
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                last_logger.attach_success(last_response)
-                raise TimeoutError(
-                    f"poll_get timed out after {timeout} seconds: path={path!r}, "
-                    f"last {success_json_path}={last_status!r}, "
-                    f"last response={last_response.text if last_response is not None else '<empty>'}"
-                )
-
-            time.sleep(min(poll_interval, remaining))
+        return self._poll_get_with_policy(
+            path,
+            poll_interval=poll_interval,
+            timeout=timeout,
+            polling_policy=polling_policy,
+            retry_policy=retry_policy,
+            **kwargs,
+        )
 
     def post(self, path: str, **kwargs: Any) -> requests.Response:
         return self.request("POST", path, **kwargs)
@@ -269,20 +216,8 @@ class BaseRequest:
             response_step_name=response_step_name,
             **kwargs,
         )
-        if context_recorder is not None:
-            context_recorder[:] = [first_context]
-        if not is_method_retry_allowed(
-            first_context.method,
-            self._kwargs_with_session_headers(first_context.kwargs),
-            retry_policy,
-        ):
-            return self._send(first_context)
 
-        started_at = time.monotonic()
-        retry_records: list[RetryAttemptRecord] = []
-        last_response: requests.Response | None = None
-
-        for attempt_index in range(1, retry_policy.max_attempts + 1):
+        def context_factory(attempt_index: int) -> RequestContext:
             context = self._build_request_context(
                 method,
                 path,
@@ -293,69 +228,17 @@ class BaseRequest:
             )
             context.attributes["attempt_index"] = attempt_index
             context.attributes["max_attempts"] = retry_policy.max_attempts
-            context.attributes["retry_records"] = retry_records
-            if context_recorder is not None:
-                context_recorder[:] = [context]
+            return context
 
-            try:
-                response = self._send(context)
-            except Exception as error:
-                if (
-                    attempt_index >= retry_policy.max_attempts
-                    or not should_retry_exception(error, retry_policy)
-                ):
-                    self._attach_retry_records(context, retry_records)
-                    raise
-
-                wait_seconds = self._retry_wait_seconds(
-                    retry_policy,
-                    attempt_index,
-                    started_at=started_at,
-                )
-                retry_records.append(
-                    RetryAttemptRecord(
-                        attempt_index=attempt_index,
-                        max_attempts=retry_policy.max_attempts,
-                        reason=retry_reason_for_exception(error),
-                        wait_seconds=wait_seconds,
-                        exception_type=type(error).__name__,
-                        exception_message=str(error),
-                    )
-                )
-                self._attach_retry_records(context, retry_records)
-                if not self._can_retry_within_elapsed(retry_policy, started_at, wait_seconds):
-                    raise
-                time.sleep(wait_seconds)
-                continue
-
-            last_response = response
-            if attempt_index >= retry_policy.max_attempts or not should_retry_response(response, retry_policy):
-                self._attach_retry_records(context, retry_records)
-                return response
-
-            wait_seconds = self._retry_wait_seconds(
-                retry_policy,
-                attempt_index,
-                started_at=started_at,
-                response=response,
-            )
-            retry_records.append(
-                RetryAttemptRecord(
-                    attempt_index=attempt_index,
-                    max_attempts=retry_policy.max_attempts,
-                    reason=retry_reason_for_response(response),
-                    wait_seconds=wait_seconds,
-                    response_status_code=response.status_code,
-                )
-            )
-            self._attach_retry_records(context, retry_records)
-            if not self._can_retry_within_elapsed(retry_policy, started_at, wait_seconds):
-                return response
-            time.sleep(wait_seconds)
-
-        if last_response is not None:
-            return last_response
-        raise RuntimeError("retry loop ended without response or exception")
+        return self.retry_executor.execute(
+            method=first_context.method,
+            request_kwargs=self._kwargs_with_session_headers(first_context.kwargs),
+            policy=retry_policy,
+            context_factory=context_factory,
+            send_once=self._send,
+            attach_records=self._attach_retry_records,
+            context_recorder=context_recorder,
+        )
 
     def _run_before_middlewares(self, context: RequestContext) -> None:
         for middleware in self.middlewares:
@@ -463,7 +346,12 @@ class BaseRequest:
                 retry_policy=retry_policy,
                 **kwargs,
             )
-            evaluation = evaluate_polling_response(last_response, polling_policy)
+            try:
+                evaluation = evaluate_polling_response(last_response, polling_policy)
+            except Exception:
+                last_logger.attach_success(last_response)
+                raise
+
             last_status = evaluation.raw_status
             transitions.append(
                 PollingTransition(
@@ -521,41 +409,6 @@ class BaseRequest:
             return LoggingMiddleware.get_logger(context)
         except RuntimeError:
             return NoopApiCallLogger()
-
-    @staticmethod
-    def _extract_json_path_value(response: requests.Response, json_path: str) -> Any:
-        if not json_path.startswith("$"):
-            raise ValueError(f"json_path must start with '$', current value: {json_path!r}")
-
-        try:
-            body = response.json()
-        except ValueError as exc:
-            raise AssertionError(f"response body is not valid JSON: {response.text}") from exc
-
-        matches = [match.value for match in parse(json_path).find(body)]
-        if not matches:
-            return None
-        return matches[0] if len(matches) == 1 else matches
-
-    @staticmethod
-    def _retry_wait_seconds(
-        retry_policy: RetryPolicy,
-        attempt_index: int,
-        *,
-        started_at: float,
-        response: requests.Response | None = None,
-    ) -> float:
-        return calculate_retry_delay(retry_policy, attempt_index, response=response)
-
-    @staticmethod
-    def _can_retry_within_elapsed(
-        retry_policy: RetryPolicy,
-        started_at: float,
-        wait_seconds: float,
-    ) -> bool:
-        if retry_policy.max_elapsed is None:
-            return True
-        return (time.monotonic() - started_at + wait_seconds) <= retry_policy.max_elapsed
 
     def _kwargs_with_session_headers(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         retry_kwargs = dict(kwargs)

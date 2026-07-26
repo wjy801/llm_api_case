@@ -12,7 +12,7 @@ FALSE_VALUE = "FALSE"
 REQUIRED_VALUE_MESSAGE = "Missing required config {name}."
 
 
-class ConfigValidationError(RuntimeError):
+class ConfigValidationError(ValueError):
     pass
 
 

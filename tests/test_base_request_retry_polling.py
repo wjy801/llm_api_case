@@ -46,6 +46,13 @@ def test_default_request_does_not_retry():
     assert calls == 1
 
 
+def test_poll_get_requires_polling_policy():
+    client = BaseRequest(config=DummyConfig(), middlewares=[])
+
+    with pytest.raises(TypeError, match="polling_policy"):
+        client.poll_get("/v1/media/tasks/task-001")
+
+
 def test_get_retries_503_then_returns_success(monkeypatch):
     sleep = SleepRecorder()
     monkeypatch.setattr("common.base_request.time.sleep", sleep)

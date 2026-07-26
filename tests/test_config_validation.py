@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import BaseModel
 
-from config import load_settings
+from config import Settings, load_settings
 from util.config_validation import (
     ConfigValidationError,
     is_enabled,
@@ -49,11 +50,25 @@ class TestLoadSettings:
         assert settings.generate_history_report is False
         assert settings.history_report_keep_limit == 30
 
+    def test_settings_is_frozen_pydantic_model(self):
+        settings = load_settings(
+            {
+                "OVERSEAS_TEST_BASE_URL": "https://pre.example.org",
+                "OVERSEAS_API_KEY": "overseas-secret",
+            }
+        )
+
+        assert isinstance(settings, BaseModel)
+        assert isinstance(settings, Settings)
+        with pytest.raises(ValueError, match="frozen"):
+            settings.timeout = 1  # type: ignore[misc]
+
     def test_missing_china_required_configs_report_variable_names(self):
         with pytest.raises(ConfigValidationError) as exc_info:
             load_settings({"USE_CHINA_ENVIRONMENT": "TRUE"})
 
         error_text = str(exc_info.value)
+        assert error_text.count("Configuration validation failed:") == 1
         assert "Configuration validation failed:" in error_text
         assert "Missing required config CHINA_TEST_ENVIRONMENT_BASE_URL." in error_text
         assert "Missing required config CHINA_API_KEY." in error_text
@@ -63,6 +78,7 @@ class TestLoadSettings:
             load_settings({"USE_CHINA_ENVIRONMENT": "FALSE"})
 
         error_text = str(exc_info.value)
+        assert error_text.count("Configuration validation failed:") == 1
         assert "Missing required config OVERSEAS_TEST_BASE_URL." in error_text
         assert "Missing required config OVERSEAS_API_KEY." in error_text
 

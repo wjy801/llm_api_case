@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
 from jsonpath_ng.ext import parse
+from pydantic import BaseModel, ConfigDict, field_validator
 import requests
 
 from util.redaction import redact_text_body, redact_urlencoded_text
 
 
 MAX_POLLING_RESPONSE_TEXT = 2000
+_UNSET = object()
 
 
 class PollingState(Enum):
@@ -21,8 +22,9 @@ class PollingState(Enum):
     UNKNOWN = "unknown"
 
 
-@dataclass(frozen=True)
-class PollingPolicy:
+class PollingPolicy(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     status_json_path: str = "$.status"
     pending: frozenset[Any] = frozenset({"queued", "running"})
     success: frozenset[Any] = frozenset({"succeeded"})
@@ -31,29 +33,70 @@ class PollingPolicy:
     error_json_path: str | None = "$.error"
     unknown: str = "fail"
 
-    def __post_init__(self) -> None:
-        _validate_json_path("status_json_path", self.status_json_path)
-        _validate_optional_json_path("result_json_path", self.result_json_path)
-        _validate_optional_json_path("error_json_path", self.error_json_path)
-        if self.unknown not in {"fail", "pending", "ignore"}:
+    @field_validator("status_json_path")
+    @classmethod
+    def _validate_status_json_path(cls, value: str) -> str:
+        _validate_json_path("status_json_path", value)
+        return value
+
+    @field_validator("result_json_path")
+    @classmethod
+    def _validate_result_json_path(cls, value: str | None) -> str | None:
+        _validate_optional_json_path("result_json_path", value)
+        return value
+
+    @field_validator("error_json_path")
+    @classmethod
+    def _validate_error_json_path(cls, value: str | None) -> str | None:
+        _validate_optional_json_path("error_json_path", value)
+        return value
+
+    @field_validator("unknown")
+    @classmethod
+    def _validate_unknown(cls, value: str) -> str:
+        if value not in {"fail", "pending", "ignore"}:
             raise ValueError("unknown must be 'fail', 'pending', or 'ignore'")
+        return value
 
 
-@dataclass(frozen=True)
-class PollingEvaluation:
+class PollingEvaluation(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     state: PollingState
     raw_status: Any
     result_value: Any = None
     error_value: Any = None
 
 
-@dataclass(frozen=True)
-class PollingTransition:
+class PollingTransition(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     attempt_index: int
     elapsed_seconds: float
     state: PollingState
     raw_status: Any
     response_status_code: int
+
+    def __init__(
+        self,
+        attempt_index: int | None = None,
+        elapsed_seconds: float | None = None,
+        state: PollingState | None = None,
+        raw_status: Any = _UNSET,
+        response_status_code: int | None = None,
+        **data: Any,
+    ):
+        if attempt_index is not None:
+            data["attempt_index"] = attempt_index
+        if elapsed_seconds is not None:
+            data["elapsed_seconds"] = elapsed_seconds
+        if state is not None:
+            data["state"] = state
+        if raw_status is not _UNSET:
+            data["raw_status"] = raw_status
+        if response_status_code is not None:
+            data["response_status_code"] = response_status_code
+        super().__init__(**data)
 
 
 class PollingError(AssertionError):
@@ -221,3 +264,13 @@ def _redact_response_text(response: requests.Response) -> str:
     if len(redacted_body) > MAX_POLLING_RESPONSE_TEXT:
         return f"{redacted_body[:MAX_POLLING_RESPONSE_TEXT]}...<truncated>"
     return redacted_body
+
+
+DEFAULT_MEDIA_POLLING_POLICY = PollingPolicy(
+    status_json_path="$.status",
+    pending=frozenset({"queued", "running", "pending", "processing"}),
+    success=frozenset({"succeeded", "success", "completed"}),
+    failure=frozenset({"failed", "cancelled", "canceled"}),
+    result_json_path="$.result.urls",
+    error_json_path="$.error",
+)

@@ -11,6 +11,7 @@ import requests
 from config import USE_CHINA_ENVIRONMENT
 from common.base_decorators import allure_step
 from common.base_request import BaseRequest
+from common.polling import DEFAULT_MEDIA_POLLING_POLICY
 
 
 if TYPE_CHECKING:
@@ -94,9 +95,7 @@ class BaseTask:
         *,
         poll_interval: float = 2,
         poll_timeout: float | None = None,
-        success_json_path: str = "$.result.urls",
-        failure_json_path: str | None = "$.error",
-        polling_policy: PollingPolicy | None = None,
+        polling_policy: PollingPolicy = DEFAULT_MEDIA_POLLING_POLICY,
         retry_policy: RetryPolicy | None = None,
     ) -> requests.Response:
         """轮询异步媒体生成任务结果。
@@ -106,9 +105,7 @@ class BaseTask:
             task_id: 创建异步媒体任务后返回的任务 ID，用于拼接 `/v1/media/tasks/{task_id}`。
             poll_interval: 每次 GET 轮询之间的等待秒数。
             poll_timeout: 总轮询超时时间；为 `None` 时使用 `BaseRequest` 中的环境超时配置。
-            success_json_path: 成功判断 JSONPath；取到非空值时返回最终响应。
-            failure_json_path: 失败判断 JSONPath；取到非空值时让用例失败；为 `None` 时不做失败 JSONPath 判断。
-            polling_policy: 显式轮询状态机策略；传入后优先使用状态机判断。
+            polling_policy: 轮询状态机策略；默认使用媒体任务状态机策略。
             retry_policy: 单次轮询 GET 的显式重试策略；不传时保持不重试。
 
         Returns:
@@ -118,8 +115,6 @@ class BaseTask:
             self.media_task_path_template.format(task_id=task_id),
             poll_interval=poll_interval,
             poll_timeout=poll_timeout,
-            success_json_path=success_json_path,
-            failure_json_path=failure_json_path,
             polling_policy=polling_policy,
             retry_policy=retry_policy,
         )
@@ -131,9 +126,7 @@ class BaseTask:
         *,
         poll_interval: float = 2,
         poll_timeout: float | None = None,
-        success_json_path: str = "$.result.urls",
-        failure_json_path: str | None = "$.error",
-        polling_policy: PollingPolicy | None = None,
+        polling_policy: PollingPolicy = DEFAULT_MEDIA_POLLING_POLICY,
         retry_policy: RetryPolicy | None = None,
     ) -> requests.Response:
         """创建异步媒体生成任务并轮询结果。
@@ -143,9 +136,7 @@ class BaseTask:
             payload: `POST /v1/media/generations` 的请求体。
             poll_interval: 每次 GET 轮询之间的等待秒数。
             poll_timeout: 总轮询超时时间；为 `None` 时使用 `BaseRequest` 中的环境超时配置。
-            success_json_path: 成功判断 JSONPath；取到非空值时返回最终响应。
-            failure_json_path: 失败判断 JSONPath；取到非空值时让用例失败；为 `None` 时不做失败 JSONPath 判断。
-            polling_policy: 显式轮询状态机策略；传入后优先使用状态机判断。
+            polling_policy: 轮询状态机策略；默认使用媒体任务状态机策略。
             retry_policy: 单次轮询 GET 的显式重试策略；不传时保持不重试。
 
         Returns:
@@ -158,8 +149,6 @@ class BaseTask:
             task_id,
             poll_interval=poll_interval,
             poll_timeout=poll_timeout,
-            success_json_path=success_json_path,
-            failure_json_path=failure_json_path,
             polling_policy=polling_policy,
             retry_policy=retry_policy,
         )

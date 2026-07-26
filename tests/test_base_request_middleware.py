@@ -8,6 +8,7 @@ import pytest
 import requests
 
 from common.base_request import BaseRequest
+from common.polling import PollingFailedError, PollingPolicy, PollingTimeoutError
 from common.request_context import RequestContext
 from common.request_middleware import LoggingMiddleware
 from tests.mock_helpers import FakeApiCallLogger, create_fake_logger, make_response
@@ -208,8 +209,7 @@ class TestBaseRequestLoggingCompatibility:
             "/v1/media/tasks/task-1",
             poll_interval=0.01,
             poll_timeout=1,
-            success_json_path="$.done",
-            failure_json_path=None,
+            polling_policy=PollingPolicy(result_json_path="$.done", error_json_path=None),
         )
 
         assert response.json() == {"done": True}
@@ -227,8 +227,7 @@ class TestBaseRequestLoggingCompatibility:
             "/v1/media/tasks/task-1",
             poll_interval=0.01,
             poll_timeout=1,
-            success_json_path="$.done",
-            failure_json_path=None,
+            polling_policy=PollingPolicy(result_json_path="$.done", error_json_path=None),
         )
 
         assert response.json() == {"done": True}
@@ -249,8 +248,7 @@ class TestBaseRequestLoggingCompatibility:
                 "/v1/media/tasks/task-1",
                 poll_interval=0.01,
                 poll_timeout=1,
-                success_json_path="$.done",
-                failure_json_path=None,
+                polling_policy=PollingPolicy(result_json_path="$.done", error_json_path=None),
             )
 
         assert exc_info.value is request_error
@@ -270,13 +268,12 @@ class TestBaseRequestLoggingCompatibility:
             json_text='{"error": {"message": "failed"}}',
         )
 
-        with pytest.raises(AssertionError, match="poll_get failed"):
+        with pytest.raises(PollingFailedError, match="poll_get failed"):
             client.poll_get(
                 "/v1/media/tasks/task-1",
                 poll_interval=0.01,
                 poll_timeout=1,
-                success_json_path="$.done",
-                failure_json_path="$.error",
+                polling_policy=PollingPolicy(result_json_path="$.done", error_json_path="$.error"),
             )
 
         assert len(created_loggers) == 1
@@ -295,13 +292,12 @@ class TestBaseRequestLoggingCompatibility:
             json_text='{"done": null}',
         )
 
-        with pytest.raises(TimeoutError, match="poll_get timed out"):
+        with pytest.raises(PollingTimeoutError, match="poll_get timed out"):
             client.poll_get(
                 "/v1/media/tasks/task-1",
                 poll_interval=0.01,
                 poll_timeout=0.01,
-                success_json_path="$.done",
-                failure_json_path=None,
+                polling_policy=PollingPolicy(result_json_path="$.done", error_json_path=None, unknown="pending"),
             )
 
         assert created_loggers

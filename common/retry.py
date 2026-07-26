@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 import random
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 import requests
 
 
@@ -14,8 +14,9 @@ DEFAULT_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 DEFAULT_ALLOWED_METHODS = frozenset({"GET", "HEAD"})
 
 
-@dataclass(frozen=True)
-class RetryPolicy:
+class RetryPolicy(BaseModel):
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
     max_attempts: int = 3
     retry_statuses: frozenset[int] = DEFAULT_RETRY_STATUSES
     retry_exceptions: tuple[type[BaseException], ...] = (
@@ -32,23 +33,51 @@ class RetryPolicy:
     allow_post: bool = False
     idempotency_header: str = "Idempotency-Key"
 
-    def __post_init__(self) -> None:
-        if self.max_attempts < 1:
+    @field_validator("max_attempts")
+    @classmethod
+    def _validate_max_attempts(cls, value: int) -> int:
+        if value < 1:
             raise ValueError("max_attempts must be greater than or equal to 1")
-        if self.base_delay < 0:
+        return value
+
+    @field_validator("base_delay")
+    @classmethod
+    def _validate_base_delay(cls, value: float) -> float:
+        if value < 0:
             raise ValueError("base_delay must be greater than or equal to 0")
+        return value
+
+    @field_validator("max_elapsed")
+    @classmethod
+    def _validate_max_elapsed(cls, value: float | None) -> float | None:
+        if value is not None and value <= 0:
+            raise ValueError("max_elapsed must be greater than 0")
+        return value
+
+    @field_validator("backoff")
+    @classmethod
+    def _validate_backoff(cls, value: str) -> str:
+        if value not in {"fixed", "exponential"}:
+            raise ValueError("backoff must be 'fixed' or 'exponential'")
+        return value
+
+    @field_validator("idempotency_header")
+    @classmethod
+    def _validate_idempotency_header(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("idempotency_header must not be empty")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_delay_range(self) -> RetryPolicy:
         if self.max_delay < self.base_delay:
             raise ValueError("max_delay must be greater than or equal to base_delay")
-        if self.max_elapsed is not None and self.max_elapsed <= 0:
-            raise ValueError("max_elapsed must be greater than 0")
-        if self.backoff not in {"fixed", "exponential"}:
-            raise ValueError("backoff must be 'fixed' or 'exponential'")
-        if not self.idempotency_header.strip():
-            raise ValueError("idempotency_header must not be empty")
+        return self
 
 
-@dataclass(frozen=True)
-class RetryAttemptRecord:
+class RetryAttemptRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     attempt_index: int
     max_attempts: int
     reason: str

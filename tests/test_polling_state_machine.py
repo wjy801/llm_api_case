@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic import BaseModel
 import requests
 
 from common.polling import (
@@ -20,6 +21,14 @@ from common.polling import (
 def test_polling_policy_rejects_invalid_json_path():
     with pytest.raises(ValueError, match="status_json_path"):
         PollingPolicy(status_json_path="status")
+
+
+def test_polling_policy_is_frozen_pydantic_model():
+    policy = PollingPolicy()
+
+    assert isinstance(policy, BaseModel)
+    with pytest.raises(ValueError, match="frozen"):
+        policy.status_json_path = "$.state"  # type: ignore[misc]
 
 
 def test_evaluate_pending_status():

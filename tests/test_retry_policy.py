@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from email.utils import format_datetime
 
 import pytest
+from pydantic import BaseModel
 import requests
 
 from common.retry import (
@@ -19,6 +20,14 @@ from common.retry import (
 def test_retry_policy_rejects_invalid_max_attempts():
     with pytest.raises(ValueError, match="max_attempts"):
         RetryPolicy(max_attempts=0)
+
+
+def test_retry_policy_is_frozen_pydantic_model():
+    policy = RetryPolicy()
+
+    assert isinstance(policy, BaseModel)
+    with pytest.raises(ValueError, match="frozen"):
+        policy.max_attempts = 5  # type: ignore[misc]
 
 
 def test_parse_retry_after_seconds():
