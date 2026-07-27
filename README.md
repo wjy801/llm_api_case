@@ -9,7 +9,8 @@
 - 已实现请求中间件、配置校验与安全保护、基础契约断言、重试策略、轮询状态机、测试上下文与变量传递、轻量 Mock 与故障模拟。
 - 已实现 OpenAI Chat Completions、Responses、Anthropic Messages 协议用例，以及图片、视频、Smoke 等业务模块示例。
 - 已支持 Allure 原始结果、HTML 报告生成、历史报告保留、请求/响应日志、cURL 附件、前置媒体资源与模型结果附件。
-- 当前 CI 尚未接入。质量门禁、指标聚合和 Flaky 历史治理仍属于路线图后续阶段；当前验收以本地 `pytest`、`run_master.py --collect-only` 和框架单测为准。
+- 已接入 Jenkins 单 Job 参数化流水线，支持框架测试、Smoke 收集、真实环境可选执行、测试并发控制、并发优先与串行收尾、JUnit/Allure 报告、构建产物归档及失败恢复邮件通知。
+- 当前 CI 已具备基于测试退出码的基础阻断能力；成功率阈值、耗时分位线、重试率门禁、Flaky 历史治理和长期指标趋势仍属于后续阶段。
 
 ## 目录结构
 
@@ -50,6 +51,8 @@ code_history/              # 各阶段独立变更历史
 config.py                  # Settings 与环境配置加载
 master_service.py          # pytest nodeid 收集服务
 run_master.py              # 框架执行入口
+Jenkinsfile                # Jenkins 单 Job 参数化流水线
+JENKINS_MIGRATION_TEMPLATE.md # Jenkins 环境迁移与复建模板
 pytest.ini                 # pytest 与 Allure 默认配置
 requirements.txt           # Python 依赖
 package.json               # Allure CLI 依赖
@@ -373,13 +376,13 @@ class TestImageGenerations:
 
 ## 执行入口
 
-`master_service.py` 负责收集 pytest nodeid。直接执行可输出用例池：
+`master_service.py` 负责收集 pytest nodeid 和 marker，并支持把用例拆分为普通并发池与 `serial` 串行池。直接执行可输出收集结果：
 
 ```powershell
 .\.venv\Scripts\python.exe master_service.py
 ```
 
-`run_master.py` 是当前框架执行入口。它先调用 `master_service.collect_test_cases()` 收集用例，再把 nodeid list 传给 `pytest.main()`。
+`run_master.py` 是当前框架执行入口。它先调用 `master_service.collect_test_case_items()` 收集 nodeid 和 marker，再按执行参数组织 pytest 调用。
 
 执行全部业务用例：
 
@@ -398,6 +401,24 @@ class TestImageGenerations:
 ```powershell
 .\.venv\Scripts\python.exe run_master.py module/smoke -n 2
 ```
+
+传入 `-n/--numprocesses` 后启用“并发优先、串行收尾”：
+
+```text
+收集全部用例及 marker
+-> 未标记 serial 的用例使用 pytest-xdist 并发执行
+-> 并发池结束后，标记 serial 的用例单进程执行
+-> 两个用例池分别生成 JUnit 文件
+-> Jenkins 归档报告，邮件摘要汇总统计
+```
+
+计费、余额、共享账号或其他依赖共享状态的用例应使用：
+
+```python
+pytestmark = pytest.mark.serial
+```
+
+未传入 `-n` 时，全部用例按普通 pytest 串行执行。
 
 只验证收集，不执行接口：
 
@@ -438,11 +459,145 @@ python_functions = test_*
 node_modules\.bin\allure.cmd open allure-report
 ```
 
-## CI 边界
+## Jenkins CI
 
-当前仓库没有接入 CI 流水线，也没有自动质量门禁。已实现的轻量 Mock、框架单测和本地 collect-only 是后续接入 CI 的基础，但 CI 指标聚合、成功率门禁、耗时分位线、重试率门禁和 Flaky 历史统计尚未实现。
+当前仓库已通过根目录 `Jenkinsfile` 接入 Jenkins，并使用单个参数化 Pipeline Job 管理框架测试、Smoke 收集和可选真实环境测试。
 
-当前推荐本地验收命令：
+### 流水线阶段
+
+```text
+Checkout
+-> Check Runtime Env
+-> Prepare Python Env
+-> Framework Unit Tests（可选）
+-> Collect Smoke Cases（可选）
+-> Real Smoke（可选）
+-> JUnit / Allure / Artifacts / Email
+```
+
+当前阶段职责：
+
+- `Checkout`：从 SCM 拉取当前分支代码和 `Jenkinsfile`。
+- `Check Runtime Env`：确认 workspace 中存在 `.env`；当前 Windows Agent 可从本机受控路径复制，不把凭据写入仓库。
+- `Prepare Python Env`：创建或复用 `.venv`，安装 Python 和 npm 依赖，并清理本次 `reports/` 目录。
+- `Framework Unit Tests`：执行 `tests/` 下的框架测试并发布 `reports/unit-tests.xml`。
+- `Collect Smoke Cases`：只收集真实业务用例，不调用真实接口；收集结果以 UTF-8 写入 `reports/smoke-collect.txt`。
+- `Real Smoke`：按 `SMOKE_TARGET` 执行真实业务用例，支持并发优先、串行收尾。
+- `post`：统一发布 Allure、归档 `allure-results/**` 和 `reports/**`，并按构建状态发送邮件。
+
+### 构建参数
+
+| 参数 | 默认值 | 作用 |
+| --- | --- | --- |
+| `RUN_FRAMEWORK_TESTS` | `true` | 执行 `tests/` 框架测试 |
+| `RUN_COLLECT_ONLY` | `true` | 收集 `module/smoke` 用例，不真实调用接口 |
+| `RUN_REAL_SMOKE` | `false` | 是否执行真实业务 Smoke |
+| `USE_CHINA_ENVIRONMENT` | `TRUE` | 选择国内或默认环境配置 |
+| `SMOKE_TARGET` | `module/smoke` | 真实 Smoke 的目标目录、文件或 nodeid |
+| `TEST_PARALLEL_WORKERS` | `off` | `off/auto/2/4/8`，控制 pytest-xdist worker 数量 |
+
+默认参数只执行框架测试和 Smoke 收集，不执行真实接口，避免因外部服务、账号余额和调用成本造成非预期影响。
+
+### 推荐构建模式
+
+安全门禁构建：
+
+```text
+RUN_FRAMEWORK_TESTS=true
+RUN_COLLECT_ONLY=true
+RUN_REAL_SMOKE=false
+TEST_PARALLEL_WORKERS=off
+```
+
+真实业务回归：
+
+```text
+RUN_FRAMEWORK_TESTS=true
+RUN_COLLECT_ONLY=true
+RUN_REAL_SMOKE=true
+SMOKE_TARGET=module/smoke
+TEST_PARALLEL_WORKERS=2
+```
+
+只执行指定业务文件：
+
+```text
+RUN_REAL_SMOKE=true
+SMOKE_TARGET=module/smoke/test_response_body_validation.py
+```
+
+### 并发与串行
+
+当 `TEST_PARALLEL_WORKERS` 不是 `off` 时：
+
+```text
+普通用例进入并发池
+-> pytest-xdist 执行并发池
+-> serial 用例进入串行池
+-> 并发池结束后串行执行
+```
+
+并发池和串行池分别生成 JUnit 文件，并非物理合并成单个 XML 文件。流水线会归档两个报告，邮件摘要会读取并汇总统计；当前 Jenkins JUnit 测试结果页只显式发布 `reports/smoke-tests.xml`，并行 Smoke 的通配发布规则仍待扩展。
+
+以下用例通常应标记为 `serial`：
+
+- 共享账号余额和调用计费校验。
+- 修改共享 Header、账号状态或全局资源的用例。
+- 依赖前序任务结算完成的业务链路。
+- 并发执行会导致断言数据互相污染的场景。
+
+### 报告与产物
+
+流水线当前发布：
+
+- JUnit 测试结果。
+- Allure 报告入口。
+- `allure-results/**` 原始结果。
+- `reports/unit-tests.xml`。
+- `reports/smoke-collect.txt`。
+- 真实 Smoke 的 `smoke-tests.xml`，或并发模式下的 `smoke-tests-parallel.xml` 与 `smoke-tests-serial.xml`。
+
+### 邮件通知
+
+当前使用 Jenkins Email Extension Plugin 发送 HTML 摘要邮件：
+
+```text
+FAILURE  -> FAILED 邮件
+UNSTABLE -> UNSTABLE 邮件
+SUCCESS 且上一轮为 FAILURE/UNSTABLE -> FIXED 邮件
+连续 SUCCESS -> 不发送
+```
+
+邮件正文包含构建状态、分支、提交、JUnit 汇总、Smoke 收集数量、执行参数和报告入口，不附带完整 Console 日志、`.env`、API Key、请求体或响应体。
+
+SMTP 授权码只配置在 Jenkins 中，不写入 `Jenkinsfile` 或仓库。
+
+### 当前质量门禁
+
+当前已实现的基础阻断：
+
+- 框架测试失败会使构建失败。
+- Smoke 收集失败会使构建失败。
+- 真实 Smoke 返回非零退出码会使构建失败。
+- Jenkins 超时和节点执行异常会反映到构建状态。
+
+当前尚未实现：
+
+- 基于通过率阈值的质量门禁。
+- 接口耗时 P95/P99 趋势和门禁。
+- 重试率、轮询超时率等稳定性指标门禁。
+- Flaky 用例自动识别、隔离和历史治理。
+- 跨构建长期指标聚合与可视化看板。
+
+Jenkins 环境复建和迁移参考：
+
+- `JENKINS_MIGRATION_TEMPLATE.md`
+- `dev/jenkins_ci_configuration_guide.md`
+- `dev/jenkins_email_notification_design.md`
+
+### 本地验收
+
+CI 变更前仍建议先执行：
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests -q
