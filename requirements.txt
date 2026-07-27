@@ -1,7 +1,6 @@
 pytest>=8.0.0
-pytest-xdist
-pytest-rerunfailures==16.4
-requests
-python-dotenv
-allure-pytest
-jsonpath-ng
+pytest-xdist>=3.6.0
+requests>=2.32.0
+python-dotenv>=1.0.0
+allure-pytest>=2.13.0
+jsonpath-ng>=1.7.0
