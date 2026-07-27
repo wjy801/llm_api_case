@@ -22,10 +22,10 @@ from module.material_library.task import (
 )
 
 
-COMPLETED_VISUAL_VALIDATE_SESSION_ID_ENV = "VOLC_CN_VISUAL_VALIDATE_SESSION_ID"
-LIVENESS_GROUP_ID_ENV = "VOLC_CN_LIVENESS_GROUP_ID"
-VISUAL_VALIDATE_SESSION_ID = ""
-VISUAL_VALIDATE_H5_LINK = ""
+COMPLETED_VISUAL_VALIDATE_SESSION_ID_ENV = "session-volc-cn-d57e48e1f99540c4b888c2ca89052a86"
+LIVENESS_GROUP_ID_ENV = "group-volc-cn-31cecd2140084d25bc151f951bb85499"
+VISUAL_VALIDATE_SESSION_ID = "session-volc-cn-b0988de5a9214bcabbc7aa7226abbb02"
+VISUAL_VALIDATE_H5_LINK = " https://ark.volcengine.com/region:cn-beijing/mobile/livenees-face-manage/authorization?pl=YglZ9p9sbdBsIYmjiBYiYoOBPb10Kg-q2P3AprJcscGZ0P6golcZ3sU2RXhAj_dF93f2yfIB03r9Ns9kZV72QYJJdaHu3-DI-Jm8j6v8Cpd2J2PDIRe358UK9SCIydtptdZf09NMXmZrzmrr8llFi-V6GwTK8OWX2T-nDPg7WlPyuFttLLGtv5krXfXeKRMQgeI6DfnTrKzh70aE2txHSIu0SY6bEXOUiSm4dfwUd_TEmi7hr4-KEkpYLbaDtc8Y8D9TvvAcQxGvRTeLkTxO2zJi1yvGqw3KBRijLjd38Hhb2s9H9A4biJQVrscxJ6YGU-89zQ1O2ykNZaob8xIxPQfr0cBQk-SFKVDTV0YIyaAzFBqzS1haKtjfWRySgI7UEG1LHeKvCjqUY3C7o5w5Sp2iwx0mUhmhhPEeg98RchUr-X1vO495U7BjjNm2XtzlUil8AFPjhxqZlXJjDbHTFY9C6DjM11k6OiJUn7tausfl7F6QWx4UTmZZv9cZvHTmnDOESgqDkJ5uDb5o-BnazFtFyV5MOvYChksoEOoxWP9QkokYr1Yy_WNNkbQDSIs4_f8ym59Oxzq8-t19-eKDOPvjjDsSNO-U6WrWOQJNuDVQ8-7JNuoZ8RQHTSlRAcaoNLjZQM1CdrepWiUtw53ZRtmeHO_KBRBXqYBXqPLefj7193HD7K6yDr7vYBJ7DdsznIOiWASovXREjhVxSNYwlWc35BPdo3kRWQixi1Ufrls5KQGUl_wSQWsSLw&uid=9bb12ec7-d9f7-44ea-a522-c7bd1970f107"
 LIVENESS_GROUP_ID = ""
 
 
@@ -345,7 +345,7 @@ class TestVolcCnVisualValidate:
             self.material_library_request,
             session_id,
         )
-
+        print(response.json())
         self.material_library_assertions.assert_status_code(response, 200)
         self.material_library_assertions.assert_visual_validate_session_status(
             response,
@@ -419,7 +419,7 @@ class TestVolcCnVisualValidate:
 
     @staticmethod
     def _saved_or_configured_visual_validate_session_id() -> str:
-        session_id = os.getenv(COMPLETED_VISUAL_VALIDATE_SESSION_ID_ENV, "").strip() or VISUAL_VALIDATE_SESSION_ID
+        session_id = VISUAL_VALIDATE_SESSION_ID or COMPLETED_VISUAL_VALIDATE_SESSION_ID_ENV
         if not session_id:
             pytest.skip(
                 f"Please complete H5 visual validate first and configure "

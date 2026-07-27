@@ -17,15 +17,15 @@ VOLC_GROUP_ID_PREFIX = "group-volc-cn-"
 VOLC_ASSET_ID_PREFIX = "asset-volc-cn-"
 VOLC_VISUAL_VALIDATE_SESSION_ID_PREFIX = "session-volc-cn-"
 VOLC_LIVENESS_GROUP_TYPE = "LivenessFace"
-DEFAULT_VOLC_LIVENESS_IMAGE_URL = "https://ark-project.tos-cn-beijing.volces.com/doc_image/r2v_tea_pic2.jpg"
-DEFAULT_VOLC_SAMPLE_IMAGE_URL = "https://ark-project.tos-cn-beijing.volces.com/doc_image/r2v_tea_pic1.jpg"
+DEFAULT_VOLC_LIVENESS_IMAGE_URL = "https://moxing-resource.oss-cn-wulanchabu.aliyuncs.com/image/0000jingyan34678223/1.jpg?Expires=1785131896&OSSAccessKeyId=TMP.3L1gremYpaCPC5EgJLpkW1eHVHP1hkJnLk6vAktiMzKfaNh4fUBB1fEndXXoSfEvvjNPT3C7pBKJkaPgkQR893E5PJwMcq&Signature=%2Ba%2Fcf7rl58NZP3b1B%2FszCoEQYDA%3D"
+DEFAULT_VOLC_SAMPLE_IMAGE_URL = "https://moxing-resource.oss-cn-wulanchabu.aliyuncs.com/image/0000jingyan34678223/1.jpg?Expires=1785131896&OSSAccessKeyId=TMP.3L1gremYpaCPC5EgJLpkW1eHVHP1hkJnLk6vAktiMzKfaNh4fUBB1fEndXXoSfEvvjNPT3C7pBKJkaPgkQR893E5PJwMcq&Signature=%2Ba%2Fcf7rl58NZP3b1B%2FszCoEQYDA%3D"
 DEFAULT_VOLC_FAST_VIDEO_MODEL = "doubao-seedance-2-0-fast-260128"
 DEFAULT_VOLC_MINI_VIDEO_MODEL = "doubao-seedance-2-0-mini-260615"
 VOLC_ASSET_POLL_INTERVAL_SECONDS = 3
 VOLC_ASSET_POLL_TIMEOUT_SECONDS = 180
 VOLC_VISUAL_VALIDATE_POLL_INTERVAL_SECONDS = 3
 VOLC_VISUAL_VALIDATE_POLL_TIMEOUT_SECONDS = 1200
-VOLC_VISUAL_VALIDATE_PENDING_STATUS = "pending"
+VOLC_VISUAL_VALIDATE_PENDING_STATUS = "callback_received"
 VOLC_VISUAL_VALIDATE_READY_STATUSES = {"callback_received", "group_ready"}
 VOLC_VISUAL_VALIDATE_FAILURE_STATUSES = {"failed"}
 VOLC_VIDEO_POLL_INTERVAL_SECONDS = 5

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 import requests
@@ -16,6 +17,8 @@ class MaterialLibraryAssertions(BaseAssertions):
         field_label: str = "Result.Id",
     ) -> requests.Response:
         result_id = self.get_required_nested_value(response, ["Result", "Id"], field_label)
+        sys.__stdout__.write(f"{field_label}: {result_id}\n")
+        sys.__stdout__.flush()
         assert str(result_id).startswith(expected_prefix), (
             f"{field_label} should start with {expected_prefix!r}, actual: {result_id!r}. "
             f"Response body: {response.text}"
