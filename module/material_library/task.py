@@ -24,7 +24,7 @@ DEFAULT_VOLC_MINI_VIDEO_MODEL = "doubao-seedance-2-0-mini-260615"
 VOLC_ASSET_POLL_INTERVAL_SECONDS = 3
 VOLC_ASSET_POLL_TIMEOUT_SECONDS = 180
 VOLC_VISUAL_VALIDATE_POLL_INTERVAL_SECONDS = 3
-VOLC_VISUAL_VALIDATE_POLL_TIMEOUT_SECONDS = 300
+VOLC_VISUAL_VALIDATE_POLL_TIMEOUT_SECONDS = 1200
 VOLC_VISUAL_VALIDATE_PENDING_STATUS = "pending"
 VOLC_VISUAL_VALIDATE_READY_STATUSES = {"callback_received", "group_ready"}
 VOLC_VISUAL_VALIDATE_FAILURE_STATUSES = {"failed"}
@@ -185,6 +185,34 @@ class MaterialLibraryTask(BaseTask):
             if remaining <= 0:
                 raise TimeoutError(
                     f"Timed out waiting for Volc visual validate session {session_id} to become ready. "
+                    f"Last response: {last_response.text if last_response is not None else '<none>'}"
+                )
+            time.sleep(min(poll_interval, remaining))
+
+    @allure_step("轮询国内官key真人认证结果生成真人素材组: {session_id}")
+    def poll_visual_validate_result_until_group_ready(
+        self,
+        request_client: MaterialLibraryRequest,
+        session_id: str,
+        *,
+        poll_interval: float = VOLC_VISUAL_VALIDATE_POLL_INTERVAL_SECONDS,
+        poll_timeout: float = VOLC_VISUAL_VALIDATE_POLL_TIMEOUT_SECONDS,
+    ) -> requests.Response:
+        deadline = time.monotonic() + poll_timeout
+        last_response: requests.Response | None = None
+
+        while True:
+            last_response = self.get_visual_validate_result(request_client, session_id)
+            if last_response.status_code == 200:
+                group_id = self.extract_json_path(last_response, ["Result", "GroupId"])
+                print(f"volc visual validate result {session_id} group_id: {group_id or '<not-ready>'}")
+                if group_id:
+                    return last_response
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Timed out waiting for Volc visual validate result {session_id} to return GroupId. "
                     f"Last response: {last_response.text if last_response is not None else '<none>'}"
                 )
             time.sleep(min(poll_interval, remaining))
