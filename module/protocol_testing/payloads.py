@@ -38,6 +38,38 @@ def build_text_v1_responses_payload(model_id: str) -> dict[str, Any]:
     }
 
 
+def build_image_v1_media_generations_payload(model_id: str) -> dict[str, Any]:
+    return {
+        "input": {
+            "messages": [
+                {
+                    "content": [
+                        {
+                            "text": "生成陡峭的山脉",
+                        }
+                    ],
+                    "role": "user",
+                }
+            ]
+        },
+        "model": model_id,
+    }
+
+
+def build_image_v1_images_generations_payload(model_id: str) -> dict[str, Any]:
+    return {
+        "model": model_id,
+        "prompt": "生成陡峭的山脉",
+    }
+
+
+def build_image_v1_images_edits_payload(model_id: str) -> dict[str, Any]:
+    return {
+        "model": model_id,
+        "prompt": "在图片中添加陡峭的山脉",
+    }
+
+
 def build_text_anthropic_messages_payload(model_id: str) -> dict[str, Any]:
     return {
         "model": model_id,

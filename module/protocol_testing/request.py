@@ -17,6 +17,9 @@ class ProtocolRequest(BaseRequest):
     chat_completions_path = "/v1/chat/completions"
     responses_path = "/v1/responses"
     messages_path = "/v1/messages"
+    image_generations_path = "/v1/images/generations"
+    image_edits_path = "/v1/images/edits"
+    media_generations_path = "/v1/media/generations"
 
     def create_chat_completion(
         self,
@@ -41,6 +44,57 @@ class ProtocolRequest(BaseRequest):
             json=payload,
             **self._build_optional_headers_kwargs(headers),
         )
+
+    def create_media_generation(
+        self,
+        payload: dict[str, Any],
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> requests.Response:
+        return self.post(
+            self.media_generations_path,
+            json=payload,
+            **self._build_optional_headers_kwargs(headers),
+        )
+
+    def create_image_generation(
+        self,
+        payload: dict[str, Any],
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> requests.Response:
+        return self.post(
+            self.image_generations_path,
+            json=payload,
+            **self._build_optional_headers_kwargs(headers),
+        )
+
+    def create_image_edit(
+        self,
+        payload: dict[str, Any],
+        image: bytes,
+        *,
+        image_filename: str = "protocol-interception.png",
+        headers: dict[str, str] | None = None,
+    ) -> requests.Response:
+        original_headers = dict(self.session.headers)
+        multipart_headers = dict(original_headers)
+        multipart_headers.pop("Content-Type", None)
+        if headers:
+            multipart_headers.update(headers)
+            multipart_headers.pop("Content-Type", None)
+
+        self.session.headers.clear()
+        self.update_headers(multipart_headers)
+        try:
+            return self.post(
+                self.image_edits_path,
+                data=payload,
+                files={"image": (image_filename, image, "image/png")},
+            )
+        finally:
+            self.session.headers.clear()
+            self.update_headers(original_headers)
 
     def create_message(
         self,
