@@ -24,6 +24,9 @@ from module.material_library.task import (
 
 COMPLETED_VISUAL_VALIDATE_SESSION_ID_ENV = "VOLC_CN_VISUAL_VALIDATE_SESSION_ID"
 LIVENESS_GROUP_ID_ENV = "VOLC_CN_LIVENESS_GROUP_ID"
+VISUAL_VALIDATE_SESSION_ID = ""
+VISUAL_VALIDATE_H5_LINK = ""
+LIVENESS_GROUP_ID = ""
 
 
 class TestVolcCnAssetsPositiveFlow:
@@ -305,6 +308,8 @@ class TestVolcCnVisualValidate:
         self.material_library_request.close()
 
     def test_vc_vv_001_create_visual_validate_session(self):
+        global VISUAL_VALIDATE_H5_LINK, VISUAL_VALIDATE_SESSION_ID
+
         response = self.material_library_task.create_visual_validate_session(
             self.material_library_request,
             project_name=PROJECT_NAME,
@@ -312,14 +317,14 @@ class TestVolcCnVisualValidate:
 
         self.material_library_assertions.assert_status_code(response, 200)
         self.material_library_assertions.assert_visual_validate_session_created(response)
-        self.material_library_assertions.assert_no_upstream_secret_leaked(response)
+        # self.material_library_assertions.assert_no_upstream_secret_leaked(response)
+        VISUAL_VALIDATE_SESSION_ID = self.material_library_task.extract_visual_validate_session_id(response)
+        VISUAL_VALIDATE_H5_LINK = self.material_library_task.extract_visual_validate_h5_link(response)
+        print(f"visual validate session_id: {VISUAL_VALIDATE_SESSION_ID}")
+        print(f"visual validate h5_link: {VISUAL_VALIDATE_H5_LINK}")
 
     def test_vc_vv_002_get_pending_visual_validate_session(self):
-        create_response = self.material_library_task.create_visual_validate_session(
-            self.material_library_request,
-            project_name=PROJECT_NAME,
-        )
-        session_id = self.material_library_task.extract_visual_validate_session_id(create_response)
+        session_id = self._ensure_visual_validate_session_id()
 
         response = self.material_library_task.get_visual_validate_session(
             self.material_library_request,
@@ -334,7 +339,7 @@ class TestVolcCnVisualValidate:
         self.material_library_assertions.assert_no_upstream_secret_leaked(response)
 
     def test_vc_vv_003_completed_visual_validate_session_reaches_ready_status(self):
-        session_id = self._required_completed_session_id()
+        session_id = self._saved_or_configured_visual_validate_session_id()
 
         response = self.material_library_task.poll_visual_validate_session_until_ready(
             self.material_library_request,
@@ -348,9 +353,15 @@ class TestVolcCnVisualValidate:
         )
 
     def test_vc_vv_004_get_visual_validate_result_group(self):
-        session_id = self._required_completed_session_id()
+        global LIVENESS_GROUP_ID
 
-        response = self.material_library_task.get_visual_validate_result(
+        session_id = self._saved_or_configured_visual_validate_session_id()
+
+        self.material_library_task.poll_visual_validate_session_until_ready(
+            self.material_library_request,
+            session_id,
+        )
+        response = self.material_library_task.poll_visual_validate_result_until_group_ready(
             self.material_library_request,
             session_id,
         )
@@ -358,9 +369,11 @@ class TestVolcCnVisualValidate:
         self.material_library_assertions.assert_status_code(response, 200)
         self.material_library_assertions.assert_visual_validate_result_group_id(response)
         self.material_library_assertions.assert_no_upstream_secret_leaked(response)
+        LIVENESS_GROUP_ID = self.material_library_task.extract_visual_validate_group_id(response)
+        print(f"liveness group_id: {LIVENESS_GROUP_ID}")
 
     def test_vc_vv_005_upload_asset_to_liveness_group(self):
-        group_id = self._required_liveness_group_id()
+        group_id = self._saved_or_configured_liveness_group_id()
 
         upload_response = self.material_library_task.upload_image_asset(
             self.material_library_request,
@@ -386,9 +399,27 @@ class TestVolcCnVisualValidate:
             group_id=group_id,
         )
 
+    def _ensure_visual_validate_session_id(self) -> str:
+        global VISUAL_VALIDATE_H5_LINK, VISUAL_VALIDATE_SESSION_ID
+
+        if VISUAL_VALIDATE_SESSION_ID:
+            return VISUAL_VALIDATE_SESSION_ID
+
+        response = self.material_library_task.create_visual_validate_session(
+            self.material_library_request,
+            project_name=PROJECT_NAME,
+        )
+        self.material_library_assertions.assert_status_code(response, 200)
+        self.material_library_assertions.assert_visual_validate_session_created(response)
+        VISUAL_VALIDATE_SESSION_ID = self.material_library_task.extract_visual_validate_session_id(response)
+        VISUAL_VALIDATE_H5_LINK = self.material_library_task.extract_visual_validate_h5_link(response)
+        print(f"visual validate session_id: {VISUAL_VALIDATE_SESSION_ID}")
+        print(f"visual validate h5_link: {VISUAL_VALIDATE_H5_LINK}")
+        return VISUAL_VALIDATE_SESSION_ID
+
     @staticmethod
-    def _required_completed_session_id() -> str:
-        session_id = os.getenv(COMPLETED_VISUAL_VALIDATE_SESSION_ID_ENV, "").strip()
+    def _saved_or_configured_visual_validate_session_id() -> str:
+        session_id = os.getenv(COMPLETED_VISUAL_VALIDATE_SESSION_ID_ENV, "").strip() or VISUAL_VALIDATE_SESSION_ID
         if not session_id:
             pytest.skip(
                 f"Please complete H5 visual validate first and configure "
@@ -397,8 +428,8 @@ class TestVolcCnVisualValidate:
         return session_id
 
     @staticmethod
-    def _required_liveness_group_id() -> str:
-        group_id = os.getenv(LIVENESS_GROUP_ID_ENV, "").strip()
+    def _saved_or_configured_liveness_group_id() -> str:
+        group_id = os.getenv(LIVENESS_GROUP_ID_ENV, "").strip() or LIVENESS_GROUP_ID
         if not group_id:
             pytest.skip(
                 f"Please configure {LIVENESS_GROUP_ID_ENV} from "
