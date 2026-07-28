@@ -313,6 +313,8 @@ git diff 56f4f15 291e6ea -- common/base_request.py common/request_context.py com
 
 ## 第 4 天：日志与脱敏为什么是数据流问题
 
+完整课程内容：[DAY04_LOGGING_REDACTION_DATA_FLOW.md](DAY04_LOGGING_REDACTION_DATA_FLOW.md)
+
 ### 核心问题
 
 为什么“把敏感字段替换掉”可能破坏真实请求？日志正确性由谁负责？
