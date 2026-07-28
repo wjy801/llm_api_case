@@ -5,6 +5,7 @@ from typing import Any
 import requests
 
 from common import BaseRequest
+from common.polling import DEFAULT_MEDIA_POLLING_POLICY, PollingPolicy
 
 
 class SmokeRequest(BaseRequest):
@@ -42,15 +43,13 @@ class SmokeRequest(BaseRequest):
         *,
         poll_interval: float = 2,
         poll_timeout: float | None = None,
-        success_json_path: str = "$.result.urls",
-        failure_json_path: str | None = "$.error",
+        polling_policy: PollingPolicy = DEFAULT_MEDIA_POLLING_POLICY,
     ) -> requests.Response:
         return self.poll_get(
             self.media_task_path_template.format(task_id=task_id),
             poll_interval=poll_interval,
             poll_timeout=poll_timeout,
-            success_json_path=success_json_path,
-            failure_json_path=failure_json_path,
+            polling_policy=polling_policy,
         )
 
     def get_account_balance(self, control_api_key: str) -> requests.Response:
