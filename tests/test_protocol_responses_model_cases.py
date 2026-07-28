@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from module.protocol_testing.payloads import build_text_responses_payload
-from module.protocol_testing.v1_responses.model_cases import load_response_model_ids
+from module.protocol_testing.payloads import build_text_v1_responses_payload
+from module.protocol_testing.v1_responses.supported_models import load_response_model_ids
 
 
 class TestProtocolResponsesModelCases:
@@ -23,8 +23,8 @@ class TestProtocolResponsesModelCases:
 
         assert load_response_model_ids(csv_path) == []
 
-    def test_build_text_responses_payload_uses_model_id(self):
-        assert build_text_responses_payload("model-a") == {
+    def test_build_text_v1_responses_payload_uses_model_id(self):
+        assert build_text_v1_responses_payload("model-a") == {
             "model": "model-a",
             "input": "hi",
             "stream": False,
