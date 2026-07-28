@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from module.protocol_testing.payloads import build_text_v1_chat_completions_payload
 from module.protocol_testing.v1_chat_completions.model_cases import load_chat_completion_model_ids
 
 
@@ -32,3 +33,29 @@ class TestProtocolModelCases:
         csv_path.write_text("", encoding="utf-8")
 
         assert load_chat_completion_model_ids(csv_path) == []
+
+    def test_build_text_v1_chat_completions_payload_uses_model_id(self):
+        assert build_text_v1_chat_completions_payload("model-a") == {
+            "model": "model-a",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "你是墨行AI助手，请简洁回答。",
+                },
+                {
+                    "role": "user",
+                    "content": "我们在做企业知识库问答。",
+                },
+                {
+                    "role": "assistant",
+                    "content": "收到，请告诉我你希望接入的场景。",
+                },
+                {
+                    "role": "user",
+                    "content": "请给我一个最小接入建议。",
+                },
+            ],
+            "temperature": 0.7,
+            "stream": False,
+            "user": "demo-user-001",
+        }
