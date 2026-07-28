@@ -42,9 +42,13 @@ class BaseDecorators:
     def download_links_from_poll_get(self, func: F) -> F:
         @wraps(func)
         def wrapper(instance: Any, path: str, *args: Any, **kwargs: Any) -> requests.Response:
-            success_json_path = kwargs.get("success_json_path", "$.result.urls")
+            polling_policy = kwargs.get("polling_policy")
+            result_json_path = getattr(polling_policy, "result_json_path", None)
             response = func(instance, path, *args, **kwargs)
-            link_value = instance._extract_json_path_value(response, success_json_path)
+            if result_json_path is None:
+                return response
+
+            link_value = self._extract_json_path_value(response, result_json_path)
             for url in self._extract_urls(link_value):
                 file_path = self._download_url(url, DOWNLOAD_DIR)
                 self._record_model_result_file(file_path)
@@ -97,6 +101,23 @@ class BaseDecorators:
         urls: list[str] = []
         self._collect_urls(value, urls)
         return list(dict.fromkeys(urls))
+
+    @staticmethod
+    def _extract_json_path_value(response: requests.Response, json_path: str) -> Any:
+        from jsonpath_ng.ext import parse
+
+        if not json_path.startswith("$"):
+            raise ValueError(f"json_path must start with '$', current value: {json_path!r}")
+
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise AssertionError(f"response body is not valid JSON: {response.text}") from exc
+
+        matches = [match.value for match in parse(json_path).find(body)]
+        if not matches:
+            return None
+        return matches[0] if len(matches) == 1 else matches
 
     def _collect_urls(self, value: Any, urls: list[str]) -> None:
         if isinstance(value, str):

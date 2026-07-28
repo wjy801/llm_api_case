@@ -17,6 +17,7 @@ from util import (
 )
 from common import (
     BaseRequest,
+    TestContext,
     attach_model_result_file,
     start_model_result_collection,
     stop_model_result_collection,
@@ -85,6 +86,15 @@ def api() -> BaseRequest:
         yield client
     finally:
         client.close()
+
+
+@pytest.fixture
+def test_context() -> TestContext:
+    context = TestContext()
+    try:
+        yield context
+    finally:
+        context.cleanup()
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
