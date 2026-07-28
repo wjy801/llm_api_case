@@ -11,6 +11,7 @@ from module.smoke import SmokeAssertions, SmokeRequest, SmokeTask
 
 
 IMAGE_URL_TIMEOUT_SECONDS = 30
+pytestmark = pytest.mark.serial
 
 
 class TestSyncImageGeneration:

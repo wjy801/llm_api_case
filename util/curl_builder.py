@@ -2,21 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 import json
-from typing import Final
 
 import requests
 
-
-DEFAULT_REDACT_HEADERS: Final[frozenset[str]] = frozenset(
-    {
-        "authorization",
-        "cookie",
-        "proxy-authorization",
-        "set-cookie",
-        "x-api-key",
-    }
+from util.redaction import (
+    DEFAULT_REDACT_HEADERS,
+    REDACTED_VALUE,
+    redact_sensitive_data,
+    redact_text_body,
+    redact_url,
 )
-REDACTED_VALUE: Final[str] = "<redacted>"
 
 
 def build_curl(
@@ -29,7 +24,7 @@ def build_curl(
         raise TypeError("prepared_request must be a requests.PreparedRequest instance")
 
     method = prepared_request.method or "GET"
-    url = prepared_request.url
+    url = redact_url(prepared_request.url)
     if not url:
         raise ValueError("prepared_request.url is empty")
 
@@ -65,10 +60,10 @@ def _request_body_to_text(body: object, content_type: str = "") -> str | None:
     text = str(body)
     if _looks_like_json(content_type, text):
         try:
-            return json.dumps(json.loads(text), ensure_ascii=False)
+            return json.dumps(redact_sensitive_data(json.loads(text)), ensure_ascii=False)
         except ValueError:
             pass
-    return text
+    return redact_text_body(text, content_type)
 
 
 def _join_command_parts(parts: list[str], *, multiline: bool) -> str:
