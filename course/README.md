@@ -165,6 +165,8 @@ cd D:\API_CASE
 
 ## 第 1 天：从初版框架建立演进问题地图
 
+完整课程内容：[DAY01_EVOLUTION_PROBLEM_MAP.md](DAY01_EVOLUTION_PROBLEM_MAP.md)
+
 ### 核心问题
 
 初版框架已经能够发请求、做断言和生成报告，为什么还需要后续扩展？
