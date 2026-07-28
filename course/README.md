@@ -265,6 +265,8 @@ git show 2748f16 -- config.py util/config_validation.py
 
 ## 第 3 天：从请求主流程推导 Middleware 边界
 
+完整课程内容：[DAY03_REQUEST_MIDDLEWARE_BOUNDARY.md](DAY03_REQUEST_MIDDLEWARE_BOUNDARY.md)
+
 ### 核心问题
 
 哪些扩展属于一次 HTTP 请求，哪些看起来像横切能力却不应该进入 Middleware？
