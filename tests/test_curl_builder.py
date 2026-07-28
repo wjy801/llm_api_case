@@ -74,6 +74,41 @@ class TestBuildCurl:
         assert """--data-raw '{"prompt": "未来城市", "watermark": false}'""" in curl
         assert "\\u672a" not in curl
 
+    def test_redacts_sensitive_query_and_json_body_fields(self):
+        prepared_request = requests.Request(
+            "POST",
+            "https://example.com/v1/chat/completions?api_key=query-secret&model=test",
+            headers={"Content-Type": "application/json"},
+            json={
+                "model": "test",
+                "token": "body-secret",
+                "nested": {"password": "nested-secret"},
+            },
+        ).prepare()
+
+        curl = build_curl(prepared_request, multiline=False)
+
+        assert "query-secret" not in curl
+        assert "body-secret" not in curl
+        assert "nested-secret" not in curl
+        assert "<redacted>" in curl
+
+    def test_redacts_sensitive_form_body_fields(self):
+        prepared_request = requests.Request(
+            "POST",
+            "https://example.com/oauth/token",
+            data={
+                "token": "form-secret",
+                "scope": "read",
+            },
+        ).prepare()
+
+        curl = build_curl(prepared_request, multiline=False)
+
+        assert "form-secret" not in curl
+        assert "scope=read" in curl
+        assert "%3Credacted%3E" in curl
+
     def test_requires_prepared_request(self):
         with pytest.raises(TypeError):
             build_curl(object())  # type: ignore[arg-type]

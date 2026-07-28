@@ -1,53 +1,69 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import time
 from typing import Any
 from urllib.parse import urljoin
 
-from jsonpath_ng.ext import parse
 import requests
 
 from config import Settings, settings
 from common.base_decorators import download_links_from_poll_get
+from common.polling import (
+    PollingFailedError,
+    PollingPolicy,
+    PollingState,
+    PollingTimeoutError,
+    PollingTransition,
+    PollingUnknownStateError,
+    evaluate_polling_response,
+    format_polling_transitions,
+)
+from common.request_context import RequestContext
+from common.request_middleware import (
+    LoggingMiddleware,
+    RequestMiddleware,
+    default_request_middlewares,
+)
+from common.retry import (
+    RetryAttemptRecord,
+    RetryPolicy,
+)
+from common.retry_executor import RetryExecutor
 from util import (
     API_REQUEST_STEP_NAME,
     ApiCallLogger,
+    API_RESPONSE_STEP_NAME,
     POLL_GET_REQUEST_STEP_NAME,
     POLL_GET_RESPONSE_STEP_NAME,
-    start_media_downloads,
 )
 
 
 class BaseRequest:
-    def __init__(self, config: Settings = settings):
+    def __init__(
+        self,
+        config: Settings = settings,
+        middlewares: list[RequestMiddleware] | None = None,
+        retry_executor: RetryExecutor | None = None,
+    ):
         self.config = config
         self.session = requests.Session()
         self.default_headers = self._build_default_headers()
         self.session.headers.update(self.default_headers)
+        self.middlewares = list(self._default_middlewares() if middlewares is None else middlewares)
+        self.retry_executor = retry_executor or RetryExecutor(sleeper=time.sleep, monotonic=time.monotonic)
+
+    def _default_middlewares(self) -> list[RequestMiddleware]:
+        return default_request_middlewares()
 
     def request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
         attach_log = kwargs.pop("_attach_log", True)
-        url = self._build_url(path)
-        kwargs.setdefault("timeout", self.config.timeout)
+        retry_policy = kwargs.pop("retry_policy", None)
+        if retry_policy is not None:
+            return self._send_with_retry(method, path, retry_policy, attach_log=attach_log, **kwargs)
 
-        headers = kwargs.pop("headers", None)
-        if headers:
-            kwargs["headers"] = self._merge_headers(headers)
-
-        if method.upper() == "POST":
-            start_media_downloads(kwargs.get("json"))
-
-        logger = ApiCallLogger(method, url, kwargs)
-        try:
-            response = self.session.request(method=method, url=url, **kwargs)
-        except Exception as error:
-            if attach_log:
-                logger.attach_failure(error)
-            raise
-
-        if attach_log:
-            logger.attach_success(response)
-        return response
+        context = self._build_request_context(method, path, attach_log=attach_log, **kwargs)
+        return self._send(context)
 
     def set_header(self, name: str, value: str) -> None:
         self.session.headers[name] = value
@@ -72,8 +88,8 @@ class BaseRequest:
         *,
         poll_interval: float = 2,
         poll_timeout: float | None = None,
-        success_json_path: str | None = None,
-        failure_json_path: str | None = None,
+        polling_policy: PollingPolicy,
+        retry_policy: RetryPolicy | None = None,
         **kwargs: Any,
     ) -> requests.Response:
         if poll_interval <= 0:
@@ -83,50 +99,14 @@ class BaseRequest:
         if timeout <= 0:
             raise ValueError("poll_timeout must be greater than 0")
 
-        deadline = time.monotonic() + timeout
-        last_response: requests.Response
-        last_status: Any
-        last_logger: ApiCallLogger | None = None
-
-        while True:
-            last_response, last_logger = self._request_without_attach(
-                "GET",
-                path,
-                step_name=POLL_GET_REQUEST_STEP_NAME,
-                response_step_name=POLL_GET_RESPONSE_STEP_NAME,
-                **kwargs,
-            )
-            failure_status = None
-            try:
-                if failure_json_path is not None:
-                    failure_status = self._extract_json_path_value(last_response, failure_json_path)
-                last_status = self._extract_json_path_value(last_response, success_json_path)
-            except Exception:
-                last_logger.attach_success(last_response)
-                raise
-
-            if failure_json_path is not None and failure_status is not None:
-                last_logger.attach_success(last_response)
-                raise AssertionError(
-                    f"poll_get failed: path={path!r}, "
-                    f"{failure_json_path}={failure_status!r}, "
-                    f"response={last_response.text}"
-                )
-
-            if last_status is not None:
-                last_logger.attach_success(last_response)
-                return last_response
-
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                last_logger.attach_success(last_response)
-                raise TimeoutError(
-                    f"poll_get timed out after {timeout} seconds: path={path!r}, "
-                    f"last {success_json_path}={last_status!r}, "
-                    f"last response={last_response.text if last_response is not None else '<empty>'}"
-                )
-
-            time.sleep(min(poll_interval, remaining))
+        return self._poll_get_with_policy(
+            path,
+            poll_interval=poll_interval,
+            timeout=timeout,
+            polling_policy=polling_policy,
+            retry_policy=retry_policy,
+            **kwargs,
+        )
 
     def post(self, path: str, **kwargs: Any) -> requests.Response:
         return self.request("POST", path, **kwargs)
@@ -162,6 +142,139 @@ class BaseRequest:
         merged.update(headers)
         return merged
 
+    @staticmethod
+    def _copy_request_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+        copied_kwargs: dict[str, Any] = {}
+        for name, value in kwargs.items():
+            try:
+                copied_kwargs[name] = deepcopy(value)
+            except Exception:
+                copied_kwargs[name] = value
+        return copied_kwargs
+
+    def _build_request_context(
+        self,
+        method: str,
+        path: str,
+        *,
+        attach_log: bool = True,
+        request_step_name: str = API_REQUEST_STEP_NAME,
+        response_step_name: str = API_RESPONSE_STEP_NAME,
+        **kwargs: Any,
+    ) -> RequestContext:
+        url = self._build_url(path)
+        request_kwargs = self._copy_request_kwargs(kwargs)
+        request_kwargs.setdefault("timeout", self.config.timeout)
+
+        headers = request_kwargs.pop("headers", None)
+        if headers:
+            request_kwargs["headers"] = self._merge_headers(headers)
+
+        return RequestContext(
+            method=method.upper(),
+            path=path,
+            url=url,
+            kwargs=request_kwargs,
+            attach_log=attach_log,
+            request_step_name=request_step_name,
+            response_step_name=response_step_name,
+        )
+
+    def _send(self, context: RequestContext) -> requests.Response:
+        self._run_before_middlewares(context)
+
+        try:
+            response = self.session.request(
+                method=context.method,
+                url=context.url,
+                **context.kwargs,
+            )
+        except Exception as error:
+            self._run_exception_middlewares(context, error)
+            raise
+
+        self._run_after_middlewares(context, response)
+        return response
+
+    def _send_with_retry(
+        self,
+        method: str,
+        path: str,
+        retry_policy: RetryPolicy,
+        *,
+        attach_log: bool = True,
+        request_step_name: str = API_REQUEST_STEP_NAME,
+        response_step_name: str = API_RESPONSE_STEP_NAME,
+        context_recorder: list[RequestContext] | None = None,
+        **kwargs: Any,
+    ) -> requests.Response:
+        first_context = self._build_request_context(
+            method,
+            path,
+            attach_log=attach_log,
+            request_step_name=request_step_name,
+            response_step_name=response_step_name,
+            **kwargs,
+        )
+
+        def context_factory(attempt_index: int) -> RequestContext:
+            context = self._build_request_context(
+                method,
+                path,
+                attach_log=attach_log,
+                request_step_name=request_step_name,
+                response_step_name=response_step_name,
+                **kwargs,
+            )
+            context.attributes["attempt_index"] = attempt_index
+            context.attributes["max_attempts"] = retry_policy.max_attempts
+            return context
+
+        return self.retry_executor.execute(
+            method=first_context.method,
+            request_kwargs=self._kwargs_with_session_headers(first_context.kwargs),
+            policy=retry_policy,
+            context_factory=context_factory,
+            send_once=self._send,
+            attach_records=self._attach_retry_records,
+            context_recorder=context_recorder,
+        )
+
+    def _run_before_middlewares(self, context: RequestContext) -> None:
+        for middleware in self.middlewares:
+            try:
+                middleware.before_request(context)
+            except Exception as error:
+                raise RuntimeError(
+                    f"Request middleware {type(middleware).__name__} failed in before_request"
+                ) from error
+
+    def _run_after_middlewares(self, context: RequestContext, response: requests.Response) -> None:
+        for middleware in self.middlewares:
+            try:
+                middleware.after_response(context, response)
+            except Exception as error:
+                raise RuntimeError(
+                    f"Request middleware {type(middleware).__name__} failed in after_response"
+                ) from error
+
+    def _run_exception_middlewares(self, context: RequestContext, request_error: BaseException) -> None:
+        middleware_errors: list[RuntimeError] = []
+        for middleware in self.middlewares:
+            try:
+                middleware.on_exception(context, request_error)
+            except Exception as error:
+                middleware_errors.append(
+                    RuntimeError(
+                        f"Request middleware {type(middleware).__name__} failed in on_exception"
+                    )
+                )
+                middleware_errors[-1].__cause__ = error
+        if middleware_errors:
+            context.attributes["middleware_exception_errors"] = middleware_errors
+            for middleware_error in middleware_errors:
+                request_error.add_note(str(middleware_error))
+
     def _request_without_attach(
         self,
         method: str,
@@ -169,40 +282,168 @@ class BaseRequest:
         *,
         step_name: str = API_REQUEST_STEP_NAME,
         response_step_name: str | None = None,
+        retry_policy: RetryPolicy | None = None,
         **kwargs: Any,
     ) -> tuple[requests.Response, ApiCallLogger]:
-        url = self._build_url(path)
-        request_kwargs = dict(kwargs)
-        request_kwargs.setdefault("timeout", self.config.timeout)
-
-        headers = request_kwargs.pop("headers", None)
-        if headers:
-            request_kwargs["headers"] = self._merge_headers(headers)
-
-        logger_kwargs: dict[str, Any] = {"step_name": step_name}
-        if response_step_name is not None:
-            logger_kwargs["response_step_name"] = response_step_name
-
-        logger = ApiCallLogger(method, url, request_kwargs, **logger_kwargs)
+        context = self._build_request_context(
+            method,
+            path,
+            attach_log=False,
+            request_step_name=step_name,
+            response_step_name=response_step_name or API_RESPONSE_STEP_NAME,
+            **kwargs,
+        )
         try:
-            response = self.session.request(method=method, url=url, **request_kwargs)
+            if retry_policy is None:
+                response = self._send(context)
+                response_context = context
+            else:
+                context_recorder: list[RequestContext] = []
+                response = self._send_with_retry(
+                    method,
+                    path,
+                    retry_policy,
+                    attach_log=False,
+                    request_step_name=step_name,
+                    response_step_name=response_step_name or API_RESPONSE_STEP_NAME,
+                    context_recorder=context_recorder,
+                    **kwargs,
+                )
+                response_context = context_recorder[-1] if context_recorder else context
         except Exception as error:
+            logger_context = context_recorder[-1] if retry_policy is not None and context_recorder else context
+            logger = self._get_optional_api_call_logger(logger_context)
             logger.attach_failure(error)
             raise
-
+        logger = self._get_optional_api_call_logger(response_context)
         return response, logger
 
+    def _poll_get_with_policy(
+        self,
+        path: str,
+        *,
+        poll_interval: float,
+        timeout: float,
+        polling_policy: PollingPolicy,
+        retry_policy: RetryPolicy | None = None,
+        **kwargs: Any,
+    ) -> requests.Response:
+        deadline = time.monotonic() + timeout
+        started_at = time.monotonic()
+        transitions: list[PollingTransition] = []
+        last_response: requests.Response | None = None
+        last_status: Any = None
+        last_logger: ApiCallLogger | None = None
+        attempt_index = 0
+
+        while True:
+            attempt_index += 1
+            last_response, last_logger = self._request_without_attach(
+                "GET",
+                path,
+                step_name=POLL_GET_REQUEST_STEP_NAME,
+                response_step_name=POLL_GET_RESPONSE_STEP_NAME,
+                retry_policy=retry_policy,
+                **kwargs,
+            )
+            try:
+                evaluation = evaluate_polling_response(last_response, polling_policy)
+            except Exception:
+                last_logger.attach_success(last_response)
+                raise
+
+            last_status = evaluation.raw_status
+            transitions.append(
+                PollingTransition(
+                    attempt_index=attempt_index,
+                    elapsed_seconds=round(time.monotonic() - started_at, 3),
+                    state=evaluation.state,
+                    raw_status=evaluation.raw_status,
+                    response_status_code=last_response.status_code,
+                )
+            )
+
+            if evaluation.state is PollingState.SUCCESS:
+                self._attach_polling_transitions(last_logger, transitions)
+                last_logger.attach_success(last_response)
+                return last_response
+
+            if evaluation.state is PollingState.FAILURE:
+                self._attach_polling_transitions(last_logger, transitions)
+                last_logger.attach_success(last_response)
+                raise PollingFailedError(
+                    path=path,
+                    last_status=last_status,
+                    last_response=last_response,
+                    transitions=transitions,
+                    error_value=evaluation.error_value,
+                )
+
+            if evaluation.state is PollingState.UNKNOWN:
+                self._attach_polling_transitions(last_logger, transitions)
+                last_logger.attach_success(last_response)
+                raise PollingUnknownStateError(
+                    path=path,
+                    last_status=last_status,
+                    last_response=last_response,
+                    transitions=transitions,
+                )
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._attach_polling_transitions(last_logger, transitions)
+                last_logger.attach_success(last_response)
+                raise PollingTimeoutError(
+                    path=path,
+                    timeout=timeout,
+                    last_status=last_status,
+                    last_response=last_response,
+                    transitions=transitions,
+                )
+
+            time.sleep(min(poll_interval, remaining))
+
     @staticmethod
-    def _extract_json_path_value(response: requests.Response, json_path: str) -> Any:
-        if not json_path.startswith("$"):
-            raise ValueError(f"json_path must start with '$', current value: {json_path!r}")
-
+    def _get_optional_api_call_logger(context: RequestContext) -> ApiCallLogger:
         try:
-            body = response.json()
-        except ValueError as exc:
-            raise AssertionError(f"response body is not valid JSON: {response.text}") from exc
+            return LoggingMiddleware.get_logger(context)
+        except RuntimeError:
+            return NoopApiCallLogger()
 
-        matches = [match.value for match in parse(json_path).find(body)]
-        if not matches:
-            return None
-        return matches[0] if len(matches) == 1 else matches
+    def _kwargs_with_session_headers(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        retry_kwargs = dict(kwargs)
+        merged_headers = dict(self.session.headers)
+        merged_headers.update(dict(kwargs.get("headers") or {}))
+        retry_kwargs["headers"] = merged_headers
+        return retry_kwargs
+
+    @staticmethod
+    def _attach_retry_records(context: RequestContext, records: list[RetryAttemptRecord]) -> None:
+        if not records:
+            return
+        logger = BaseRequest._get_optional_api_call_logger(context)
+        logger.attach_retry_records(records)
+
+    @staticmethod
+    def _attach_polling_transitions(
+        logger: ApiCallLogger,
+        transitions: list[PollingTransition],
+    ) -> None:
+        logger.attach_polling_transitions(format_polling_transitions(transitions))
+
+
+class NoopApiCallLogger(ApiCallLogger):
+    def __init__(self) -> None:
+        pass
+
+    def attach_success(self, response: requests.Response) -> None:
+        return None
+
+    def attach_failure(self, error: BaseException) -> None:
+        return None
+
+    def attach_retry_records(self, records: list[RetryAttemptRecord]) -> None:
+        return None
+
+    def attach_polling_transitions(self, transitions_text: str) -> None:
+        return None

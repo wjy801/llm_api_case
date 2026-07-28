@@ -18,6 +18,7 @@ ASYNC_IMAGE_POLL_TIMEOUT_SECONDS = 600
 ASYNC_IMAGE_TASK_STATUS_VALUES = {"queued", "pending", "processing", "running", "succeeded", "success", "failed"}
 ASYNC_IMAGE_SUCCESS_STATUS_VALUES = {"succeeded", "success"}
 FORBIDDEN_ERROR_RESPONSE_TEXT_VALUES = ["traceback", "stack trace", "exception", "sql", "internal server error"]
+pytestmark = pytest.mark.serial
 
 
 class TestAsyncImageGeneration:
