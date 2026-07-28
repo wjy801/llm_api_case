@@ -14,21 +14,32 @@ class ProtocolTask:
         self,
         protocol_request: ProtocolRequest,
         payload: dict[str, Any],
+        *,
+        headers: dict[str, str] | None = None,
     ) -> requests.Response:
-        return protocol_request.create_chat_completion(payload)
+        return protocol_request.create_chat_completion(payload, headers=headers)
 
     @allure_step("OpenAI POST /v1/responses")
     def create_response(
         self,
         protocol_request: ProtocolRequest,
         payload: dict[str, Any],
+        *,
+        headers: dict[str, str] | None = None,
     ) -> requests.Response:
-        return protocol_request.create_response(payload)
+        return protocol_request.create_response(payload, headers=headers)
 
     @allure_step("Anthropic POST /v1/messages")
     def create_message(
         self,
         protocol_request: ProtocolRequest,
         payload: dict[str, Any],
+        *,
+        headers: dict[str, str] | None = None,
+        anthropic_beta: str | None = None,
     ) -> requests.Response:
-        return protocol_request.create_message(payload)
+        return protocol_request.create_message(
+            payload,
+            headers=headers,
+            anthropic_beta=anthropic_beta,
+        )

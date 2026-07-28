@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from module.protocol_testing.anthropic.model_cases import load_anthropic_message_model_ids
-from module.protocol_testing.payloads import build_anthropic_messages_payload
+from module.protocol_testing.payloads import (
+    build_text_anthropic_messages_payload,
+    build_text_gemini_generate_content_payload,
+)
 
 
 class TestProtocolAnthropicModelCases:
@@ -23,8 +26,8 @@ class TestProtocolAnthropicModelCases:
 
         assert load_anthropic_message_model_ids(csv_path) == []
 
-    def test_build_anthropic_messages_payload_uses_model_id(self):
-        assert build_anthropic_messages_payload("model-a") == {
+    def test_build_text_anthropic_messages_payload_uses_model_id(self):
+        assert build_text_anthropic_messages_payload("model-a") == {
             "model": "model-a",
             "max_tokens": 500,
             "system": "你是一个乐于助人的AI",
@@ -40,4 +43,21 @@ class TestProtocolAnthropicModelCases:
                     ],
                 }
             ],
+        }
+
+    def test_build_text_gemini_generate_content_payload_uses_gemini_body_schema(self):
+        assert build_text_gemini_generate_content_payload("gemini-model-a") == {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": "hi",
+                        }
+                    ],
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.7,
+            },
         }
