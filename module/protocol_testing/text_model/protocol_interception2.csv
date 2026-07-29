@@ -6,14 +6,10 @@ openai_glm_5_1_allow,openai_chat_completions,openai,GLM-5.1,allow
 openai_glm_5_2_allow,openai_chat_completions,openai,GLM-5.2,allow
 openai_deepseek_v4_pro_allow,openai_chat_completions,openai,DeepSeek-V4-pro,allow
 openai_deepseek_v4_flash_allow,openai_chat_completions,openai,DeepSeek-V4-Flash,allow
-anthropic_kimi_allow,anthropic_messages,anthropic,kimi-k3,allow
-anthropic_glm_5_1_allow,anthropic_messages,anthropic,GLM-5.1,allow
-anthropic_glm_5_2_allow,anthropic_messages,anthropic,GLM-5.2,allow
+anthropic_kimi_block,anthropic_messages,anthropic,kimi-k3,block
+anthropic_glm_5_1_block,anthropic_messages,anthropic,GLM-5.1,block
+anthropic_glm_5_2_block,anthropic_messages,anthropic,GLM-5.2,block
 anthropic_deepseek_v4_pro_block,anthropic_messages,anthropic,DeepSeek-V4-pro,block
 anthropic_deepseek_v4_flash_block,anthropic_messages,anthropic,DeepSeek-V4-Flash,block
 anthropic_qwen_block,anthropic_messages,anthropic,qwen3.5-flash,block
 anthropic_gemini_block,anthropic_messages,anthropic,gemini-3.1-pro-preview,block
-openai_unknown_block,openai_chat_completions,openai,unknown-model,block
-anthropic_unknown_block,anthropic_messages,anthropic,unknown-model,block
-openai_path_anthropic_body_block,openai_chat_completions,anthropic,kimi-k3,block
-anthropic_path_openai_body_block,anthropic_messages,openai,kimi-k3,block

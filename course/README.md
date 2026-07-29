@@ -133,6 +133,38 @@
 | `41cf8b5` | 观察 Jenkinsfile 初次接入 |
 | `24a3d8c` | 观察并发池与串行池形成 |
 
+### 5.1 关键代码展示规则
+
+讲述代码框架演进时，课程正文必须直接贴出支撑结论的关键代码，不能只提供 Git 命令、文件名、类名或改动摘要。关键代码用于让“旧问题、变化轴和新边界”都能从可见证据中推导出来。
+
+每个演进点至少包含以下证据单元：
+
+1. 标明代码所属阶段、提交和文件路径。
+2. 贴出演进前承担旧职责或暴露约束的关键代码。
+3. 贴出演进后形成新职责边界的关键代码。
+4. 紧接代码说明具体变化、变化原因、状态所有者和被保护的不变量。
+5. 代码片段只保留影响推导的函数、分支、字段或调用链，不整文件复制，不用省略号隐藏关键控制流。
+
+推荐结构：
+
+````markdown
+演进前：`56f4f15`，`common/base_request.py`
+
+```python
+# 能证明旧职责集中或旧约束的最小完整片段
+```
+
+演进后：`291e6ea`，`common/request_middleware.py`
+
+```python
+# 能证明新状态所有者或新职责边界的最小完整片段
+```
+
+差异解释：旧代码因什么变化而修改，新代码把哪项状态交给谁，最终保护了什么不变量。
+````
+
+Git 命令仍作为学习者复核完整上下文的入口，但不能代替课程正文中的关键代码证据。当前代码与历史文档冲突时，以当前分支代码和测试为最终事实，并明确说明历史片段只代表当时阶段。
+
 常用命令：
 
 ```powershell
@@ -147,6 +179,14 @@ git show 2748f16 -- common/base_request.py common/retry_executor.py
 ```
 
 不要使用会修改工作区的历史切换命令。课程不需要 checkout 到旧提交。
+
+### 5.2 贯穿课程的数据流图规则
+
+第 2 天的 [DAY02_CONFIG_TRUST_BOUNDARY.md](DAY02_CONFIG_TRUST_BOUNDARY.md) 定义数据流图基准。后续课程沿真实函数调用继续，不重新绘制已经讲过的上游函数。
+
+每节课程必须且只能有一张“贯穿式数据流总图”。该图只保留必要的上游入口，从上一节锚点继续追加新的数据状态和函数边界；同一节不得把主链、异常、旁路或接续关系拆成多张数据流图。课程中的其他 Mermaid 图只能说明局部结构、决策或状态关系，不能成为第二张贯穿式数据流图。
+
+贯穿式总图必须使用 `flowchart TD` 自上而下展开，不使用 `LR`。节点使用“当前源码中的函数、方法或构造器名称 + 一句简短作用”，作用描述只写该函数直接完成的动作，不写生命周期、设计结论或长段解释；连线默认不加文字，只有无法从函数名判断的关键条件才使用短标签。图只展示本节选定的主调用路径，分支、异常、详细输入输出和状态所有权放在图外表格与代码中说明。
 
 ## 6. 开课准备
 
@@ -313,6 +353,8 @@ git diff 56f4f15 291e6ea -- common/base_request.py common/request_context.py com
 
 ## 第 4 天：日志与脱敏为什么是数据流问题
 
+完整课程内容：[DAY04_LOGGING_REDACTION_DATA_FLOW.md](DAY04_LOGGING_REDACTION_DATA_FLOW.md)
+
 ### 核心问题
 
 为什么“把敏感字段替换掉”可能破坏真实请求？日志正确性由谁负责？
@@ -359,6 +401,8 @@ git diff 56f4f15 291e6ea -- util/api_call_logger.py util/redaction.py util/curl_
 
 ## 第 5 天：从业务副作用推导 RetryPolicy
 
+完整课程内容：[DAY05_RETRY_POLICY_SIDE_EFFECT.md](DAY05_RETRY_POLICY_SIDE_EFFECT.md)
+
 ### 核心问题
 
 重试判断的第一条件为什么不是状态码，而是业务操作能否安全重复？
@@ -400,6 +444,8 @@ git diff 56f4f15 291e6ea -- common/base_request.py common/retry.py
 ---
 
 ## 第 6 天：重试循环为什么从 BaseRequest 再次抽离
+
+完整课程内容：[DAY06_RETRY_EXECUTOR_BOUNDARY.md](DAY06_RETRY_EXECUTOR_BOUNDARY.md)
 
 ### 核心问题
 
@@ -448,6 +494,8 @@ git show 2748f16 -- common/base_request.py common/retry_executor.py
 
 ## 第 7 天：从“字段出现”演进为业务状态机
 
+完整课程内容：[DAY07_POLLING_STATE_MACHINE.md](DAY07_POLLING_STATE_MACHINE.md)
+
 ### 核心问题
 
 异步任务为什么不能用“结果字段出现则成功，否则继续等待”表示？
@@ -490,6 +538,8 @@ git show 2748f16 -- common/polling.py common/base_request.py common/base_task.py
 
 ## 第 8 天：TestContext 与用例生命周期
 
+完整课程内容：[DAY08_TEST_CONTEXT_LIFECYCLE.md](DAY08_TEST_CONTEXT_LIFECYCLE.md)
+
 ### 核心问题
 
 为什么几个局部变量最终会演进成测试上下文？又为什么上下文不能自动变成全局数据仓库？
@@ -531,6 +581,8 @@ git diff 56f4f15 291e6ea -- common/test_context.py module/conftest.py common/bas
 
 ## 第 9 天：从重复字段断言演进为响应契约
 
+完整课程内容：[DAY09_RESPONSE_CONTRACT_BOUNDARY.md](DAY09_RESPONSE_CONTRACT_BOUNDARY.md)
+
 ### 核心问题
 
 哪些响应规则是稳定契约，哪些只是当前业务示例，不能进入通用 Schema？
@@ -571,6 +623,8 @@ git diff 56f4f15 291e6ea -- common/base_assertions.py module/smoke/response_sche
 ---
 
 ## 第 10 天：Mock 是控制不确定性，不是伪造一切
+
+完整课程内容：[DAY10_MOCK_UNCERTAINTY_BOUNDARY.md](DAY10_MOCK_UNCERTAINTY_BOUNDARY.md)
 
 ### 核心问题
 
@@ -614,6 +668,8 @@ Fake 只模拟被测试逻辑实际依赖的协议表面。Mock 验证框架分�
 
 ## 第 11 天：从全量并发演进为资源约束调度
 
+完整课程内容：[DAY11_RESOURCE_CONSTRAINED_SCHEDULING.md](DAY11_RESOURCE_CONSTRAINED_SCHEDULING.md)
+
 ### 核心问题
 
 并发执行的问题为什么不是“线程是否安全”这么简单？谁拥有串行决策？
@@ -656,6 +712,8 @@ git show 24a3d8c -- master_service.py run_master.py tests/test_master_service_pa
 ---
 
 ## 第 12 天：工程闭环与陌生需求设计
+
+完整课程内容：[DAY12_ENGINEERING_CLOSURE_TRACE_DESIGN.md](DAY12_ENGINEERING_CLOSURE_TRACE_DESIGN.md)
 
 ### 核心问题
 
