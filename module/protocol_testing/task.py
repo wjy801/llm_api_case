@@ -29,6 +29,43 @@ class ProtocolTask:
     ) -> requests.Response:
         return protocol_request.create_response(payload, headers=headers)
 
+    @allure_step("OpenAI POST /v1/media/generations")
+    def create_media_generation(
+        self,
+        protocol_request: ProtocolRequest,
+        payload: dict[str, Any],
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> requests.Response:
+        return protocol_request.create_media_generation(payload, headers=headers)
+
+    @allure_step("OpenAI POST /v1/images/generations")
+    def create_image_generation(
+        self,
+        protocol_request: ProtocolRequest,
+        payload: dict[str, Any],
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> requests.Response:
+        return protocol_request.create_image_generation(payload, headers=headers)
+
+    @allure_step("OpenAI POST /v1/images/edits")
+    def create_image_edit(
+        self,
+        protocol_request: ProtocolRequest,
+        payload: dict[str, Any],
+        image: bytes,
+        *,
+        image_filename: str = "protocol-interception.png",
+        headers: dict[str, str] | None = None,
+    ) -> requests.Response:
+        return protocol_request.create_image_edit(
+            payload,
+            image,
+            image_filename=image_filename,
+            headers=headers,
+        )
+
     @allure_step("Anthropic POST /v1/messages")
     def create_message(
         self,
