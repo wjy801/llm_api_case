@@ -6,17 +6,37 @@
 
 一次 `Timeout` 只能证明客户端没有按时拿到结果，不能证明服务端没有扣费、创建订单或提交任务。一次 `503` 也只能说明当前响应属于候选瞬态故障，不能证明原操作可以安全重复。因此，重试决策必须依次通过四道门：
 
+### 0.1 贯穿式数据流总图
+
+下图选择“GET 首次返回带 `Retry-After` 的 503”作为代表路径，只追踪本节负责的策略构造与决策函数。真正推进 attempt、记录运行状态和执行 sleep 的函数留到第 6 天。
+
 ```mermaid
-flowchart LR
-    A["调用方显式启用 RetryPolicy"] --> B["操作是否允许重复"]
-    B -->|"否"| C["只执行一次"]
-    B -->|"是"| D["本次结果是否可重试"]
-    D -->|"否"| E["返回响应或抛出异常"]
-    D -->|"是"| F["计算等待时间"]
-    F --> G["次数与总时间预算是否允许"]
-    G -->|"否"| E
-    G -->|"是"| H["发起下一次 attempt"]
+flowchart TD
+    A["RetryPolicy()：构造不可变重试规则"] --> B["RetryPolicy._validate_max_attempts()：校验尝试次数"]
+    B --> C["RetryPolicy._validate_backoff()：校验退避类型"]
+    C --> D["RetryPolicy._validate_base_delay()：校验基础等待"]
+    D --> E["RetryPolicy._validate_max_elapsed()：校验总时间预算"]
+    E --> F["RetryPolicy._validate_idempotency_header()：校验幂等键名称"]
+    F --> G["RetryPolicy._validate_delay_range()：校验等待上限"]
+    G --> H["is_method_retry_allowed()：判断 GET 可重复发送"]
+    H --> I["should_retry_response()：判断 503 属于候选故障"]
+    I --> J["calculate_retry_delay()：计算本次等待时间"]
+    J --> K["parse_retry_after()：解析服务端等待建议"]
+    K --> L["retry_reason_for_response()：生成本次重试原因"]
 ```
+
+### 0.2 按调用顺序理解关键函数
+
+| 调用 | 输入 → 输出 | 失败与边界 | 最小关键代码 |
+| --- | --- | --- | --- |
+| `RetryPolicy()` 与字段 validator | 原始策略参数 → 字段级合法值 | 次数、等待、预算、退避类型或幂等键名称非法时构造立即失败 | `@field_validator("max_attempts")` |
+| `RetryPolicy._validate_delay_range()` | 已完成字段校验的 Policy → 最终不可变 Policy | `max_delay < base_delay` 时失败；跨字段约束不能由单字段 validator 独立证明 | `if self.max_delay < self.base_delay: raise ValueError(...)` |
+| `is_method_retry_allowed()` | method、headers、Policy → 是否允许重复发送 | GET/HEAD 默认允许；POST 需要显式授权或幂等键；其他方法默认拒绝 | `return policy.idempotency_header.lower() in header_names` |
+| `should_retry_response()` / `should_retry_exception()` | 本次 Response 或异常、Policy → 是否属于候选瞬态故障 | 只做结果分类，不证明业务操作幂等；SSL 与重定向过多被显式排除 | `return response.status_code in policy.retry_statuses` |
+| `retry_reason_for_response()` / `retry_reason_for_exception()` | 可重试结果 → 可观测原因文本 | 只描述原因，不拥有记录列表，也不决定是否继续 | `return f"HTTP {response.status_code}"` |
+| `calculate_retry_delay()` / `parse_retry_after()` | Policy、attempt、可选 Response → 等待秒数 | `Retry-After` 无效时回退 fixed/exponential；结果受 `max_delay` 和 jitter 约束 | `retry_after_delay = parse_retry_after(...)` |
+
+课程接续：第 4 天保证每次 attempt 的日志安全，本节在该单次发送能力之外建立重复执行许可与结果分类；第 6 天继续解释为何循环、时钟和记录由 `RetryExecutor` 拥有。
 
 顺序不能颠倒：
 
