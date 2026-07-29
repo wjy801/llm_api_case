@@ -18,10 +18,15 @@ pipeline {
 
     environment {
         CI_MAIL_TO = '3239682586@qq.com'
-        CI_MAIL_FROM = '18617962759@163.com'
+        CI_MAIL_FROM = '13463214057@163.com'
         GENERATE_ALLURE_REPORT = 'FALSE'
         GENERATE_HISTORY_REPORT = 'FALSE'
         PIP_DISABLE_PIP_VERSION_CHECK = '1'
+        PIP_INDEX_URL = 'https://repo.huaweicloud.com/repository/pypi/simple'
+        PIP_TRUSTED_HOST = 'repo.huaweicloud.com'
+        PIP_DEFAULT_TIMEOUT = '60'
+        PIP_RETRIES = '2'
+        NPM_CONFIG_REGISTRY = 'https://registry.npmmirror.com'
         PYTHONIOENCODING = 'utf-8'
         PYTHONUTF8 = '1'
     }
@@ -36,7 +41,7 @@ pipeline {
         stage('Check Runtime Env') {
             steps {
                 ciPowerShell('''
-                $sourceEnv = 'D:/Code/Form/llm_api_case/.env'
+                $sourceEnv = 'D:/API_CASE/.env'
                 if (!(Test-Path .env) -and (Test-Path -LiteralPath $sourceEnv)) {
                     Copy-Item -LiteralPath $sourceEnv -Destination .env -Force
                 }
