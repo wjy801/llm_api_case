@@ -16,18 +16,52 @@
 
 这不是简单的“函数太长”，而是两个不同生命周期被同一个对象拥有：
 
+### 0.1 贯穿式数据流总图
+
 ```mermaid
-flowchart LR
-    A["BaseRequest"] --> B["一次请求能力"]
-    B --> C["构造 Context"]
-    B --> D["执行 Middleware"]
-    B --> E["调用 Session"]
-    F["RetryExecutor"] --> G["一次重试序列"]
-    G --> H["推进 attempt"]
-    G --> I["累计 records"]
-    G --> J["控制 clock 与 sleep"]
-    G --> K["决定继续或终结"]
+flowchart TD
+    A["BaseRequest.get()｜进入 GET 请求"] --> B["BaseRequest.request()｜选择 retry 发送路径"]
+    B --> C["BaseRequest._send_with_retry()｜适配请求能力到执行器"]
+    C --> C1["BaseRequest._build_request_context()｜构造策略判断输入"]
+    C1 --> C2["BaseRequest._kwargs_with_session_headers()｜合并最终请求头"]
+    C2 --> D["RetryExecutor.execute()｜组织多 attempt 序列"]
+    D --> D1["is_method_retry_allowed()｜确认 GET 可重复发送"]
+    D1 --> E1["context_factory()｜创建 attempt 1 的 Context"]
+    E1 --> F1["BaseRequest._build_request_context()｜构造本轮请求上下文"]
+    F1 --> G1["RetryExecutor._prepare_context()｜写入 attempt 1 元数据"]
+    G1 --> H1["BaseRequest._send()｜执行 attempt 1"]
+    H1 --> I1["requests.Session.request()｜返回 HTTP 503"]
+    I1 --> J1["should_retry_response()｜判定响应可重试"]
+    J1 --> K["calculate_retry_delay()｜计算退避时间"]
+    K --> K0["retry_reason_for_response()｜生成本轮重试原因"]
+    K0 --> K1["RetryAttemptRecord()｜保存本轮重试事实"]
+    K1 --> K2["BaseRequest._attach_retry_records()｜挂载累计重试记录"]
+    K2 --> K3["RetryExecutor._can_retry_within_elapsed()｜检查剩余预算"]
+    K3 --> L["time.sleep()｜通过注入的 sleeper 执行等待"]
+    L --> E2["context_factory()｜创建 attempt 2 的 Context"]
+    E2 --> F2["BaseRequest._build_request_context()｜构造新请求上下文"]
+    F2 --> G2["RetryExecutor._prepare_context()｜写入 attempt 2 元数据"]
+    G2 --> H2["BaseRequest._send()｜执行 attempt 2"]
+    H2 --> I2["requests.Session.request()｜返回 HTTP 200"]
+    I2 --> J2["should_retry_response()｜判定响应无需重试"]
+    J2 --> M["BaseRequest._attach_retry_records()｜挂载最终重试记录"]
 ```
+
+图 6-1：`503 → 200` 的两次 HTTP attempt 成功主路径。图中重复展开 Context 构造和单次发送，是为了呈现每个 attempt 都会得到独立 `RequestContext`；次数耗尽、异常、预算不足和方法不允许等分支在图外说明。
+
+### 0.2 按图顺序讲解关键函数
+
+| 顺序 | 真实函数/方法 | 输入 → 输出 | 失败与边界 | 最小关键代码 |
+| ---: | --- | --- | --- | --- |
+| 1～2 | `BaseRequest.get()`、`request()` | `path`、`retry_policy` → 进入重试发送并最终返回 `Response` | 未传 Policy 时直接走单次 `_send()`；本图只选显式重试主路径 | `return self.request("GET", path, **kwargs)` |
+| 3 | `BaseRequest._send_with_retry()` / `_build_request_context()` / `_kwargs_with_session_headers()` | method、path、Policy、kwargs → Executor 回调与包含 Session headers 的判断输入 | 首个 Context 只提供规范化 method/kwargs；`context_factory` 仍会为每轮重建 Context | `request_kwargs=self._kwargs_with_session_headers(first_context.kwargs)` |
+| 4 | `RetryExecutor.execute()` / `is_method_retry_allowed()` | Policy、三个回调 → 获得重复发送许可后进入序列 | 拥有 attempt、records、时钟和 sleep；方法不允许重试时只执行一次 | `if not is_method_retry_allowed(...): return send_once(context)` |
+| 5～7 | `context_factory()`、`_build_request_context()`、`_prepare_context()` | attempt 序号与原始 kwargs → 独立 Context 和 attempt 元数据 | 深拷贝尽量隔离各轮 payload；Policy 与累计 records 由 Executor 写入 Context | `context.attributes["retry_records"] = retry_records` |
+| 8～9 | `BaseRequest._send()`、`requests.Session.request()` | Context → 本轮 `Response` 或 transport exception | `_send()` 保留 Middleware 生命周期；异常先交给 exception Middleware，再原样抛出 | `response = self.session.request(...)` |
+| 10 | `should_retry_response()` | Response、Policy → `bool` | 只判断状态码是否在 `retry_statuses`，不判断业务成功 | `return response.status_code in policy.retry_statuses` |
+| 11～15 | `calculate_retry_delay()`、`retry_reason_for_response()`、`RetryAttemptRecord()`、`_attach_retry_records()`、`_can_retry_within_elapsed()` | 本次结果与序列状态 → 不可变记录及是否仍可继续 | 先形成并挂载记录，再检查“已耗时 + 将等待时间”；预算不足时不 sleep | `retry_records.append(RetryAttemptRecord(...))` |
+| 16 | `time.sleep()`（默认注入的 `sleeper`） | wait seconds → 完成等待 | 测试可注入 fake sleeper，因此执行器不被真实时间阻塞 | `self.sleeper(wait_seconds)` |
+| 17 | `BaseRequest._attach_retry_records()` | 最终 Context、累计 records → logger 附件 | 没有记录时直接返回；只负责展示，不决定是否继续 | `logger.attach_retry_records(records)` |
 
 从第一性原理看，重试机制只需要包装一个最小动作：
 

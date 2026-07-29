@@ -842,6 +842,168 @@ flowchart TD
 
 用例签名中的 `test_context` 表明该用例拥有链路状态与清理责任。若 fixture autouse，每个测试都会隐式获得状态容器，变量来源更难审查，也会为不需要它的测试增加 teardown 行为。
 
+### 12.5 贯穿课程的数据流总图：从 case 响应到清理回调
+
+本图承接第 7 天：polling 或普通业务请求最终返回的 `Response`，从这里进入 case 级状态边界。当前业务采用仍较浅，因此图表达的是当前 API 已支持、并由 `tests/test_test_context.py` 与 fixture 测试验证的代表性主路径，不表示现有 smoke 用例已经全部迁移。
+
+```mermaid
+flowchart TD
+    A["test_context()<br/>为当前 case 提供独立上下文"] --> B["TestContext()<br/>创建变量仓库与清理栈"]
+    B --> C["TestContext.extract()<br/>声明单一来源与变量契约"]
+    C --> D["TestContext._extract_value()<br/>分派到对应来源提取函数"]
+    D --> E["_extract_json_path()<br/>从 Response JSON 取得候选值"]
+    E --> F["TestContext._store_extracted_value()<br/>处理缺失、转换与类型校验"]
+    F --> G["TestContext.set()<br/>写入当前 case 的变量仓库"]
+    G --> H["TestContext.add_cleanup()<br/>压入当前 case 的清理回调"]
+    H --> I["TestContext.require()<br/>读取后续步骤必需的变量"]
+    I --> J["TestContext.get()<br/>检查变量存在性与类型"]
+    J --> K["TestContext.cleanup()<br/>按 LIFO 执行并聚合清理失败"]
+    K --> L["Path.unlink()<br/>执行调用方注册的具体清理动作"]
+```
+
+图只选 JSONPath 与 `Path.unlink()` 作为代表。Header、Cookie、正则和其他业务 cleanup callback 走相同边界；`extract_first()` 是多候选入口，不是这条单来源主路径的一部分。
+
+#### 与前后课程的接续
+
+- 第 7 天拥有 polling 的 deadline、状态迁移和最终 `Response`；第 8 天只接收结果，不接管 polling 循环。
+- `TestContext` 可保存从响应提取的 case 事实，但不拥有 `Response` 的结构规则。
+- 第 9 天从 `Response + 业务 Schema` 进入断言层；契约验证不必先把响应放进 `TestContext`。
+
+### 12.6 按总图顺序讲解关键函数
+
+#### A～B：`test_context()` 与 `TestContext()` 封闭 case 边界
+
+| 项目 | 说明 |
+| --- | --- |
+| 输入 | pytest 对 fixture 参数的解析；可选 Context 名称 |
+| 输出 | 当前 case 独享的 `TestContext` |
+| 作用 | fixture 创建实例，并保证测试主体结束后进入 teardown |
+| 失败 | 构造本身通常不失败；teardown 的 `cleanup()` 失败会成为清理错误 |
+| 边界 | fixture 只管理 Context 生命周期，不自动发送请求或提取业务字段 |
+
+当前 `dev2`，`module/conftest.py`：
+
+```python
+@pytest.fixture
+def test_context() -> TestContext:
+    context = TestContext()
+    try:
+        yield context
+    finally:
+        context.cleanup()
+```
+
+#### C～G：`extract()` 把来源、校验与写入连成一次原子操作
+
+| 项目 | 说明 |
+| --- | --- |
+| 输入 | 变量名、`Response`、唯一来源和可选类型/转换规则 |
+| 输出 | 返回提取值，并由 `set()` 保存同一个值 |
+| 作用 | `_extract_value()` 分派来源；`_store_extracted_value()` 处理缺失、转换和类型；`set()` 最终写入 |
+| 失败 | 来源数量不为一、非法 JSONPath/JSON、缺失必需值、转换失败或类型不符 |
+| 边界 | 只提取调用方指定的值，不猜测字段名，不验证整个响应契约 |
+
+当前 `dev2`，`common/test_context.py` 的最小主链：
+
+```python
+value = self._extract_value(
+    name,
+    response,
+    json_path=json_path,
+    header=header,
+    cookie=cookie,
+    regex=regex,
+    group=group,
+    source_text=source_text,
+    multiple=multiple,
+)
+return self._store_extracted_value(
+    name,
+    value,
+    required=required,
+    default=default,
+    expected_type=expected_type,
+    transform=transform,
+    allow_none=allow_none,
+    source_description=_format_source_description(
+        json_path=json_path,
+        header=header,
+        cookie=cookie,
+        regex=regex,
+    ),
+    response=response,
+)
+```
+
+写入只发生在所有前置规则通过之后：
+
+```python
+_ensure_expected_type(name, value, expected_type)
+self.set(name, value)
+return value
+```
+
+因此失败提取不会在 store 中留下半合法值。
+
+#### H：`add_cleanup()` 保存动作与实参，不拥有资源实现
+
+| 项目 | 说明 |
+| --- | --- |
+| 输入 | callable、位置参数和关键字参数 |
+| 输出 | 无；向 cleanup stack 追加一个 `_CleanupCallback` |
+| 作用 | 记录当前 case 结束时必须执行的逆操作 |
+| 失败 | callback 不可调用时立即抛 `TypeError` |
+| 边界 | Context 只拥有执行责任，不知道 `Path.unlink()` 或远端删除的业务语义 |
+
+```python
+def add_cleanup(self, callback, *args, **kwargs) -> None:
+    if not callable(callback):
+        raise TypeError(...)
+    self._cleanup_callbacks.append(
+        _CleanupCallback(callback=callback, args=args, kwargs=dict(kwargs))
+    )
+```
+
+#### I～J：`require()` 在消费点重新建立存在性和类型不变量
+
+| 项目 | 说明 |
+| --- | --- |
+| 输入 | 变量名与可选 `expected_type` |
+| 输出 | 已保存的原值 |
+| 作用 | `require()` 委托 `get()`；缺失时不提供默认值 |
+| 失败 | 非法变量名、变量不存在或运行时类型不符 |
+| 边界 | 不复制、不转换值，也不延长它超过当前 case 的生命周期 |
+
+```python
+def require(self, name, *, expected_type=None) -> Any:
+    return self.get(name, expected_type=expected_type)
+```
+
+#### K～L：`cleanup()` 负责顺序和失败聚合，callback 负责具体撤销
+
+| 项目 | 说明 |
+| --- | --- |
+| 输入 | 当前 cleanup stack；图中代表 callback 为 `Path.unlink()` |
+| 输出 | 全部成功时返回 `None`；失败时聚合异常 |
+| 作用 | 持续 `pop()` 形成 LIFO，即使一个 callback 失败也继续执行剩余项 |
+| 失败 | 所有 callback 错误最终包装为 `ContextCleanupError` |
+| 边界 | 不重试 callback，不清空变量 store，不推断资源依赖 |
+
+```python
+while self._cleanup_callbacks:
+    cleanup_callback = self._cleanup_callbacks.pop()
+    try:
+        cleanup_callback.callback(
+            *cleanup_callback.args,
+            **cleanup_callback.kwargs,
+        )
+    except BaseException as exc:
+        errors.append(exc)
+
+if errors:
+    raise ContextCleanupError(errors)
+```
+
 ## 13. 状态所有者与生命周期
 
 | 状态 | 创建者 | 修改者 | 结束/清理者 | 生命周期 |
@@ -1161,17 +1323,7 @@ JSONPath 默认取第一个匹配；空 dict、0、False 都是有效值；类�
 
 ### 19.7 代码执行链
 
-```mermaid
-flowchart LR
-    A["pytest 解析 test_context 参数"] --> B["fixture 创建 Context"]
-    B --> C["业务请求得到 Response"]
-    C --> D["extract 或 extract_first"]
-    D --> E["transform 与类型校验"]
-    E --> F["写入变量 store"]
-    F --> G["后续步骤 require"]
-    G --> H["case 结束"]
-    H --> I["finally cleanup LIFO"]
-```
+完整执行链统一见 12.5 的贯穿式数据流总图。本记录不再绘制第二张缩略数据流图，避免省略 `_extract_value()`、`_store_extracted_value()` 和具体 cleanup callback 后形成另一套不完整心智模型。
 
 ### 19.8 最小实验
 

@@ -685,26 +685,149 @@ JSON path 回答“响应哪里错”，Schema path 回答“哪条规则判错�
 
 ## 13. 当前真实调用链
 
-以业务用例通过 `SmokeAssertions` 调用为例：
+以业务用例通过 `SmokeAssertions` 调用为例。`SmokeAssertions` 不需要重写方法，继承只复用通用验证机制；Schema 仍从 `module/smoke/response_schemas.py` 显式传入。
+
+模块级 `assert_schema()` 和 `async_assert_schema()` 也存在，但业务规范要求通过当前模块的 Assertions 实例调用，从而保留模块断言层作为统一入口。完整调用关系只在下面的贯穿式总图中绘制一次。
+
+### 13.1 贯穿课程的数据流总图：从业务 Assertions 到安全诊断
+
+本图承接第 8 天产生或持有的 `Response`，选择当前真实的 Chat Completion 业务契约失败路径。节点只保留实际执行的函数、方法或构造器；成功路径在 `errors` 为空时直接返回原 `Response`，不会进入诊断函数。
 
 ```mermaid
 flowchart TD
-    A["业务 test 调用 SmokeAssertions.assert_schema"] --> B["继承 BaseAssertions 实现"]
-    B --> C["response.json"]
-    C --> D["根据 $schema 选择 validator class"]
-    D --> E["check_schema"]
-    E --> F["创建 validator"]
-    F --> G["iter_errors 并排序"]
-    G --> H{"是否有错误"}
-    H -->|"否"| I["返回同一个 response"]
-    H -->|"是"| J["补全 instance path"]
-    J --> K["脱敏 actual 与 message"]
-    K --> L["抛 AssertionError"]
+    A["TestResponseBodyValidation.test_chat_completions_response_body()<br/>选择业务 Schema 并发起契约断言"] --> B["BaseAssertions.assert_schema()<br/>统一执行响应契约校验"]
+    B --> C["requests.Response.json()<br/>解析待验证的 JSON 实例"]
+    C --> D["validator_for()<br/>按 Schema 方言选择 validator 类"]
+    D --> E["Draft202012Validator.check_schema()<br/>先检查 Schema 自身合法性"]
+    E --> F["Draft202012Validator()<br/>构造本次契约验证器"]
+    F --> G["validator.iter_errors()<br/>枚举实例违反的全部规则"]
+    G --> H["sorted()<br/>按实例路径和 Schema 路径稳定排序"]
+    H --> I["_validation_error_sort_key()<br/>提供稳定的错误排序键"]
+    I --> J["_format_schema_error()<br/>组织首个错误的统一诊断"]
+    J --> K["_error_path_parts()<br/>补全 required 缺失字段路径"]
+    K --> L["_actual_value()<br/>区分缺失值与错误实例值"]
+    L --> M["_redact_value_for_path()<br/>按值和字段名脱敏实际值"]
+    M --> N["_redact_error_message()<br/>脱敏 validator 原始消息"]
+    N --> O["AssertionError()<br/>构造可定位且安全的契约失败"]
 ```
 
-这里 `SmokeAssertions` 不需要重写方法。继承只复用通用验证机制；Schema 仍从 `module/smoke/response_schemas.py` 显式传入。
+这里 `SmokeAssertions` 没有重写 `assert_schema()`：Python 方法查找最终执行 `BaseAssertions.assert_schema()`。若 Schema 未声明 `$schema`，D 节点不会调用，代码直接选择 `Draft202012Validator`；业务 Schema 当前已声明 Draft 2020-12，所以图中的路径与真实用例一致。
 
-模块级 `assert_schema()` 和 `async_assert_schema()` 也存在，但业务规范要求通过当前模块的 Assertions 实例调用，从而保留模块断言层作为统一入口。
+#### 与前后课程的接续
+
+- 第 8 天解决一个 case 如何提取和保存局部事实；第 9 天不从 Context 读取全局 Schema，而是由业务用例显式把 `Response` 和业务 Schema 交给断言层。
+- 第 9 天输出原 `Response` 或安全的 `AssertionError`，不修改响应对象。
+- 第 10 天将用 Fake/离线 Response 稳定触发非法 JSON、非法 Schema 和实例不匹配，验证本图的异常分支，而不是伪造整个网络系统。
+
+### 13.2 按总图顺序讲解关键函数
+
+#### A～B：业务用例选择规则，`assert_schema()` 拥有通用执行机制
+
+| 项目 | 说明 |
+| --- | --- |
+| 输入 | `requests.Response` 与业务模块的 Schema Mapping |
+| 输出 | 通过时返回同一个 `Response`；失败时抛断言异常 |
+| 作用 | 业务用例决定使用哪份契约，基类负责解析、校验和诊断 |
+| 失败 | 非 JSON、非法 Schema、实例不满足 Schema |
+| 边界 | `BaseAssertions` 不拥有 Chat Completion 字段；业务用例不重复 validator plumbing |
+
+当前 `dev2`，`module/smoke/test_response_body_validation.py`：
+
+```python
+self.smoke_assertions.assert_schema(
+    response,
+    CHAT_COMPLETION_SUCCESS_SCHEMA,
+)
+self.smoke_assertions.assert_json_value(response, "$.model", "glm-5")
+```
+
+第二行刻意保留：结构契约通过，不代表具体模型值正确。
+
+#### C：`Response.json()` 先建立可验证实例
+
+| 项目 | 说明 |
+| --- | --- |
+| 输入 | HTTP 响应体 |
+| 输出 | Python JSON 实例 |
+| 作用 | 把传输文本转换成 validator 可消费的对象 |
+| 失败 | 非法 JSON 被转成带脱敏响应摘要的 `AssertionError` |
+| 边界 | 不修复、不容错转换服务端响应 |
+
+```python
+try:
+    body = response.json()
+except ValueError as exc:
+    redacted_body = _redact_response_text(response)
+    raise AssertionError(
+        f"Response body is not valid JSON. Response body: {redacted_body}"
+    ) from exc
+```
+
+#### D～F：选择 validator 后先验证规则，再验证实例
+
+| 项目 | 说明 |
+| --- | --- |
+| 输入 | Schema Mapping |
+| 输出 | 与方言匹配、且 Schema 已通过元校验的 validator 实例 |
+| 作用 | `validator_for()` 读取 `$schema`；`check_schema()` 阻止测试规则错误伪装成服务端错误 |
+| 失败 | Schema 自身非法时，`SchemaError` 被转成 `Invalid JSON Schema` 断言失败 |
+| 边界 | 当前未传 `FormatChecker`，因此不能宣称默认执行 format 语义校验 |
+
+```python
+validator_cls = (
+    validator_for(schema)
+    if "$schema" in schema
+    else Draft202012Validator
+)
+validator_cls.check_schema(schema)
+validator = validator_cls(schema)
+```
+
+#### G～H：`iter_errors()` 与 `sorted()` 让诊断选择可重复
+
+| 项目 | 说明 |
+| --- | --- |
+| 输入 | 已解析 body 与已构造 validator |
+| 输出 | 按实例绝对路径、Schema 绝对路径排序的错误列表 |
+| 作用 | 收集全部违规，但稳定选择排序后的首个错误报告 |
+| 失败 | 没有错误时直接返回原 `Response`；有错误才进入 I～N |
+| 边界 | 当前不会一次输出全部错误，避免诊断噪声淹没首要失败 |
+
+```python
+errors = sorted(
+    validator.iter_errors(body),
+    key=_validation_error_sort_key,
+)
+if errors:
+    raise AssertionError(_format_schema_error(errors[0], response))
+return response
+```
+
+#### I～O：排序与诊断函数补全路径并在抛出前完成脱敏
+
+| 项目 | 说明 |
+| --- | --- |
+| 输入 | 排序后的首个 `ValidationError` 与原 `Response` |
+| 输出 | 含 JSON path、Schema path、validator、expected、actual 的安全消息 |
+| 作用 | required 错误补上缺失属性；区分 `<missing>`；同时处理实际值和原始 validator message |
+| 失败 | 最终构造并抛出 `AssertionError` |
+| 边界 | 安全诊断不修改 Response 或 Schema；脱敏规则仍不能识别所有未知裸秘密 |
+
+```python
+path_parts = _error_path_parts(error)
+actual_value = _actual_value(error)
+redacted_actual_value = _redact_value_for_path(
+    actual_value,
+    path_parts,
+)
+message = _redact_error_message(
+    error.message,
+    actual_value,
+    path_parts,
+)
+```
+
+调用顺序本身是不变量：若先拼接完整错误文本、之后才尝试替换，原始敏感值更容易进入终端或报告；因此诊断丰富度必须服从安全边界。
 
 ## 14. 推导职责边界
 
@@ -999,16 +1122,7 @@ ModuleNotFoundError: No module named 'jsonschema'
 
 ### 19.7 代码执行链
 
-```mermaid
-flowchart LR
-    A["业务用例选择 Schema"] --> B["BaseAssertions.assert_schema"]
-    B --> C["解析 JSON"]
-    C --> D["检查 Schema"]
-    D --> E["校验实例"]
-    E --> F["排序并选择首错"]
-    F --> G["补全路径与脱敏"]
-    G --> H["返回 Response 或抛 AssertionError"]
-```
+完整执行链统一见 13.1 的贯穿式数据流总图。本记录不再复制一张简化流程，以免隐藏 `validator_for()`、`check_schema()` 与诊断脱敏之间的真实函数边界。
 
 ### 19.8 最小实验
 
