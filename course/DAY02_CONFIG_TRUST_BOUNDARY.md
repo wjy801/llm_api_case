@@ -739,6 +739,485 @@ flowchart LR
 
 主 URL 和主 API Key 没有代码默认值，避免测试静默发往未知环境或使用错误账号。
 
+### 5.1 贯穿后续课程的数据流思维导图（基准 v1）
+
+本图只保留配置成功路径上的真实函数调用。输入形态、失败语义和生命周期见图后的表格与正文。
+
+```mermaid
+flowchart TD
+    A["load_dotenv()"] --> B["load_settings(env)"]
+    B --> C["_EnvironmentSettingsInput.model_validate()"]
+    C --> D["_validate_bool_env() / _validate_timeout()<br/>_validate_history_keep_limit()"]
+    D --> E["_validate_selected_environment()"]
+    E --> F["_collect_config_error()"]
+    F --> G["require_http_url() / require_non_empty()"]
+    G --> H["to_settings()"]
+    H --> I["require_http_url() / require_non_empty()"]
+    I --> J["Settings()"]
+    J --> K["BaseRequest.__init__()"]
+    K --> L["_build_default_headers()"]
+```
+
+失败流与成功流在信任边界前分离：字段或环境组合校验先形成 Pydantic `ValidationError`，`load_settings()` 捕获后交给 `_config_errors_from_pydantic()` 提取、拆分和去重，最后由 `aggregate_config_errors()` 生成框架稳定的 `ConfigValidationError`。失败路径不会产生可信 `Settings`；第 10 节会展开错误适配的代码证据。
+
+图中的主要数据变换是：
+
+| 变换 | 输入数据 | 函数边界 | 输出数据 | 被消除的不确定性 |
+| --- | --- | --- | --- | --- |
+| 来源合并 | 系统环境、`.env` | `load_dotenv()` | `os.environ` | 本地缺失项得到候选值，但仍不可信 |
+| 调用隔离 | `os.environ` 或测试 Mapping | `load_settings()`、`dict()` | 本次加载快照 | 后续解析不再依赖 Mapping 的实时变化 |
+| 字段解析 | 可缺失字符串 | field validators 与 parser | typed fields | bool、数字、空白和默认值语义确定 |
+| 组合校验 | 两套环境字段 | `_validate_selected_environment()` | 选中环境完整的输入模型 | 哪套 URL/Key 必需已经确定；`require_*` 返回值不在此步写回模型 |
+| 信任转换 | 私有输入模型 | `to_settings()` | frozen `Settings` | 再次执行 `require_*`，规范化 URL，丢弃未选中环境字段 |
+| 错误适配 | Pydantic `ValidationError` | `_config_errors_from_pydantic()`、`aggregate_config_errors()` | `ConfigValidationError` | 下游不依赖第三方错误结构，非法输入不能产生 `Settings` |
+| 请求消费 | `Settings` | `BaseRequest.__init__()` | 客户端配置与默认 Header | 配置开始成为 HTTP 构造事实 |
+| 观测复制 | 调用方待展示 Mapping | `redact_config_summary()` | 脱敏副本 | 输出不再直接携带已识别的敏感值，输入 Mapping 不被修改 |
+
+### 5.2 按数据流图讲解关键函数
+
+这一模块严格按图中的 `A → L` 顺序阅读。每个函数都回答五个问题：接收什么、返回什么、改变什么状态、怎样失败、为什么下一函数可以继续。
+
+| 图节点 | 关键函数 | 本阶段完成的转换 |
+| --- | --- | --- |
+| A | `load_dotenv()` | 把 `.env` 候选值补入进程环境 |
+| B | `load_settings(env)` | 选择输入来源并控制完整信任转换 |
+| C | `_EnvironmentSettingsInput.model_validate()` | 将外部键映射到私有输入模型并调度校验器 |
+| D | 三类 field validator | 把字符串转换成字段级类型 |
+| E～G | `_validate_selected_environment()`、`_collect_config_error()`、`require_*()` | 校验当前环境的跨字段完整性 |
+| H～J | `to_settings()`、`require_*()`、`Settings()` | 投影并构造运行时配置快照 |
+| K～L | `BaseRequest.__init__()`、`_build_default_headers()` | 把配置事实转成客户端发送状态 |
+
+#### 5.2.1 A：`load_dotenv()` 只处理来源，不判断配置是否合法
+
+当前代码：`dev2`，`config.py`
+
+```python
+load_dotenv()
+```
+
+它在 `config.py` 导入期间执行。默认行为是读取 `.env`，将进程环境中尚不存在的键补入 `os.environ`，但不覆盖已经存在的系统环境变量。
+
+| 问题 | 答案 |
+| --- | --- |
+| 输入 | 当前工作目录附近的 `.env` 和已有 `os.environ` |
+| 输出 | 没有业务返回值；副作用是补充进程环境 |
+| 状态所有者 | `os.environ` 仍由 Python 进程拥有 |
+| 它不负责什么 | 不解析 bool、数字和 URL，不判断哪套环境必填 |
+| 下一步为什么仍不可信 | 所有值仍是可缺失字符串，只是来源完成合并 |
+
+因此不能把“dotenv 加载成功”等同于“配置有效”。它只解决值从哪里来，`load_settings()` 才解决这些值是否可供框架运行。
+
+#### 5.2.2 B：`load_settings(env)` 是唯一受支持的信任转换入口
+
+当前代码：`dev2`，`config.py`
+
+```python
+def load_settings(
+    env: Mapping[str, str | None] | None = None,
+) -> Settings:
+    env_values = os.environ if env is None else env
+    try:
+        return _EnvironmentSettingsInput.model_validate(
+            dict(env_values)
+        ).to_settings()
+    except ValidationError as error:
+        errors = _config_errors_from_pydantic(error)
+        if errors:
+            raise aggregate_config_errors(errors) from error
+        raise
+```
+
+这个函数同时承担三个职责，但它们都围绕同一个目标：保证调用方只能得到完整 `Settings` 或稳定配置异常。
+
+1. **选择来源**：`env is None` 时读取 `os.environ`；显式传入 Mapping 时完全使用该 Mapping。
+2. **建立本次快照**：`dict(env_values)` 复制顶层键值，后续模型验证不再持续读取原 Mapping。
+3. **适配错误边界**：内部 Pydantic `ValidationError` 被转成项目稳定的 `ConfigValidationError`。
+
+关键不变量是：
+
+```text
+返回 Settings
+或
+抛出配置异常
+
+不存在“返回半合法配置”这一分支
+```
+
+为什么支持传入 `env`：单元测试可以显式构造全部输入，不必修改全局 `os.environ`。为什么仍保留默认 `os.environ`：真实入口可以继续使用 `.env` 和 CI 环境变量。
+
+注意 `dict()` 只是浅层复制。这里环境值的公开类型为字符串或 `None`，已经足够隔离键集合；它不是通用的深拷贝边界。
+
+#### 5.2.3 C：`model_validate()` 创建的是输入模型，不是运行时 Settings
+
+调用点：`dev2`，`config.py`
+
+```python
+_EnvironmentSettingsInput.model_validate(dict(env_values))
+```
+
+`model_validate()` 是 Pydantic 入口。它完成的不是单纯 `dict → object`，而是按模型声明依次执行：
+
+```text
+环境变量别名映射
+  → mode="before" 字段校验
+  → Pydantic 字段类型构造
+  → mode="after" 模型级校验
+  → _EnvironmentSettingsInput
+```
+
+输入模型使用：
+
+```python
+class _EnvironmentSettingsInput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    use_china_environment: bool = Field(
+        default=False,
+        validation_alias="USE_CHINA_ENVIRONMENT",
+    )
+    api_timeout: float = Field(
+        default=600.0,
+        validation_alias="API_TIMEOUT",
+    )
+```
+
+两个设计点决定数据如何流转：
+
+- `validation_alias` 让外部继续使用大写环境变量名，模型内部使用 Python 字段名。
+- `extra="ignore"` 让整个 `os.environ` 可以作为输入，但只有模型声明的字段进入输入模型。
+
+它创建 `_EnvironmentSettingsInput` 而不是直接创建 `Settings`，因为此时必须暂时容纳 china 和 overseas 两套可选字段。只有完成环境选择后，才能投影出一套完整运行时配置。
+
+#### 5.2.4 D：field validator 消除单字段的不确定性
+
+数据流图把三个代表性 validator 放在同一节点，因为它们的共同边界是：只判断当前字段，不决定环境组合。
+
+当前代码：`dev2`，`config.py`
+
+```python
+@field_validator(
+    "use_china_environment",
+    "generate_allure_report",
+    "generate_history_report",
+    mode="before",
+)
+@classmethod
+def _validate_bool_env(cls, value: Any, info) -> bool:
+    if isinstance(value, bool):
+        return value
+    field_name = cls.BOOL_FIELDS[info.field_name]
+    return parse_bool(
+        field_name,
+        _optional_string(value),
+        default=bool(cls.model_fields[info.field_name].default),
+    )
+
+@field_validator("api_timeout", mode="before")
+@classmethod
+def _validate_timeout(cls, value: Any) -> float:
+    return parse_positive_float(
+        "API_TIMEOUT",
+        _optional_string(value),
+        default=600.0,
+    )
+
+@field_validator("history_report_keep_limit", mode="before")
+@classmethod
+def _validate_history_keep_limit(cls, value: Any) -> int:
+    return parse_positive_int(
+        "HISTORY_REPORT_KEEP_LIMIT",
+        _optional_string(value),
+        default=20,
+    )
+```
+
+`mode="before"` 的含义是 parser 能看到外部原始值，在 Pydantic 做最终字段类型构造之前先应用项目规则。
+
+| Validator | 输入 | 委托函数 | 成功输出 | 失败条件 |
+| --- | --- | --- | --- | --- |
+| `_validate_bool_env()` | bool 或任意外部值 | `parse_bool()` | `bool` | 非空值不是 TRUE/FALSE |
+| `_validate_timeout()` | 外部 timeout | `parse_positive_float()` | 正浮点数 | 不能转为数字或 `<= 0` |
+| `_validate_history_keep_limit()` | 外部保留数 | `parse_positive_int()` | 正整数 | 不能转为整数或 `< 1` |
+
+parser 的职责比 validator 更窄。例如：
+
+```python
+def parse_positive_float(
+    name: str,
+    value: str | None,
+    *,
+    default: float | None = None,
+) -> float:
+    normalized_value = _normalize_optional_value(value)
+    if normalized_value is None:
+        if default is not None:
+            return default
+        raise ConfigValidationError(
+            REQUIRED_VALUE_MESSAGE.format(name=name)
+        )
+
+    try:
+        parsed_value = float(normalized_value)
+    except ValueError as exc:
+        raise ConfigValidationError(
+            f"Invalid config {name}={normalized_value!r}. "
+            "Expected positive number."
+        ) from exc
+
+    if parsed_value <= 0:
+        raise ConfigValidationError(
+            f"Invalid config {name}={normalized_value!r}. "
+            "Expected positive number."
+        )
+    return parsed_value
+```
+
+它只知道“一个具名配置必须是正数”，不知道这个数字最终进入请求 timeout 还是报告配置。这使规则可以离线、独立测试。
+
+URL 与 Key 的四个 normalize validator 也在 `model_validate()` 内执行，但图只保留代表性节点。它们把 `None` 保持为 `None`，把空白字符串转成 `None`，暂时不要求未选中环境的值存在。
+
+当前实现有一个需认知的细节：模型字段 `history_report_keep_limit` 声明默认值为 `30`，而 `_validate_history_keep_limit()` 调用 parser 时传入默认值 `20`。字段完全缺失时，当前测试证明公开结果为 `30`；显式传入空值时会经过 validator 的 `20`。这两个默认来源并不一致，是当前实现事实，不应在扩展时继续复制。
+
+#### 5.2.5 E～G：模型级校验只验证选中的环境
+
+当前代码：`dev2`，`config.py`
+
+```python
+@model_validator(mode="after")
+def _validate_selected_environment(
+    self,
+) -> _EnvironmentSettingsInput:
+    errors: list[ConfigValidationError] = []
+    if self.use_china_environment:
+        _collect_config_error(
+            errors,
+            require_http_url,
+            "CHINA_TEST_ENVIRONMENT_BASE_URL",
+            self.china_base_url,
+        )
+        _collect_config_error(
+            errors,
+            require_non_empty,
+            "CHINA_API_KEY",
+            self.china_api_key,
+        )
+        if errors:
+            raise aggregate_config_errors(errors)
+        return self
+
+    _collect_config_error(
+        errors,
+        require_http_url,
+        "OVERSEAS_TEST_BASE_URL",
+        self.overseas_base_url,
+    )
+    _collect_config_error(
+        errors,
+        require_non_empty,
+        "OVERSEAS_API_KEY",
+        self.overseas_api_key,
+    )
+    if errors:
+        raise aggregate_config_errors(errors)
+    return self
+```
+
+为什么必须在字段校验之后执行：环境标志先变成可靠 bool，URL 和 Key 的空白也先规范化，模型级规则才可以稳定判断“当前到底选择哪一套字段”。
+
+为什么只校验选中环境：未选中环境不会被本次运行消费，让它成为必填项只会扩大启动失败范围。
+
+`_collect_config_error()` 的作用不是校验字段，而是改变失败控制流：
+
+```python
+def _collect_config_error(
+    errors: list[ConfigValidationError],
+    parser,
+    *args,
+    **kwargs,
+) -> None:
+    try:
+        parser(*args, **kwargs)
+    except ConfigValidationError as error:
+        errors.append(error)
+```
+
+如果直接连续调用两个 `require_*()`，URL 第一个失败后 API Key 就不会再检查。collector 把“立即抛出”改成“收集当前独立错误并继续”，所以同一环境缺失 URL 和 Key 时能一次报告两项。
+
+两个 require helper 分别建立最低契约：
+
+```python
+def require_non_empty(name: str, value: str | None) -> str:
+    normalized_value = _normalize_optional_value(value)
+    if normalized_value is None:
+        raise ConfigValidationError(
+            REQUIRED_VALUE_MESSAGE.format(name=name)
+        )
+    return normalized_value
+
+
+def require_http_url(name: str, value: str | None) -> str:
+    normalized_value = require_non_empty(name, value).rstrip("/")
+    if not normalized_value.startswith(("http://", "https://")):
+        raise ConfigValidationError(
+            f"Invalid config {name}={normalized_value!r}. "
+            "Expected http(s) URL."
+        )
+    return normalized_value
+```
+
+`require_http_url()` 先复用非空规则，再移除尾斜杠，最后限制协议头。这里没有使用完整 URL parser，因此它只承诺当前代码实际检查的内容，不能宣称已经验证 host、port、路径或域名合法性。
+
+还要注意：model validator 中 `require_*()` 的返回值只用于判断，没有写回输入模型。因此此阶段证明“值可用”，真正规范化后的 URL 要在 `to_settings()` 中再次取得。
+
+#### 5.2.6 H～J：`to_settings()` 是最后的信任投影
+
+当前代码：`dev2`，`config.py`
+
+```python
+def to_settings(self) -> Settings:
+    if self.use_china_environment:
+        return Settings(
+            timeout=self.api_timeout,
+            generate_allure_report=self.generate_allure_report,
+            generate_history_report=self.generate_history_report,
+            history_report_keep_limit=self.history_report_keep_limit,
+            base_url=require_http_url(
+                "CHINA_TEST_ENVIRONMENT_BASE_URL",
+                self.china_base_url,
+            ),
+            api_key=require_non_empty(
+                "CHINA_API_KEY",
+                self.china_api_key,
+            ),
+            environment_name="china",
+        )
+
+    return Settings(
+        timeout=self.api_timeout,
+        generate_allure_report=self.generate_allure_report,
+        generate_history_report=self.generate_history_report,
+        history_report_keep_limit=self.history_report_keep_limit,
+        base_url=require_http_url(
+            "OVERSEAS_TEST_BASE_URL",
+            self.overseas_base_url,
+        ),
+        api_key=require_non_empty(
+            "OVERSEAS_API_KEY",
+            self.overseas_api_key,
+        ),
+        environment_name="overseas",
+    )
+```
+
+这个函数做了三件不能由字段 validator 代替的事：
+
+1. 根据已验证的环境标志选择一套 URL 与 Key。
+2. 再次调用 `require_*()`，取得去空白、去尾斜杠后的真实返回值。
+3. 丢弃未选中环境的字段，只向运行时公开统一的 `base_url` 和 `api_key`。
+
+公开模型为：
+
+```python
+class Settings(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    timeout: float
+    generate_allure_report: bool
+    generate_history_report: bool
+    history_report_keep_limit: int
+    base_url: str
+    api_key: str
+    environment_name: str
+```
+
+`frozen=True` 只承诺实例创建后不能普通赋值修改。它不自动证明 URL 和 environment name 符合业务规则，所以可信构造路径是 `load_settings() → to_settings() → Settings()`，而不是调用方直接 `Settings(...)`。
+
+到这里，配置数据的所有权发生改变：输入模型只属于一次加载调用；返回的 `Settings` 成为运行时配置快照。
+
+#### 5.2.7 K～L：`BaseRequest` 把配置快照转成客户端状态
+
+当前代码：`dev2`，`common/base_request.py`
+
+```python
+class BaseRequest:
+    def __init__(
+        self,
+        config: Settings = settings,
+        middlewares: list[RequestMiddleware] | None = None,
+        retry_executor: RetryExecutor | None = None,
+    ):
+        self.config = config
+        self.session = requests.Session()
+        self.default_headers = self._build_default_headers()
+        self.session.headers.update(self.default_headers)
+        self.middlewares = list(
+            self._default_middlewares()
+            if middlewares is None
+            else middlewares
+        )
+        self.retry_executor = retry_executor or RetryExecutor(
+            sleeper=time.sleep,
+            monotonic=time.monotonic,
+        )
+
+    def _build_default_headers(self) -> dict[str, str]:
+        return {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "api-v1_chat_completions-framework",
+            "Authorization": f"Bearer {self.config.api_key}",
+        }
+```
+
+这里完成从“可信配置事实”到“可发送客户端状态”的转换：
+
+| Settings 字段 | 消费位置 | 形成的客户端状态 |
+| --- | --- | --- |
+| `api_key` | `_build_default_headers()` | 真实 `Authorization` Header |
+| `base_url` | 后续 `_build_url()` | 相对 path 的 URL 基址 |
+| `timeout` | 后续 `_build_request_context()` | 未显式传 timeout 时的默认值 |
+
+`BaseRequest` 不再读取 `os.environ`，也不再次判断 china/overseas。环境差异已经在 `to_settings()` 前消失，这是信任边界生效的直接证据。
+
+`Authorization` 是真实发送数据，不是日志安全副本。若在这里提前脱敏，网络请求会携带 `<redacted>` 而失败；日志脱敏必须在后续观测路径产生副本。这正是第 3、4 天继续展开的数据流。
+
+#### 5.2.8 一次成功调用后，各层可以依赖什么
+
+| 函数返回点 | 下游可以依赖的不变量 | 下游仍不能假设什么 |
+| --- | --- | --- |
+| `load_dotenv()` 后 | 环境来源已尝试合并 | 配置存在、类型正确 |
+| field validator 后 | 单字段类型和基本范围正确 | 当前环境的 URL/Key 完整 |
+| `_validate_selected_environment()` 后 | 选中环境最低前提完整 | URL 规范化结果已写回模型 |
+| `to_settings()` 后 | 公开字段完整，选中环境已投影 | 直接构造任意 Settings 也同样可信 |
+| `BaseRequest.__init__()` 后 | Session 已持有真实默认 Header | 日志输出已经脱敏 |
+
+这条调用链的核心因果关系是：
+
+```text
+来源确定
+  → 单字段可解释
+  → 环境组合完整
+  → 运行时模型收敛
+  → 客户端可以发送
+```
+
+任何新配置规则都应先判断它消除的是哪一层不确定性，再放入对应函数，不能因为都在 `config.py` 就堆进 `load_settings()`。
+
+### 5.3 后续课程沿用的绘图协议
+
+每节课只画一张自上而下的真实函数调用链。节点只写函数、方法或构造器名称；数据含义、分支、异常和生命周期放在图外说明。
+
+第 3 天从请求调用继续：
+
+```text
+BaseRequest.__init__()
+  → get() / post()
+  → request()
+  → _build_request_context()
+```
+
+因此第 3 天需要回答的是：`Settings` 中的 `base_url`、`api_key` 和 `timeout` 如何与用例传入的 method、path、payload、headers 合并成一次 attempt 的 `RequestContext`；不再重新解释环境变量如何变成 `Settings`。
+
 ## 6. 变化轴
 
 配置能力不是单一变化，它包含六条独立变化轴：
