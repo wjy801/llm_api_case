@@ -51,6 +51,8 @@ class ResponsesAssertions(BaseAssertions):
 
 class ProtocolInterceptionAssertions(BaseAssertions):
     forbidden_error_text_values = ["traceback", "stack trace", "exception", "sql", "internal server error"]
+    blocked_message_fragment = "当前使用协议"
+    blocked_error_type = "invalid_request_error"
 
     def assert_protocol_interception_allowed(
         self,
@@ -73,9 +75,7 @@ class ProtocolInterceptionAssertions(BaseAssertions):
             f"协议拦截 block 用例应返回非 200。case_id={case_id!r}，响应内容：{response.text}"
         )
         body = self._json_body(response, case_id)
-        assert self._has_error_message(body), (
-            f"协议拦截 block 用例应返回错误对象或错误信息。case_id={case_id!r}，响应内容：{response.text}"
-        )
+        self._assert_blocked_error(body, response, case_id)
         self._assert_response_text_not_contains_internal_information(response, case_id)
         return response
 
@@ -89,17 +89,35 @@ class ProtocolInterceptionAssertions(BaseAssertions):
         assert isinstance(body, dict), f"响应 JSON 顶层应为对象。case_id={case_id!r}，响应内容：{response.text}"
         return body
 
-    @staticmethod
-    def _has_error_message(body: dict[str, Any]) -> bool:
-        error = body.get("error")
-        if error is not None:
-            return True
+    def _assert_blocked_error(
+        self,
+        body: dict[str, Any],
+        response: requests.Response,
+        case_id: str,
+    ) -> None:
+        assert "error" in body, (
+            f"协议拦截 block 用例应包含 error 字段。"
+            f"case_id={case_id!r}，响应内容：{response.text}"
+        )
 
-        for field_name in ("message", "error_message", "code", "type"):
-            value = body.get(field_name)
-            if isinstance(value, str) and value.strip():
-                return True
-        return False
+        error = body["error"]
+        assert isinstance(error, dict), (
+            f"协议拦截 block 用例的 error 字段应为对象。"
+            f"case_id={case_id!r}，响应内容：{response.text}"
+        )
+
+        message = error.get("message")
+        assert isinstance(message, str) and self.blocked_message_fragment in message, (
+            f"协议拦截 block 用例的 error.message 应包含 "
+            f"{self.blocked_message_fragment!r}。case_id={case_id!r}，响应内容：{response.text}"
+        )
+
+        error_type = error.get("type")
+        assert error_type == self.blocked_error_type, (
+            f"协议拦截 block 用例的 error.type 应为 "
+            f"{self.blocked_error_type!r}，实际为 {error_type!r}。"
+            f"case_id={case_id!r}，响应内容：{response.text}"
+        )
 
     def _assert_response_text_not_contains_internal_information(
         self,
