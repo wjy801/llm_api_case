@@ -530,6 +530,8 @@ git show 2748f16 -- common/polling.py common/base_request.py common/base_task.py
 
 ## 第 8 天：TestContext 与用例生命周期
 
+完整课程内容：[DAY08_TEST_CONTEXT_LIFECYCLE.md](DAY08_TEST_CONTEXT_LIFECYCLE.md)
+
 ### 核心问题
 
 为什么几个局部变量最终会演进成测试上下文？又为什么上下文不能自动变成全局数据仓库？
