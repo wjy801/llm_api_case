@@ -43,3 +43,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+./Jenkinsfile
+./requirements.txt
