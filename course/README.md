@@ -486,6 +486,8 @@ git show 2748f16 -- common/base_request.py common/retry_executor.py
 
 ## 第 7 天：从“字段出现”演进为业务状态机
 
+完整课程内容：[DAY07_POLLING_STATE_MACHINE.md](DAY07_POLLING_STATE_MACHINE.md)
+
 ### 核心问题
 
 异步任务为什么不能用“结果字段出现则成功，否则继续等待”表示？
