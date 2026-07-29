@@ -437,6 +437,8 @@ git diff 56f4f15 291e6ea -- common/base_request.py common/retry.py
 
 ## 第 6 天：重试循环为什么从 BaseRequest 再次抽离
 
+完整课程内容：[DAY06_RETRY_EXECUTOR_BOUNDARY.md](DAY06_RETRY_EXECUTOR_BOUNDARY.md)
+
 ### 核心问题
 
 已经有 `RetryPolicy` 后，为什么还要把执行循环抽成 `RetryExecutor`？
