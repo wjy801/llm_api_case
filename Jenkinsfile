@@ -11,6 +11,7 @@ pipeline {
         booleanParam(name: 'RUN_FRAMEWORK_TESTS', defaultValue: true, description: 'Run framework tests under tests directory.')
         booleanParam(name: 'RUN_COLLECT_ONLY', defaultValue: true, description: 'Collect smoke cases without real execution.')
         booleanParam(name: 'RUN_REAL_SMOKE', defaultValue: false, description: 'Run real smoke cases. Keep disabled by default.')
+        booleanParam(name: 'ALWAYS_SEND_REPORT_EMAIL', defaultValue: false, description: 'Send report email for every build result.')
         choice(name: 'USE_CHINA_ENVIRONMENT', choices: ['TRUE', 'FALSE'], description: 'TRUE uses China environment, FALSE uses default environment.')
         string(name: 'SMOKE_TARGET', defaultValue: 'module/smoke', description: 'Smoke test target path.', trim: true)
         choice(name: 'TEST_PARALLEL_WORKERS', choices: ['off', 'auto', '2', '4', '8'], description: 'off disables pytest-xdist; auto/2/4/8 enables parallel test execution.')
@@ -153,7 +154,9 @@ pipeline {
         success {
             script {
                 def previousResult = currentBuild.previousBuild?.result
-                if (previousResult in ['FAILURE', 'UNSTABLE']) {
+                if (params.ALWAYS_SEND_REPORT_EMAIL) {
+                    notifyByEmail('SUCCESS')
+                } else if (previousResult in ['FAILURE', 'UNSTABLE']) {
                     notifyByEmail('FIXED')
                 }
             }

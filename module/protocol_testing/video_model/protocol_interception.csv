@@ -1,0 +1,11 @@
+case_id,protocol_path,header_protocol,body_protocol,model_id,expected
+media_openai_seedance_oversea_allow,media_generations,openai,video_media,seedance-2-0-oversea,allow
+media_openai_doubao_seedance_allow,media_generations,openai,video_media,doubao-seedance-2-0-260128,allow
+images_generations_openai_seedance_oversea_block,images_generations,openai,video_media,seedance-2-0-oversea,block
+images_generations_openai_doubao_seedance_block,images_generations,openai,video_media,doubao-seedance-2-0-260128,block
+images_edits_openai_seedance_oversea_block,images_edits,openai,video_media,seedance-2-0-oversea,block
+images_edits_openai_doubao_seedance_block,images_edits,openai,video_media,doubao-seedance-2-0-260128,block
+chat_completions_openai_seedance_oversea_block,openai_chat_completions,openai,video_media,seedance-2-0-oversea,block
+chat_completions_openai_doubao_seedance_block,openai_chat_completions,openai,video_media,doubao-seedance-2-0-260128,block
+responses_openai_seedance_oversea_block,openai_responses,openai,video_media,seedance-2-0-oversea,block
+responses_openai_doubao_seedance_block,openai_responses,openai,video_media,doubao-seedance-2-0-260128,block
