@@ -776,6 +776,67 @@ flowchart TD
 
 `attach_log` 不是全局日志开关，而是单次 attempt 的自动附件策略。
 
+### 7.5 贯穿课程的数据流思维导图：从 Settings 到一次 attempt
+
+本图承接第 2 天，只展示请求级 headers 非空、无 retry、默认 Middleware、transport 成功时的真实函数调用。分支和异常语义见后文。
+
+```mermaid
+flowchart TD
+    A["BaseRequest.__init__()"] --> B["_build_default_headers()"]
+    B --> C["get() / post()"]
+    C --> D["request()"]
+    D --> E["_build_request_context()"]
+    E --> F["_build_url()"]
+    F --> G["_copy_request_kwargs()"]
+    G -->|"headers 非空"| H["_merge_headers()"]
+    H --> I["RequestContext()"]
+    I --> J["_send()"]
+    J --> K["_run_before_middlewares()"]
+    K --> L["MediaResourceMiddleware.before_request()"]
+    L --> M["RedactionMiddleware.before_request()"]
+    M --> N["redact_request_kwargs()"]
+    N --> O["LoggingMiddleware.before_request()"]
+    O --> P["ApiCallLogger()"]
+    P --> Q["session.request()"]
+    Q --> R["_run_after_middlewares()"]
+    R --> S["MediaResourceMiddleware.after_response()"]
+    S --> T["RedactionMiddleware.after_response()"]
+    T --> U["LoggingMiddleware.after_response()"]
+    U --> V["ApiCallLogger.attach_success()"]
+```
+
+图中最重要的不是 hook 顺序，而是三类数据不能合并：
+
+| 数据状态 | 内容 | 谁可以修改 | 谁消费 | 为什么必须独立 |
+| --- | --- | --- | --- | --- |
+| 调用方输入 | 原始 payload、headers、timeout | 调用方 | `_build_request_context()` | Middleware 不应反向污染用例对象 |
+| attempt 真值 | 真正准备发送的 method、URL、kwargs | before hook 可就地补充 | `session.request()` | 必须保留真实凭据和真实业务数据才能正确发送 |
+| 安全副本 | 对 kwargs 复制并脱敏后的结构 | RedactionMiddleware 创建，后续只读 | LoggingMiddleware | 不能把 `<redacted>` 写回真实请求，也不能让真实秘密进入报告 |
+| 协作状态 | logger 等本次 attempt 对象 | Middleware 通过 attributes 写入 | 当前 attempt 的后续 hook | 不能进入 Middleware 实例字段造成并发串扰 |
+| transport 结果 | Response 或原始网络异常 | transport 创建 | after/on_exception 与上层 | HTTP 4xx/5xx 是 Response，不等同于 Python 异常 |
+
+#### 与真实代码对应时必须保留的四个细节
+
+1. `_copy_request_kwargs()` 是“尽力深拷贝”，某个值无法 `deepcopy` 时会保留原引用，因此不是绝对隔离承诺。
+2. 调用方显式提供的 timeout 通过 `setdefault()` 保留；只有未提供时才使用 `Settings.timeout`。
+3. 只有非空请求级 headers 才会在 Context 构造阶段与 Session headers 合并。未传或传空字典时，Context 不一定含 Authorization；requests 在 PreparedRequest 阶段应用 Session headers。
+4. `RedactionMiddleware` 创建旁路安全副本。`session.request()` 始终消费 `context.kwargs`，不会消费 `attributes.redacted_kwargs`。
+
+#### 第 4 天的唯一接续点
+
+第 4 天从日志函数继续，不重新解释 Context 构造：
+
+```text
+context.kwargs
+  → session.request() → Response
+
+redacted_kwargs + PreparedRequest / Response
+  → ApiCallLogger
+  → Allure 安全附件
+```
+
+下一节要解决的问题是：为什么日志既要参考最终 PreparedRequest 和 Response，又不能直接输出其中的秘密；以及脱敏副本为什么只能进入观测流，不能返回真实发送流。
+
 ## 8. Middleware 能修改什么
 
 当前协议把可变 `RequestContext` 交给 `before_request`，因此 Middleware 有能力修改真实发送参数。
