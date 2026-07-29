@@ -6,18 +6,49 @@
 
 一次 HTTP 200 只证明本次查询拿到了响应，不证明任务成功；一个 JSONPath 匹配到值，只证明响应中存在数据，也不证明该值具备成功语义。
 
+### 0.1 贯穿式数据流总图
+
 ```mermaid
-flowchart LR
-    A["HTTP 查询得到响应"] --> B["读取业务状态与结果证据"]
-    B --> C{"业务分类"}
-    C -->|"PENDING"| D["记录迁移并继续等待"]
-    C -->|"SUCCESS"| E["返回最终 Response"]
-    C -->|"FAILURE"| F["抛 PollingFailedError"]
-    C -->|"UNKNOWN"| G["默认抛 PollingUnknownStateError"]
-    D --> H{"polling 预算是否剩余"}
-    H -->|"是"| A
-    H -->|"否"| I["抛 PollingTimeoutError"]
+flowchart TD
+    A["BaseRequest.poll_get()｜校验轮询参数"] --> B["BaseRequest._poll_get_with_policy()｜组织多轮查询"]
+    B --> C1["BaseRequest._request_without_attach()｜执行 polling round 1"]
+    C1 --> D1["BaseRequest._build_request_context()｜构造本轮 Context"]
+    D1 --> E1["BaseRequest._send()｜完成本轮 HTTP attempt"]
+    E1 --> E1L["BaseRequest._get_optional_api_call_logger()｜取得本轮 logger"]
+    E1L --> F1["evaluate_polling_response()｜分类 queued 响应"]
+    F1 --> G1["_extract_json_path_value()｜读取 queued 状态"]
+    G1 --> G1E["_extract_json_path_value()｜检查 error 证据"]
+    G1E --> H1["PollingEvaluation()｜构造 PENDING 结果"]
+    H1 --> I1["PollingTransition()｜记录 round 1 观察"]
+    I1 --> J["time.sleep()｜等待下一轮查询"]
+    J --> C2["BaseRequest._request_without_attach()｜执行 polling round 2"]
+    C2 --> D2["BaseRequest._build_request_context()｜构造新 Context"]
+    D2 --> E2["BaseRequest._send()｜完成本轮 HTTP attempt"]
+    E2 --> E2L["BaseRequest._get_optional_api_call_logger()｜取得最终 logger"]
+    E2L --> F2["evaluate_polling_response()｜分类 succeeded 响应"]
+    F2 --> G2["_extract_json_path_value()｜读取 succeeded 状态"]
+    G2 --> G2E["_extract_json_path_value()｜检查 error 证据"]
+    G2E --> H2["PollingEvaluation()｜构造 SUCCESS 结果"]
+    H2 --> I2["PollingTransition()｜记录 round 2 观察"]
+    I2 --> K["BaseRequest._attach_polling_transitions()｜挂载迁移序列"]
+    K --> L["format_polling_transitions()｜格式化迁移序列"]
+    L --> M["ApiCallLogger.attach_polling_transitions()｜挂载迁移附件"]
+    M --> N["ApiCallLogger.attach_success()｜挂载最终响应"]
 ```
+
+图 7-1：`queued → succeeded` 的两轮 polling 成功主路径。图中不展开已在第 3～6 节讲过的 Middleware、transport 和可选内层 HTTP retry；FAILURE、UNKNOWN、非法 JSON 和 timeout 都在图外说明。
+
+### 0.2 按图顺序讲解关键函数
+
+| 顺序 | 真实函数/方法/构造器 | 输入 → 输出 | 失败与边界 | 最小关键代码 |
+| ---: | --- | --- | --- | --- |
+| 1 | `BaseRequest.poll_get()` | path、interval、timeout、`PollingPolicy` → 最终 `Response` | interval/timeout 非正数抛 `ValueError`；Policy 是必传关键字参数 | `return self._poll_get_with_policy(...)` |
+| 2 | `BaseRequest._poll_get_with_policy()` | 已校验参数 → 多轮查询、transition 序列和最终 Response | 拥有外层 deadline 与轮次；不解释具体业务状态值 | `while True:` |
+| 3～6 | `_request_without_attach()`、`_build_request_context()`、`_send()`、`_get_optional_api_call_logger()` | GET 请求 → 本轮独立 Context → `(Response, logger)` | transport exception 挂载失败日志后原样抛出；可选 RetryPolicy 只在单个 polling round 内生效 | `return response, logger` |
+| 6～8 | `evaluate_polling_response()`、`_extract_json_path_value()`、`PollingEvaluation()` | Response、Policy → 四态分类及原始证据 | 非法 JSON 抛脱敏的 `AssertionError`；优先级为 error、result、pending、success、failure、unknown | `return PollingEvaluation(state=..., raw_status=raw_status)` |
+| 9 | `PollingTransition()` | round、elapsed、Evaluation、HTTP code → 不可变观察记录 | 记录客户端观察点，不验证 `queued → succeeded` 等相邻迁移是否合法 | `transitions.append(PollingTransition(...))` |
+| 10 | `time.sleep()` | `min(poll_interval, remaining)` → 下一轮开始 | 仅 PENDING 且仍有预算时调用；timeout 抛 `PollingTimeoutError` | `time.sleep(min(poll_interval, remaining))` |
+| 11～14 | `_attach_polling_transitions()`、`format_polling_transitions()`、`attach_polling_transitions()`、`attach_success()` | 完整 transitions、最终 Response → 两类 Allure 附件 | 只负责可观测性；`attach_success` 表示拿到 HTTP 响应，不替代业务分类 | `logger.attach_polling_transitions(format_polling_transitions(transitions))` |
 
 从第一性原理看，轮询需要回答三个彼此独立的问题：
 
