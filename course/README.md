@@ -668,6 +668,8 @@ Fake 只模拟被测试逻辑实际依赖的协议表面。Mock 验证框架分�
 
 ## 第 11 天：从全量并发演进为资源约束调度
 
+完整课程内容：[DAY11_RESOURCE_CONSTRAINED_SCHEDULING.md](DAY11_RESOURCE_CONSTRAINED_SCHEDULING.md)
+
 ### 核心问题
 
 并发执行的问题为什么不是“线程是否安全”这么简单？谁拥有串行决策？
@@ -710,6 +712,8 @@ git show 24a3d8c -- master_service.py run_master.py tests/test_master_service_pa
 ---
 
 ## 第 12 天：工程闭环与陌生需求设计
+
+完整课程内容：[DAY12_ENGINEERING_CLOSURE_TRACE_DESIGN.md](DAY12_ENGINEERING_CLOSURE_TRACE_DESIGN.md)
 
 ### 核心问题
 
