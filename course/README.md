@@ -573,6 +573,8 @@ git diff 56f4f15 291e6ea -- common/test_context.py module/conftest.py common/bas
 
 ## 第 9 天：从重复字段断言演进为响应契约
 
+完整课程内容：[DAY09_RESPONSE_CONTRACT_BOUNDARY.md](DAY09_RESPONSE_CONTRACT_BOUNDARY.md)
+
 ### 核心问题
 
 哪些响应规则是稳定契约，哪些只是当前业务示例，不能进入通用 Schema？
