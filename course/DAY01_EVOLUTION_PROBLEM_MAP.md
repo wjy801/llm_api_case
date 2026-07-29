@@ -17,9 +17,11 @@ flowchart LR
     E --> F["比较实现方案"]
 ```
 
-当前框架由此形成了不同的控制边界：单次 HTTP 请求、重试序列、业务轮询序列、测试用例和测试运行分别拥有自己的状态。它们通过接口组合，不再依赖一个对象持有所有状态。
+当前框架由此形成了主要控制边界：单次 HTTP 请求、重试序列、业务轮询序列、测试用例和测试运行分别拥有自己的状态。它们通过接口组合，不再依赖一个对象持有所有状态。不过，账户查询的临时 Authorization 仍写入共享 Session，这说明“边界已经形成”不等于“所有旧状态都已完成迁移”。
 
-## 1. 两小时学习结构
+## 1. 两小时核心总图与扩展精读
+
+第一节承担全课程坐标系，内容完整性优先于严格限制在两小时。首轮用 120 分钟建立总图，已经满足每天至少两小时的学习内容；再用约 90 分钟核对关键源码。后续专题会分别深入配置、Middleware、日志、重试、轮询、TestContext 和调度，本节不要求一次记住所有 API。
 
 | 阶段 | 时间 | 学习内容 |
 | --- | ---: | --- |
@@ -31,6 +33,15 @@ flowchart LR
 | 状态所有权 | 90～105 分钟 | 五种生命周期与不变量 |
 | 方案比较 | 105～115 分钟 | 集中流程、工具函数、生命周期对象 |
 | 结论复盘 | 115～120 分钟 | 完整演进因果链 |
+
+核心总图完成后继续扩展精读：
+
+| 扩展阶段 | 时间 | 学习内容 |
+| --- | ---: | --- |
+| 初版源码对照 | 120～145 分钟 | `request`、`_request_without_attach`、`poll_get` |
+| 第一次增强对照 | 145～170 分钟 | RequestContext、Middleware、内置重试循环 |
+| 第二次抽离对照 | 170～195 分钟 | BaseRequest 委托与 RetryExecutor 所有权 |
+| 当前边界核验 | 195～210 分钟 | runner、TestContext、polling 与 Session Header 遗留 |
 
 本节只建立演进问题地图，不提前展开各扩展类的字段和 API。
 
@@ -82,6 +93,36 @@ git show 56f4f15:run_master.py
 
 初版 `request()` 集中完成请求构造、媒体资源处理、HTTP 发送和日志记录：
 
+初版代码：`56f4f15`，`common/base_request.py`
+
+```python
+def request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
+    attach_log = kwargs.pop("_attach_log", True)
+    url = self._build_url(path)
+    kwargs.setdefault("timeout", self.config.timeout)
+
+    headers = kwargs.pop("headers", None)
+    if headers:
+        kwargs["headers"] = self._merge_headers(headers)
+
+    if method.upper() == "POST":
+        start_media_downloads(kwargs.get("json"))
+
+    logger = ApiCallLogger(method, url, kwargs)
+    try:
+        response = self.session.request(method=method, url=url, **kwargs)
+    except Exception as error:
+        if attach_log:
+            logger.attach_failure(error)
+        raise
+
+    if attach_log:
+        logger.attach_success(response)
+    return response
+```
+
+这段代码直接提供三项证据：`kwargs` 同时经过传输构造和日志构造，POST 媒体处理直接嵌入发送入口，成功与失败附件由请求方法决定。传输、资源处理和观测沿不同原因变化，却共享同一个修改点。初版没有跨请求控制状态，因此集中实现仍符合当时“先获得统一调用能力”的主约束。
+
 ```mermaid
 flowchart TD
     A["get、post、put、patch、delete"] --> B["request"]
@@ -132,6 +173,40 @@ flowchart LR
 
 初版 `_request_without_attach()` 重复了 URL 构造、timeout 填充、header 合并、logger 创建、HTTP 发送和异常日志。
 
+初版代码：`56f4f15`，`common/base_request.py`
+
+```python
+def _request_without_attach(
+    self,
+    method: str,
+    path: str,
+    *,
+    step_name: str = API_REQUEST_STEP_NAME,
+    response_step_name: str | None = None,
+    **kwargs: Any,
+) -> tuple[requests.Response, ApiCallLogger]:
+    url = self._build_url(path)
+    request_kwargs = dict(kwargs)
+    request_kwargs.setdefault("timeout", self.config.timeout)
+
+    headers = request_kwargs.pop("headers", None)
+    if headers:
+        request_kwargs["headers"] = self._merge_headers(headers)
+
+    logger_kwargs: dict[str, Any] = {"step_name": step_name}
+    if response_step_name is not None:
+        logger_kwargs["response_step_name"] = response_step_name
+
+    logger = ApiCallLogger(method, url, request_kwargs, **logger_kwargs)
+    try:
+        response = self.session.request(method=method, url=url, **request_kwargs)
+    except Exception as error:
+        logger.attach_failure(error)
+        raise
+
+    return response, logger
+```
+
 这不是普通的代码重复，而是由报告语义驱动的重复：普通请求需要立即挂载响应日志，轮询中间响应不能全部挂载，只在最终结论处记录。
 
 ```mermaid
@@ -153,6 +228,74 @@ flowchart TD
 ### 3.3 初版 poll_get 同时拥有两类状态
 
 初版 `poll_get()` 负责参数校验、deadline、重复 GET、JSONPath 解析、成功判断、失败判断、sleep、最终日志和异常构造。
+
+初版代码：`56f4f15`，`common/base_request.py`
+
+```python
+def poll_get(
+    self,
+    path: str,
+    *,
+    poll_interval: float = 2,
+    poll_timeout: float | None = None,
+    success_json_path: str | None = None,
+    failure_json_path: str | None = None,
+    **kwargs: Any,
+) -> requests.Response:
+    if poll_interval <= 0:
+        raise ValueError("poll_interval must be greater than 0")
+
+    timeout = self.config.timeout if poll_timeout is None else poll_timeout
+    if timeout <= 0:
+        raise ValueError("poll_timeout must be greater than 0")
+
+    deadline = time.monotonic() + timeout
+    last_response: requests.Response
+    last_status: Any
+    last_logger: ApiCallLogger | None = None
+
+    while True:
+        last_response, last_logger = self._request_without_attach(
+            "GET",
+            path,
+            step_name=POLL_GET_REQUEST_STEP_NAME,
+            response_step_name=POLL_GET_RESPONSE_STEP_NAME,
+            **kwargs,
+        )
+        failure_status = None
+        try:
+            if failure_json_path is not None:
+                failure_status = self._extract_json_path_value(last_response, failure_json_path)
+            last_status = self._extract_json_path_value(last_response, success_json_path)
+        except Exception:
+            last_logger.attach_success(last_response)
+            raise
+
+        if failure_json_path is not None and failure_status is not None:
+            last_logger.attach_success(last_response)
+            raise AssertionError(
+                f"poll_get failed: path={path!r}, "
+                f"{failure_json_path}={failure_status!r}, "
+                f"response={last_response.text}"
+            )
+
+        if last_status is not None:
+            last_logger.attach_success(last_response)
+            return last_response
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            last_logger.attach_success(last_response)
+            raise TimeoutError(
+                f"poll_get timed out after {timeout} seconds: path={path!r}, "
+                f"last {success_json_path}={last_status!r}, "
+                f"last response={last_response.text if last_response is not None else '<empty>'}"
+            )
+
+        time.sleep(min(poll_interval, remaining))
+```
+
+代码证据中的所有权是明确的：`poll_get()` 创建并修改 deadline、last response 和 sleep 节奏，同时用 JSONPath 值决定远端任务成功或失败，并亲自决定最终日志时机。一个函数因此同时拥有本地时间控制、远端业务判定和观测协调。
 
 ```mermaid
 flowchart TD
@@ -192,6 +335,51 @@ flowchart TD
 
 初版 `BaseTask` 同时包含：
 
+初版代码：`56f4f15`，`common/base_task.py`
+
+```python
+def get_account_balance(
+    self,
+    request_client: BaseRequest,
+    control_api_key: str,
+) -> requests.Response:
+    request_client.update_headers(
+        {
+            "User-Agent": "api-v1_chat_completions-framework",
+            "Accept-Encoding": "gzip, deflate, zstd",
+            "Accept": "application/json",
+            "Connection": "keep-alive",
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {control_api_key}",
+        }
+    )
+    try:
+        return request_client.get(self.account_balance_path, data="")
+    finally:
+        request_client.reset_headers()
+
+def query_usage_records_by_request_id(
+    self,
+    request_client: BaseRequest,
+    control_api_key: str,
+    request_id: str,
+) -> requests.Response:
+    request_client.update_headers({"Authorization": f"Bearer {control_api_key}"})
+    try:
+        usage_response = request_client.get(
+            self.usage_records_path,
+            params={"request_id": request_id, "": ""},
+        )
+    finally:
+        request_client.reset_headers()
+
+    print("usage_records response body:")
+    print(self.format_response_body(usage_response))
+    return usage_response
+```
+
+这里保留了影响推导的完整控制流，省略的只有函数 docstring 和装饰器。代码本身证明一个业务方法同时知道端点、request ID、控制台认证、共享客户端恢复和控制台输出。不同变化轴不是根据方法名称猜测出来的，而是由它直接读写的状态推出。
+
 ```mermaid
 flowchart TD
     A["BaseTask"] --> B["业务端点调用"]
@@ -221,6 +409,38 @@ flowchart TD
 
 账单相关方法会临时修改 `request_client.session.headers`，请求结束后再 reset。
 
+初版与当前 dev2 在这条状态边界上保持了相同做法。
+
+当前代码：`dev2`，`module/smoke/request.py`
+
+```python
+def get_account_balance(self, control_api_key: str) -> requests.Response:
+    self.update_headers(
+        {
+            "User-Agent": "api-v1_chat_completions-framework",
+            "Accept-Encoding": "gzip, deflate, zstd",
+            "Accept": "application/json",
+            "Connection": "keep-alive",
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {control_api_key}",
+        }
+    )
+    try:
+        return self.get(self.account_balance_path, data="")
+    finally:
+        self.reset_headers()
+
+def get_usage_records(self, control_api_key: str, request_id: str) -> requests.Response:
+    self.update_headers({"Authorization": f"Bearer {control_api_key}"})
+    try:
+        return self.get(
+            self.usage_records_path,
+            params={"request_id": request_id, "": ""},
+        )
+    finally:
+        self.reset_headers()
+```
+
 ```mermaid
 flowchart LR
     A["BaseTask 设置控制台密钥"] --> B["修改 Session 共享 headers"]
@@ -237,9 +457,100 @@ flowchart LR
 - 把临时认证写入 session，会扩大状态的可见范围和存活时间。
 - 边界判断必须检查可变状态的共享范围，而不能只查看函数数量。
 
+前两条需要严格区分事实与推导：默认 headers 当前确实属于客户端；“临时认证应属于单次请求”是根据并发隔离不变量推出的目标边界，dev2 尚未完成这项迁移。当前 `try/finally` 只保证顺序控制流最终恢复，不能阻止并发调用在恢复前观察到临时 Authorization。这是一项已识别的遗留约束，不应被写成已经解决的能力。
+
 ## 5. 初版执行入口的能力边界
 
 初版 `master_service.py` 启动 `pytest --collect-only` 子进程，再从文本中筛选包含 `::` 的 nodeid；`run_master.py` 把 nodeid 和 xdist 参数直接交给 pytest。
+
+演进前：`56f4f15`，`master_service.py` 与 `run_master.py`
+
+```python
+def collect_test_cases(test_path: str | Path = DEFAULT_TEST_PATH) -> list[str]:
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", str(test_path)],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(_collect_error_message(completed))
+    return _parse_pytest_nodeids(completed.stdout)
+
+def _parse_pytest_nodeids(output: str) -> list[str]:
+    case_pool: list[str] = []
+    for line in output.splitlines():
+        pytest_nodeid = line.strip()
+        if not pytest_nodeid or "::" not in pytest_nodeid:
+            continue
+        if pytest_nodeid not in case_pool:
+            case_pool.append(pytest_nodeid)
+    return case_pool
+
+def run(test_path: str = DEFAULT_TEST_PATH, extra_pytest_args=None) -> int:
+    case_pool = collect_test_cases(test_path)
+    pytest_args = list(case_pool)
+    if extra_pytest_args:
+        pytest_args.extend(extra_pytest_args)
+    return pytest.main(pytest_args)
+```
+
+初版收集结果的数据类型只有 `list[str]`，nodeid 是从控制台文本中解析出来的。调度器看不见 marker，所以它没有足够信息区分共享资源用例与普通用例。这是数据缺失造成的能力边界，不是多写一个 `if` 就能安全解决。
+
+演进后：`24a3d8c`，`master_service.py` 与 `run_master.py`
+
+```python
+@dataclass(frozen=True)
+class CollectedTestCase:
+    nodeid: str
+    markers: frozenset[str]
+
+def split_test_cases(
+    cases: Sequence[CollectedTestCase],
+    serial_marker: str = DEFAULT_SERIAL_MARKER,
+) -> tuple[list[str], list[str]]:
+    parallel_cases: list[str] = []
+    serial_cases: list[str] = []
+    for case in cases:
+        if serial_marker in case.markers:
+            serial_cases.append(case.nodeid)
+        else:
+            parallel_cases.append(case.nodeid)
+    return parallel_cases, serial_cases
+
+def run(
+    test_path: str = DEFAULT_TEST_PATH,
+    extra_pytest_args: Sequence[str] | None = None,
+    *,
+    numprocesses: str | None = None,
+    dist: str | None = None,
+    serial_marker: str = DEFAULT_SERIAL_MARKER,
+) -> int:
+    cases = collect_test_case_items(test_path)
+    case_nodeids = [case.nodeid for case in cases]
+    pytest_args = list(extra_pytest_args or [])
+
+    if not numprocesses:
+        return _run_pytest(case_nodeids + pytest_args)
+
+    parallel_cases, serial_cases = split_test_cases(cases, serial_marker=serial_marker)
+    results: list[int] = []
+    if parallel_cases:
+        parallel_args = _build_parallel_args(
+            pytest_args,
+            numprocesses=numprocesses,
+            dist=dist,
+            junit_suffix="parallel",
+        )
+        results.append(_run_pytest(parallel_cases + parallel_args))
+    if serial_cases:
+        serial_args = _build_serial_args(pytest_args, junit_suffix="serial")
+        results.append(_run_serial_pool(serial_cases + serial_args))
+    return _merge_exit_codes(results)
+```
+
+代码片段删除了纯展示用的 `print` 和 collect-only 快速返回，但完整保留了影响职责判断的函数签名、分池、两阶段执行与退出码合并控制流。变化的关键不是“调用两次 pytest”，而是收集状态从裸 nodeid 演进为 `nodeid + markers`，一次测试运行拥有并发池、串行池和合并退出码。被保护的不变量是已知共享资源用例不与普通并发池同时执行。
 
 ```mermaid
 flowchart LR
@@ -333,6 +644,155 @@ git diff 56f4f15 291e6ea -- common/base_request.py
 - 轮询状态策略和迁移记录。
 - 新的日志协调方式。
 
+演进前：`56f4f15`，`common/base_request.py`
+
+```python
+def request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
+    attach_log = kwargs.pop("_attach_log", True)
+    url = self._build_url(path)
+    kwargs.setdefault("timeout", self.config.timeout)
+
+    headers = kwargs.pop("headers", None)
+    if headers:
+        kwargs["headers"] = self._merge_headers(headers)
+
+    if method.upper() == "POST":
+        start_media_downloads(kwargs.get("json"))
+
+    logger = ApiCallLogger(method, url, kwargs)
+    try:
+        response = self.session.request(method=method, url=url, **kwargs)
+    except Exception as error:
+        if attach_log:
+            logger.attach_failure(error)
+        raise
+
+    if attach_log:
+        logger.attach_success(response)
+    return response
+```
+
+演进后之一：`291e6ea`，`common/request_context.py`
+
+```python
+@dataclass
+class RequestContext:
+    method: str
+    path: str
+    url: str
+    kwargs: dict[str, Any]
+    attach_log: bool = True
+    request_step_name: str = API_REQUEST_STEP_NAME
+    response_step_name: str = API_RESPONSE_STEP_NAME
+    attributes: dict[str, Any] = field(default_factory=dict)
+```
+
+演进后二：`291e6ea`，`common/base_request.py`
+
+```python
+def request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
+    attach_log = kwargs.pop("_attach_log", True)
+    retry_policy = kwargs.pop("retry_policy", None)
+    if retry_policy is not None:
+        return self._send_with_retry(
+            method,
+            path,
+            retry_policy,
+            attach_log=attach_log,
+            **kwargs,
+        )
+
+    context = self._build_request_context(
+        method,
+        path,
+        attach_log=attach_log,
+        **kwargs,
+    )
+    return self._send(context)
+
+def _build_request_context(
+    self,
+    method: str,
+    path: str,
+    *,
+    attach_log: bool = True,
+    request_step_name: str = API_REQUEST_STEP_NAME,
+    response_step_name: str = API_RESPONSE_STEP_NAME,
+    **kwargs: Any,
+) -> RequestContext:
+    url = self._build_url(path)
+    request_kwargs = self._copy_request_kwargs(kwargs)
+    request_kwargs.setdefault("timeout", self.config.timeout)
+
+    headers = request_kwargs.pop("headers", None)
+    if headers:
+        request_kwargs["headers"] = self._merge_headers(headers)
+
+    return RequestContext(
+        method=method.upper(),
+        path=path,
+        url=url,
+        kwargs=request_kwargs,
+        attach_log=attach_log,
+        request_step_name=request_step_name,
+        response_step_name=response_step_name,
+    )
+
+def _send(self, context: RequestContext) -> requests.Response:
+    self._run_before_middlewares(context)
+
+    try:
+        response = self.session.request(
+            method=context.method,
+            url=context.url,
+            **context.kwargs,
+        )
+    except Exception as error:
+        self._run_exception_middlewares(context, error)
+        raise
+
+    self._run_after_middlewares(context, response)
+    return response
+```
+
+演进后三：`291e6ea`，`common/request_middleware.py`
+
+```python
+class RequestMiddleware(Protocol):
+    def before_request(self, context: RequestContext) -> None:
+        ...
+
+    def after_response(
+        self,
+        context: RequestContext,
+        response: requests.Response,
+    ) -> None:
+        ...
+
+    def on_exception(
+        self,
+        context: RequestContext,
+        error: BaseException,
+    ) -> None:
+        ...
+
+def default_request_middlewares() -> list[RequestMiddleware]:
+    return [
+        MediaResourceMiddleware(),
+        RedactionMiddleware(),
+        LoggingMiddleware(),
+    ]
+```
+
+Protocol 中的省略号是 Python 接口方法体，不是被删去的控制流。前后代码的实质差异是：
+
+- 初版 `request()` 自己持有 URL、kwargs、日志时机和发送顺序。
+- `291e6ea` 让 `RequestContext` 成为一次 attempt 状态的显式所有者。
+- `_send()` 只执行一次 transport，并向三个 Middleware hook 公布生命周期。
+- 资源发现、脱敏和日志可以各自变化，但不能拥有跨 attempt 的次数和等待预算。
+
+这次演进保护了三个不变量：公开 `get/post` 调用保持兼容；每次 attempt 有独立上下文；观测扩展不再要求复制或改写 transport 骨架。
+
 ```mermaid
 flowchart LR
     A["初版 BaseRequest"] --> B["建立请求上下文"]
@@ -362,6 +822,295 @@ git show 2748f16 -- common/base_request.py common/retry_executor.py
 ```
 
 这次改造把重试循环抽到独立 `RetryExecutor`。两边拥有的状态如下：
+
+演进前：`291e6ea`，`common/base_request.py`
+
+```python
+def _send_with_retry(
+    self,
+    method: str,
+    path: str,
+    retry_policy: RetryPolicy,
+    *,
+    attach_log: bool = True,
+    request_step_name: str = API_REQUEST_STEP_NAME,
+    response_step_name: str = API_RESPONSE_STEP_NAME,
+    context_recorder: list[RequestContext] | None = None,
+    **kwargs: Any,
+) -> requests.Response:
+    first_context = self._build_request_context(
+        method,
+        path,
+        attach_log=attach_log,
+        request_step_name=request_step_name,
+        response_step_name=response_step_name,
+        **kwargs,
+    )
+    if context_recorder is not None:
+        context_recorder[:] = [first_context]
+    if not is_method_retry_allowed(
+        first_context.method,
+        self._kwargs_with_session_headers(first_context.kwargs),
+        retry_policy,
+    ):
+        return self._send(first_context)
+
+    started_at = time.monotonic()
+    retry_records: list[RetryAttemptRecord] = []
+    last_response: requests.Response | None = None
+
+    for attempt_index in range(1, retry_policy.max_attempts + 1):
+        context = self._build_request_context(
+            method,
+            path,
+            attach_log=attach_log,
+            request_step_name=request_step_name,
+            response_step_name=response_step_name,
+            **kwargs,
+        )
+        context.attributes["attempt_index"] = attempt_index
+        context.attributes["max_attempts"] = retry_policy.max_attempts
+        context.attributes["retry_records"] = retry_records
+        if context_recorder is not None:
+            context_recorder[:] = [context]
+
+        try:
+            response = self._send(context)
+        except Exception as error:
+            if (
+                attempt_index >= retry_policy.max_attempts
+                or not should_retry_exception(error, retry_policy)
+            ):
+                self._attach_retry_records(context, retry_records)
+                raise
+
+            wait_seconds = self._retry_wait_seconds(
+                retry_policy,
+                attempt_index,
+                started_at=started_at,
+            )
+            retry_records.append(
+                RetryAttemptRecord(
+                    attempt_index=attempt_index,
+                    max_attempts=retry_policy.max_attempts,
+                    reason=retry_reason_for_exception(error),
+                    wait_seconds=wait_seconds,
+                    exception_type=type(error).__name__,
+                    exception_message=str(error),
+                )
+            )
+            self._attach_retry_records(context, retry_records)
+            if not self._can_retry_within_elapsed(
+                retry_policy,
+                started_at,
+                wait_seconds,
+            ):
+                raise
+            time.sleep(wait_seconds)
+            continue
+
+        last_response = response
+        if (
+            attempt_index >= retry_policy.max_attempts
+            or not should_retry_response(response, retry_policy)
+        ):
+            self._attach_retry_records(context, retry_records)
+            return response
+
+        wait_seconds = self._retry_wait_seconds(
+            retry_policy,
+            attempt_index,
+            started_at=started_at,
+            response=response,
+        )
+        retry_records.append(
+            RetryAttemptRecord(
+                attempt_index=attempt_index,
+                max_attempts=retry_policy.max_attempts,
+                reason=retry_reason_for_response(response),
+                wait_seconds=wait_seconds,
+                response_status_code=response.status_code,
+            )
+        )
+        self._attach_retry_records(context, retry_records)
+        if not self._can_retry_within_elapsed(
+            retry_policy,
+            started_at,
+            wait_seconds,
+        ):
+            return response
+        time.sleep(wait_seconds)
+
+    if last_response is not None:
+        return last_response
+    raise RuntimeError("retry loop ended without response or exception")
+```
+
+这段完整控制流证明：虽然 `RetryPolicy` 已经独立，执行中的 `started_at`、`retry_records`、`attempt_index`、sleep、预算判断和异常终结仍由 `BaseRequest` 创建并修改。策略对象显式化没有自动改变运行时状态所有者。
+
+演进后之一：`2748f16`，`common/base_request.py`
+
+```python
+def _send_with_retry(
+    self,
+    method: str,
+    path: str,
+    retry_policy: RetryPolicy,
+    *,
+    attach_log: bool = True,
+    request_step_name: str = API_REQUEST_STEP_NAME,
+    response_step_name: str = API_RESPONSE_STEP_NAME,
+    context_recorder: list[RequestContext] | None = None,
+    **kwargs: Any,
+) -> requests.Response:
+    first_context = self._build_request_context(
+        method,
+        path,
+        attach_log=attach_log,
+        request_step_name=request_step_name,
+        response_step_name=response_step_name,
+        **kwargs,
+    )
+
+    def context_factory(attempt_index: int) -> RequestContext:
+        context = self._build_request_context(
+            method,
+            path,
+            attach_log=attach_log,
+            request_step_name=request_step_name,
+            response_step_name=response_step_name,
+            **kwargs,
+        )
+        context.attributes["attempt_index"] = attempt_index
+        context.attributes["max_attempts"] = retry_policy.max_attempts
+        return context
+
+    return self.retry_executor.execute(
+        method=first_context.method,
+        request_kwargs=self._kwargs_with_session_headers(first_context.kwargs),
+        policy=retry_policy,
+        context_factory=context_factory,
+        send_once=self._send,
+        attach_records=self._attach_retry_records,
+        context_recorder=context_recorder,
+    )
+```
+
+演进后二：`2748f16`，`common/retry_executor.py`
+
+```python
+class RetryExecutor:
+    def __init__(
+        self,
+        *,
+        sleeper: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
+    ):
+        self.sleeper = sleeper
+        self.monotonic = monotonic
+
+    def execute(
+        self,
+        *,
+        method: str,
+        request_kwargs: Mapping[str, Any],
+        policy: RetryPolicy,
+        context_factory: Callable[[int], RequestContext],
+        send_once: Callable[[RequestContext], requests.Response],
+        attach_records: Callable[[RequestContext, list[RetryAttemptRecord]], None],
+        context_recorder: list[RequestContext] | None = None,
+    ) -> requests.Response:
+        retry_records: list[RetryAttemptRecord] = []
+
+        if not is_method_retry_allowed(method, request_kwargs, policy):
+            context = context_factory(1)
+            self._prepare_context(context, policy, 1, retry_records)
+            self._record_context(context_recorder, context)
+            return send_once(context)
+
+        started_at = self.monotonic()
+        last_response: requests.Response | None = None
+
+        for attempt_index in range(1, policy.max_attempts + 1):
+            context = context_factory(attempt_index)
+            self._prepare_context(
+                context,
+                policy,
+                attempt_index,
+                retry_records,
+            )
+            self._record_context(context_recorder, context)
+
+            try:
+                response = send_once(context)
+            except Exception as error:
+                if (
+                    attempt_index >= policy.max_attempts
+                    or not should_retry_exception(error, policy)
+                ):
+                    attach_records(context, retry_records)
+                    raise
+
+                wait_seconds = calculate_retry_delay(policy, attempt_index)
+                retry_records.append(
+                    RetryAttemptRecord(
+                        attempt_index=attempt_index,
+                        max_attempts=policy.max_attempts,
+                        reason=retry_reason_for_exception(error),
+                        wait_seconds=wait_seconds,
+                        exception_type=type(error).__name__,
+                        exception_message=str(error),
+                    )
+                )
+                attach_records(context, retry_records)
+                if not self._can_retry_within_elapsed(
+                    policy,
+                    started_at,
+                    wait_seconds,
+                ):
+                    raise
+                self.sleeper(wait_seconds)
+                continue
+
+            last_response = response
+            if (
+                attempt_index >= policy.max_attempts
+                or not should_retry_response(response, policy)
+            ):
+                attach_records(context, retry_records)
+                return response
+
+            wait_seconds = calculate_retry_delay(
+                policy,
+                attempt_index,
+                response=response,
+            )
+            retry_records.append(
+                RetryAttemptRecord(
+                    attempt_index=attempt_index,
+                    max_attempts=policy.max_attempts,
+                    reason=retry_reason_for_response(response),
+                    wait_seconds=wait_seconds,
+                    response_status_code=response.status_code,
+                )
+            )
+            attach_records(context, retry_records)
+            if not self._can_retry_within_elapsed(
+                policy,
+                started_at,
+                wait_seconds,
+            ):
+                return response
+            self.sleeper(wait_seconds)
+
+        if last_response is not None:
+            return last_response
+        raise RuntimeError("retry loop ended without response or exception")
+```
+
+前后代码显示所有权发生了真实迁移：`RetryExecutor.execute()` 创建记录集合和开始时间，推进 attempt，调用注入的时钟与 sleeper，并决定序列何时结束；`BaseRequest` 只提供 Context 工厂、单次发送和记录附件回调。时间依赖可以注入后，预算和等待无需真实 sleep 即可离线验证。
+
+被保护的不变量是：每个 attempt 使用新 Context；不允许重试的方法仍只发送一次；最终返回原响应或重新抛出原异常；executor 不需要知道 URL 构造、Session、Middleware 和 Allure 的实现。
 
 | `BaseRequest` 拥有 | `RetryExecutor` 拥有 |
 | --- | --- |
@@ -431,7 +1180,7 @@ flowchart TD
 
 ## 11. 状态所有者与生命周期
 
-当前框架涉及五种主要生命周期：
+当前框架涉及五种执行生命周期，以及一个长期存在的客户端生命周期：
 
 ```mermaid
 flowchart TD
@@ -441,6 +1190,133 @@ flowchart TD
     D --> E["一次 HTTP attempt：method、URL、kwargs、logger"]
     F["客户端生命周期：session、默认 headers"] --> E
 ```
+
+前文已经用代码定位了 test run、retry sequence 和 HTTP attempt。下面只补齐 polling sequence 与 test case 的当前代码锚点，不在总图中展开其完整算法。
+
+当前代码：`dev2`，`common/base_request.py`
+
+```python
+def _poll_get_with_policy(
+    self,
+    path: str,
+    *,
+    poll_interval: float,
+    timeout: float,
+    polling_policy: PollingPolicy,
+    retry_policy: RetryPolicy | None = None,
+    **kwargs: Any,
+) -> requests.Response:
+    deadline = time.monotonic() + timeout
+    started_at = time.monotonic()
+    transitions: list[PollingTransition] = []
+    last_response: requests.Response | None = None
+    last_status: Any = None
+    last_logger: ApiCallLogger | None = None
+    attempt_index = 0
+
+    while True:
+        attempt_index += 1
+        last_response, last_logger = self._request_without_attach(
+            "GET",
+            path,
+            step_name=POLL_GET_REQUEST_STEP_NAME,
+            response_step_name=POLL_GET_RESPONSE_STEP_NAME,
+            retry_policy=retry_policy,
+            **kwargs,
+        )
+        evaluation = evaluate_polling_response(last_response, polling_policy)
+        last_status = evaluation.raw_status
+        transitions.append(
+            PollingTransition(
+                attempt_index=attempt_index,
+                elapsed_seconds=round(time.monotonic() - started_at, 3),
+                state=evaluation.state,
+                raw_status=evaluation.raw_status,
+                response_status_code=last_response.status_code,
+            )
+        )
+
+        if evaluation.state is PollingState.SUCCESS:
+            self._attach_polling_transitions(last_logger, transitions)
+            last_logger.attach_success(last_response)
+            return last_response
+
+        if evaluation.state is PollingState.FAILURE:
+            raise PollingFailedError(
+                path=path,
+                last_status=last_status,
+                last_response=last_response,
+                transitions=transitions,
+                error_value=evaluation.error_value,
+            )
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise PollingTimeoutError(
+                path=path,
+                timeout=timeout,
+                last_status=last_status,
+                last_response=last_response,
+                transitions=transitions,
+            )
+
+        time.sleep(min(poll_interval, remaining))
+```
+
+片段保留了状态创建、每轮修改、成功、业务失败和超时终点，删除了重复的附件语句与 unknown 分支。由此可以看出，polling sequence 的所有者仍是一次 `_poll_get_with_policy()` 调用的局部作用域，而不是 `PollingPolicy`。Policy 拥有稳定规则，执行方法拥有 deadline、transitions、last response 和循环终点。边界不要求每种生命周期都必须对应一个独立类。
+
+当前代码：`dev2`，`common/test_context.py` 与 `module/conftest.py`
+
+```python
+class TestContext:
+    def __init__(self, *, name: str | None = None):
+        self.name = name
+        self._variables: dict[str, Any] = {}
+        self._cleanup_callbacks: list[_CleanupCallback] = []
+
+    def set(self, name: str, value: Any) -> Any:
+        _validate_variable_name(name)
+        self._variables[name] = value
+        return value
+
+    def add_cleanup(
+        self,
+        callback: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        self._cleanup_callbacks.append(
+            _CleanupCallback(
+                callback=callback,
+                args=args,
+                kwargs=dict(kwargs),
+            )
+        )
+
+    def cleanup(self) -> None:
+        errors: list[BaseException] = []
+        while self._cleanup_callbacks:
+            cleanup_callback = self._cleanup_callbacks.pop()
+            try:
+                cleanup_callback.callback(
+                    *cleanup_callback.args,
+                    **cleanup_callback.kwargs,
+                )
+            except BaseException as exc:
+                errors.append(exc)
+        if errors:
+            raise ContextCleanupError(errors)
+
+@pytest.fixture
+def test_context() -> TestContext:
+    context = TestContext()
+    try:
+        yield context
+    finally:
+        context.cleanup()
+```
+
+`TestContext` 创建和修改变量及清理栈，function-scope fixture 则决定它的出生与终点。清理采用 LIFO，即后注册的资源先释放；即使一个回调失败，其余回调仍继续执行。这里被保护的不变量是变量不跨 case 共享，资源清理不会因单个失败而提前中断。
 
 状态所有权完整表：
 

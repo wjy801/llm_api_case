@@ -29,7 +29,7 @@ allure-results/
 allure-report/
 history_report/
 reports/
-flaky_retry_queues/
+done_report/
 data/
 
 # Frontend dependencies
@@ -44,4 +44,5 @@ Thumbs.db
 # Logs
 *.log
 
-/面试
+Jenkinsfile
+requirements.txt
