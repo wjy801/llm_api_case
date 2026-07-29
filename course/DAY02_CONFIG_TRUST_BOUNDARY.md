@@ -745,17 +745,17 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    A["load_dotenv()"] --> B["load_settings(env)"]
-    B --> C["_EnvironmentSettingsInput.model_validate()"]
-    C --> D["_validate_bool_env() / _validate_timeout()<br/>_validate_history_keep_limit()"]
-    D --> E["_validate_selected_environment()"]
-    E --> F["_collect_config_error()"]
-    F --> G["require_http_url() / require_non_empty()"]
-    G --> H["to_settings()"]
-    H --> I["require_http_url() / require_non_empty()"]
-    I --> J["Settings()"]
-    J --> K["BaseRequest.__init__()"]
-    K --> L["_build_default_headers()"]
+    A["load_dotenv()<br/>补充本地环境变量"] --> B["load_settings(env)<br/>选择输入并控制配置加载"]
+    B --> C["_EnvironmentSettingsInput.model_validate()<br/>构造并校验输入模型"]
+    C --> D["_validate_bool_env() / _validate_timeout()<br/>_validate_history_keep_limit()<br/>解析单字段类型与范围"]
+    D --> E["_validate_selected_environment()<br/>校验选中环境的字段组合"]
+    E --> F["_collect_config_error()<br/>收集独立配置错误"]
+    F --> G["require_http_url() / require_non_empty()<br/>校验 URL 与必填值"]
+    G --> H["to_settings()<br/>投影选中环境配置"]
+    H --> I["require_http_url() / require_non_empty()<br/>取得规范化后的最终值"]
+    I --> J["Settings()<br/>构造不可变配置快照"]
+    J --> K["BaseRequest.__init__()<br/>创建请求客户端状态"]
+    K --> L["_build_default_headers()<br/>生成默认请求头"]
 ```
 
 失败流与成功流在信任边界前分离：字段或环境组合校验先形成 Pydantic `ValidationError`，`load_settings()` 捕获后交给 `_config_errors_from_pydantic()` 提取、拆分和去重，最后由 `aggregate_config_errors()` 生成框架稳定的 `ConfigValidationError`。失败路径不会产生可信 `Settings`；第 10 节会展开错误适配的代码证据。
@@ -1205,7 +1205,7 @@ class BaseRequest:
 
 ### 5.3 后续课程沿用的绘图协议
 
-每节课只画一张自上而下的真实函数调用链。节点只写函数、方法或构造器名称；数据含义、分支、异常和生命周期放在图外说明。
+每节课只画一张自上而下的真实函数调用链。每个节点保留“函数名 + 一句简短作用”，数据详情、分支、异常和生命周期放在图外说明。
 
 第 3 天从请求调用继续：
 

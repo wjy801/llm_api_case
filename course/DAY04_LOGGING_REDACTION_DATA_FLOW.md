@@ -7,20 +7,49 @@
 - 真实请求流必须保留原值，否则服务端无法完成认证，也无法获得真实业务参数。
 - 安全观测流只保留定位问题所需的信息，敏感值在进入日志、附件、cURL 和异常文本前必须被替换。
 
+### 0.1 贯穿式数据流总图
+
 ```mermaid
-flowchart LR
-    A["调用方请求参数"] --> B["RequestContext.kwargs"]
-    B --> C["真实请求流"]
-    C --> D["session.request"]
-    B --> E["RedactionMiddleware"]
-    E --> F["安全观测副本"]
-    F --> G["ApiCallLogger"]
-    D --> H["PreparedRequest 和 Response"]
-    H --> G
-    G --> I["Allure 附件"]
-    H --> J["cURL 独立脱敏"]
-    J --> I
+flowchart TD
+    A["BaseRequest.request：接收一次请求"] --> B["BaseRequest._build_request_context：构造 attempt 上下文"]
+    B --> C["BaseRequest._send：执行单次发送"]
+    C --> D["BaseRequest._run_before_middlewares：依序运行发送前钩子"]
+    D --> E["RedactionMiddleware.before_request：触发请求参数脱敏"]
+    E --> F["redact_request_kwargs：生成安全副本"]
+    F --> G["LoggingMiddleware.before_request：读取安全副本"]
+    G --> H["ApiCallLogger.__init__：保存日志快照"]
+    H --> I["requests.Session.request：发送真实请求参数"]
+    I --> J["BaseRequest._run_after_middlewares：依序运行响应后钩子"]
+    J --> K["LoggingMiddleware.after_response：转交成功响应"]
+    K --> L["ApiCallLogger.attach_success：组织两组安全附件"]
+    L --> M["ApiCallLogger._request_parts：生成请求附件内容"]
+    M --> N["redact_url：脱敏最终请求查询参数"]
+    N --> O["redact_headers：脱敏最终请求头"]
+    O --> P["ApiCallLogger._format_body_value：安全格式化请求体"]
+    P --> Q["build_curl：生成脱敏 cURL"]
+    Q --> R["ApiCallLogger._attach_parts：挂载请求附件"]
+    R --> S["ApiCallLogger._response_parts：生成响应附件内容"]
+    S --> T["redact_headers：脱敏响应头"]
+    T --> U["ApiCallLogger._format_response_body：读取响应正文"]
+    U --> V["ApiCallLogger._format_text_body：结构化脱敏响应体"]
+    V --> W["ApiCallLogger._attach_parts：挂载响应附件"]
 ```
+
+### 0.2 按调用顺序理解关键函数
+
+| 调用 | 输入 → 输出 | 失败与边界 | 最小关键代码 |
+| --- | --- | --- | --- |
+| `BaseRequest.request()` / `_build_request_context()` | `method、path、kwargs` → 独立的 `RequestContext` | 构造阶段失败时尚未发送；这里只复制并补全 transport 输入，不负责脱敏输出 | `context = self._build_request_context(...)` |
+| `BaseRequest._send()` / `_run_before_middlewares()` | `RequestContext` → 进入发送前 Middleware 链 | hook 失败会包装为 `RuntimeError`；单次 attempt 边界止于 `_send()` | `self._run_before_middlewares(context)` |
+| `RedactionMiddleware.before_request()` / `redact_request_kwargs()` | `context.kwargs` → `attributes["redacted_kwargs"]` | 安全复制失败的字段可能回退原引用；绝不能把脱敏值写回 transport kwargs | `context.attributes[self.REDACTED_KWARGS_ATTR] = redact_request_kwargs(context.kwargs)` |
+| `LoggingMiddleware.before_request()` / `ApiCallLogger.__init__()` | 安全副本 → logger 快照 | 缺少副本时当前实现会回退真实 kwargs；默认 Middleware 顺序因此是安全约束 | `logger_kwargs = context.attributes.get(..., context.kwargs)` |
+| `requests.Session.request()` | 原始语义的 `context.kwargs` → `Response` | transport 异常改走 `on_exception`；它不读取 `redacted_kwargs` | `self.session.request(..., **context.kwargs)` |
+| `LoggingMiddleware.after_response()` / `ApiCallLogger.attach_success()` | `Response` 与 logger 快照 → Allure 附件 | `_attach_log=False` 时跳过；logger 仍对最终 URL、header、body 和 cURL 做末端脱敏 | `self.get_logger(context).attach_success(response)` |
+| `_request_parts()` / `redact_url()` / `redact_headers()` / `_format_body_value()` | `PreparedRequest` → 安全的请求行、请求头与请求体 | 这里读取真实 prepare 结果，但只生成输出字符串，不修改待发送对象 | `url = redact_url(prepared_request.url or self.url)` |
+| `build_curl()` / `_attach_parts()` | `PreparedRequest` → 脱敏 cURL → Allure 请求附件 | cURL 独立重复处理 URL、header、body；构建失败被替换为 unavailable 文本 | `return self._truncate(build_curl(prepared_request))` |
+| `_response_parts()` / `_format_response_body()` / `_format_text_body()` | `Response` → 安全响应行、header 与 body → Allure 响应附件 | JSON 可按键递归脱敏；未知自由文本无法保证识别全部裸 secret，输出边界仍需审计 | `return self._format_text_body(response.text, content_type)` |
+
+课程接续：第 3 天建立了单次 attempt 的 Middleware 边界，本节沿该入口追踪安全观测链；第 5 天再从单次发送扩展到“是否允许再次发送”的重试决策。
 
 从第一性原理看，请求正确性和日志安全性是两个不能互相替代的不变量。原地修改只能保住其中一个，分流才能同时保住两个。
 
