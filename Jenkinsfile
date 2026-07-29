@@ -11,6 +11,7 @@ pipeline {
         booleanParam(name: 'RUN_FRAMEWORK_TESTS', defaultValue: true, description: 'Run framework tests under tests directory.')
         booleanParam(name: 'RUN_COLLECT_ONLY', defaultValue: true, description: 'Collect smoke cases without real execution.')
         booleanParam(name: 'RUN_REAL_SMOKE', defaultValue: false, description: 'Run real smoke cases. Keep disabled by default.')
+        booleanParam(name: 'ALWAYS_SEND_REPORT_EMAIL', defaultValue: false, description: 'Send report email for every build result.')
         choice(name: 'USE_CHINA_ENVIRONMENT', choices: ['TRUE', 'FALSE'], description: 'TRUE uses China environment, FALSE uses default environment.')
         string(name: 'SMOKE_TARGET', defaultValue: 'module/smoke', description: 'Smoke test target path.', trim: true)
         choice(name: 'TEST_PARALLEL_WORKERS', choices: ['off', 'auto', '2', '4', '8'], description: 'off disables pytest-xdist; auto/2/4/8 enables parallel test execution.')
@@ -18,10 +19,15 @@ pipeline {
 
     environment {
         CI_MAIL_TO = '3239682586@qq.com'
-        CI_MAIL_FROM = '18617962759@163.com'
+        CI_MAIL_FROM = '13463214057@163.com'
         GENERATE_ALLURE_REPORT = 'FALSE'
         GENERATE_HISTORY_REPORT = 'FALSE'
         PIP_DISABLE_PIP_VERSION_CHECK = '1'
+        PIP_INDEX_URL = 'https://repo.huaweicloud.com/repository/pypi/simple'
+        PIP_TRUSTED_HOST = 'repo.huaweicloud.com'
+        PIP_DEFAULT_TIMEOUT = '60'
+        PIP_RETRIES = '2'
+        NPM_CONFIG_REGISTRY = 'https://registry.npmmirror.com'
         PYTHONIOENCODING = 'utf-8'
         PYTHONUTF8 = '1'
     }
@@ -36,7 +42,7 @@ pipeline {
         stage('Check Runtime Env') {
             steps {
                 ciPowerShell('''
-                $sourceEnv = 'D:/Code/Form/llm_api_case/.env'
+                $sourceEnv = 'D:/API_CASE/.env'
                 if (!(Test-Path .env) -and (Test-Path -LiteralPath $sourceEnv)) {
                     Copy-Item -LiteralPath $sourceEnv -Destination .env -Force
                 }
@@ -148,7 +154,9 @@ pipeline {
         success {
             script {
                 def previousResult = currentBuild.previousBuild?.result
-                if (previousResult in ['FAILURE', 'UNSTABLE']) {
+                if (params.ALWAYS_SEND_REPORT_EMAIL) {
+                    notifyByEmail('SUCCESS')
+                } else if (previousResult in ['FAILURE', 'UNSTABLE']) {
                     notifyByEmail('FIXED')
                 }
             }
