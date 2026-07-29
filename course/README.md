@@ -624,6 +624,8 @@ git diff 56f4f15 291e6ea -- common/base_assertions.py module/smoke/response_sche
 
 ## 第 10 天：Mock 是控制不确定性，不是伪造一切
 
+完整课程内容：[DAY10_MOCK_UNCERTAINTY_BOUNDARY.md](DAY10_MOCK_UNCERTAINTY_BOUNDARY.md)
+
 ### 核心问题
 
 框架异常分支为什么必须离线验证？Fake 应该模拟到什么程度停止？
