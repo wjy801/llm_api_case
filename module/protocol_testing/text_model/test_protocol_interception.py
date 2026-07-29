@@ -38,12 +38,14 @@ def protocol_interception_case_params() -> list[pytest.ParameterSet]:
 def build_protocol_interception_payload(case: ProtocolInterceptionCase) -> dict[str, Any]:
     if case.body_protocol == "openai":
         payload = build_text_v1_chat_completions_payload(case.model_id)
-        if case.protocol_path == "openai_chat_completions" and case.model_id == "kimi-k3":
-            payload.pop("temperature", None)
-        return payload
-    if case.body_protocol == "anthropic":
-        return build_text_anthropic_messages_payload(case.model_id)
-    raise ValueError(f"Unsupported body protocol: {case.body_protocol!r}")
+    elif case.body_protocol == "anthropic":
+        payload = build_text_anthropic_messages_payload(case.model_id)
+    else:
+        raise ValueError(f"Unsupported body protocol: {case.body_protocol!r}")
+
+    if case.model_id == "kimi-k3":
+        payload.pop("temperature", None)
+    return payload
 
 
 class TestTextModelProtocolInterception:

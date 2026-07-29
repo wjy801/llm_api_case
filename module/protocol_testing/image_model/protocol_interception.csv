@@ -1,0 +1,11 @@
+case_id,protocol_path,header_protocol,body_protocol,model_id,expected
+media_openai_seedream_allow,media_generations,openai,image_media,seedream-5-0-260128,allow
+media_openai_gpt_image_allow,media_generations,openai,image_media,gpt-image-2,allow
+images_generations_openai_seedream_block,images_generations,openai,image_media,seedream-5-0-260128,block
+images_generations_openai_gpt_image_block,images_generations,openai,image_media,gpt-image-2,block
+images_edits_openai_seedream_block,images_edits,openai,image_media,seedream-5-0-260128,block
+images_edits_openai_gpt_image_block,images_edits,openai,image_media,gpt-image-2,block
+chat_completions_openai_seedream_block,openai_chat_completions,openai,image_media,seedream-5-0-260128,block
+chat_completions_openai_gpt_image_block,openai_chat_completions,openai,image_media,gpt-image-2,block
+responses_openai_seedream_block,openai_responses,openai,image_media,seedream-5-0-260128,block
+responses_openai_gpt_image_block,openai_responses,openai,image_media,gpt-image-2,block
