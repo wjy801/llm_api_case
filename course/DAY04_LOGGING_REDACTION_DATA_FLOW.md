@@ -96,6 +96,117 @@ git show 56f4f15:common/base_request.py
 
 初版 `BaseRequest.request()` 直接把请求参数交给 `ApiCallLogger`，再调用 `session.request()`。logger 在成功路径读取 `PreparedRequest` 和 `Response`，在失败路径读取异常对象。
 
+演进前之一：`56f4f15`，`common/base_request.py`
+
+```python
+def request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
+    attach_log = kwargs.pop("_attach_log", True)
+    url = self._build_url(path)
+    kwargs.setdefault("timeout", self.config.timeout)
+
+    headers = kwargs.pop("headers", None)
+    if headers:
+        kwargs["headers"] = self._merge_headers(headers)
+
+    if method.upper() == "POST":
+        start_media_downloads(kwargs.get("json"))
+
+    logger = ApiCallLogger(method, url, kwargs)
+    try:
+        response = self.session.request(
+            method=method,
+            url=url,
+            **kwargs,
+        )
+    except Exception as error:
+        if attach_log:
+            logger.attach_failure(error)
+        raise
+
+    if attach_log:
+        logger.attach_success(response)
+    return response
+```
+
+同一份 `kwargs` 先进入 logger 构造器，随后进入 `session.request()`。这段代码直接证明初版尚未区分 transport 表示与观测表示；若此时原地替换 Authorization 或 token，logger 会更安全，但真实请求会同时被改坏。
+
+演进前之二：`56f4f15`，`util/api_call_logger.py`
+
+```python
+def attach_success(self, response: requests.Response) -> None:
+    self._attach_parts(
+        self.step_name,
+        self._request_parts(response.request),
+        (REQUEST_CURL_ATTACHMENT_NAME, "请求行", "请求头", "请求体"),
+    )
+    self._attach_parts(
+        self.response_step_name,
+        self._response_parts(response),
+        ("响应行", "响应头", "响应体"),
+    )
+
+
+def attach_failure(self, error: BaseException) -> None:
+    self._attach_parts(
+        self.step_name,
+        self._request_parts(self._request_from_error(error)),
+        (REQUEST_CURL_ATTACHMENT_NAME, "请求行", "请求头", "请求体"),
+    )
+    self._attach_parts(
+        self.response_step_name,
+        {
+            "响应行": "<no response>",
+            "响应头": "<empty>",
+            "响应体": "\n".join(
+                [
+                    f"异常类型: {type(error).__name__}",
+                    f"异常内容: {error}",
+                ]
+            ),
+        },
+        ("响应行", "响应头", "响应体"),
+    )
+
+
+def _request_parts(
+    self,
+    prepared_request: requests.PreparedRequest | None = None,
+) -> dict[str, str]:
+    if prepared_request is None:
+        method = self.method
+        url = self.url
+        headers = self.kwargs.get("headers")
+        body = self._fallback_request_body()
+    else:
+        method = prepared_request.method or self.method
+        url = prepared_request.url or self.url
+        headers = prepared_request.headers
+        body = self._format_body_value(prepared_request.body)
+
+    return {
+        REQUEST_CURL_ATTACHMENT_NAME: self._format_curl(prepared_request),
+        "请求行": f"{method} {url} HTTP/1.1",
+        "请求头": self._format_headers(headers),
+        "请求体": body,
+    }
+
+
+def _response_parts(self, response: requests.Response) -> dict[str, str]:
+    return {
+        "响应行": "\n".join(
+            [
+                f"HTTP/1.1 {response.status_code} {response.reason}",
+                f"响应耗时(秒): {self._response_elapsed_seconds(response)}",
+                f"执行耗时(秒): {self._elapsed_seconds()}",
+            ]
+        ),
+        "响应头": self._format_headers(response.headers),
+        "响应体": self._format_response_body(response),
+    }
+```
+
+代码直接证明 URL、PreparedRequest headers/body、response headers/body 和异常字符串都以原始表示进入格式化，没有统一安全转换。logger 拥有附件布局，却没有安全表示与真实表示的边界。
+
 ```mermaid
 flowchart LR
     A["request 参数"] --> B["ApiCallLogger"]
@@ -124,6 +235,48 @@ flowchart LR
 
 初版 `curl_builder.py` 已经认识到 Authorization 一类 header 不能直接展示，但规则只存在于 cURL header 的局部路径。它没有覆盖同一请求在请求行、请求体、响应和异常中的其他表示。
 
+演进前：`56f4f15`，`util/curl_builder.py`
+
+```python
+def build_curl(
+    prepared_request: requests.PreparedRequest,
+    *,
+    redact_headers: Iterable[str] | None = DEFAULT_REDACT_HEADERS,
+    multiline: bool = True,
+) -> str:
+    if not isinstance(prepared_request, requests.PreparedRequest):
+        raise TypeError(
+            "prepared_request must be a requests.PreparedRequest instance"
+        )
+
+    method = prepared_request.method or "GET"
+    url = prepared_request.url
+    if not url:
+        raise ValueError("prepared_request.url is empty")
+
+    redacted_header_names = _normalized_header_names(redact_headers)
+    parts = [f"curl -X {method.upper()} {_shell_quote(url)}"]
+
+    for name, value in prepared_request.headers.items():
+        header_value = (
+            REDACTED_VALUE
+            if name.lower() in redacted_header_names
+            else str(value)
+        )
+        parts.append(f"-H {_shell_quote(f'{name}: {header_value}')}" )
+
+    body = _request_body_to_text(
+        prepared_request.body,
+        prepared_request.headers.get("Content-Type", ""),
+    )
+    if body is not None:
+        parts.append(f"--data-raw {_shell_quote(body)}")
+
+    return _join_command_parts(parts, multiline=multiline)
+```
+
+这里 header 值会按名单替换，但 `url = prepared_request.url` 和 body 转换没有脱敏。相同 secret 放在 Authorization 时安全，放在 query 或 JSON body 时泄漏。安全能力依赖数据载体和出口分支，尚未形成统一规则。
+
 ### 3.3 初版问题的因果链
 
 ```mermaid
@@ -144,6 +297,68 @@ flowchart TD
 调用方可能在请求结束后继续使用原 payload，也可能在失败时根据原值定位问题。框架如果直接修改调用方字典，会产生跨层副作用。
 
 当前 `BaseRequest._build_request_context()` 先通过 `_copy_request_kwargs()` 建立一次 attempt 自己的 transport 输入。这个复制主要隔离调用方与请求上下文。随后 `RedactionMiddleware` 再从 `context.kwargs` 生成安全副本，这一步隔离 transport 与观测。
+
+当前代码：`dev2`，`common/base_request.py`
+
+```python
+@staticmethod
+def _copy_request_kwargs(
+    kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    copied_kwargs: dict[str, Any] = {}
+    for name, value in kwargs.items():
+        try:
+            copied_kwargs[name] = deepcopy(value)
+        except Exception:
+            copied_kwargs[name] = value
+    return copied_kwargs
+
+
+def _build_request_context(
+    self,
+    method: str,
+    path: str,
+    *,
+    attach_log: bool = True,
+    request_step_name: str = API_REQUEST_STEP_NAME,
+    response_step_name: str = API_RESPONSE_STEP_NAME,
+    **kwargs: Any,
+) -> RequestContext:
+    url = self._build_url(path)
+    request_kwargs = self._copy_request_kwargs(kwargs)
+    request_kwargs.setdefault("timeout", self.config.timeout)
+
+    headers = request_kwargs.pop("headers", None)
+    if headers:
+        request_kwargs["headers"] = self._merge_headers(headers)
+
+    return RequestContext(
+        method=method.upper(),
+        path=path,
+        url=url,
+        kwargs=request_kwargs,
+        attach_log=attach_log,
+        request_step_name=request_step_name,
+        response_step_name=response_step_name,
+    )
+
+
+def _send(self, context: RequestContext) -> requests.Response:
+    self._run_before_middlewares(context)
+    try:
+        response = self.session.request(
+            method=context.method,
+            url=context.url,
+            **context.kwargs,
+        )
+    except Exception as error:
+        self._run_exception_middlewares(context, error)
+        raise
+    self._run_after_middlewares(context, response)
+    return response
+```
+
+代码证明第一层复制发生在 Context 创建时，而 transport 最终仍读取 `context.kwargs`。因此后续安全分流必须生成新的派生值，不能把 `<redacted>` 写回这份 transport 状态。深拷贝失败会回退原引用，这也为后文“隔离不是绝对保证”提供了直接证据。
 
 ```mermaid
 flowchart LR
@@ -166,13 +381,44 @@ flowchart LR
 
 安全副本必须在任何日志消费者读取请求参数之前生成。当前默认顺序为：
 
+演进后：`291e6ea`，`common/request_middleware.py`。当前 dev2 保持相同分流结构：
+
 ```python
-return [
-    MediaResourceMiddleware(),
-    RedactionMiddleware(),
-    LoggingMiddleware(),
-]
+class RedactionMiddleware:
+    REDACTED_KWARGS_ATTR = "redacted_kwargs"
+
+    def before_request(self, context: RequestContext) -> None:
+        context.attributes[self.REDACTED_KWARGS_ATTR] = (
+            redact_request_kwargs(context.kwargs)
+        )
+
+
+class LoggingMiddleware:
+    LOGGER_ATTR = "api_call_logger"
+
+    def before_request(self, context: RequestContext) -> None:
+        logger_kwargs = context.attributes.get(
+            RedactionMiddleware.REDACTED_KWARGS_ATTR,
+            context.kwargs,
+        )
+        context.attributes[self.LOGGER_ATTR] = ApiCallLogger(
+            context.method,
+            context.url,
+            logger_kwargs,
+            step_name=context.request_step_name,
+            response_step_name=context.response_step_name,
+        )
+
+
+def default_request_middlewares() -> list[RequestMiddleware]:
+    return [
+        MediaResourceMiddleware(),
+        RedactionMiddleware(),
+        LoggingMiddleware(),
+    ]
 ```
+
+前后演进的关键变化是：初版 logger 直接接收请求 kwargs；`291e6ea` 开始由 RedactionMiddleware 创建独立派生状态，再由 LoggingMiddleware 消费。`context.kwargs` 没有被赋值为脱敏结果，因而仍可发送真实认证和业务值。被保护的不变量是传输真实性与观测安全性同时成立。
 
 `RedactionMiddleware` 先写入 `redacted_kwargs`，`LoggingMiddleware` 再构造 logger。这个顺序就是数据依赖，不只是排列风格。
 
@@ -209,6 +455,8 @@ BaseRequest.request
 - `ApiCallLogger` 接收安全副本，但不会把副本写回 `context.kwargs`。
 - `session.request` 始终读取原始语义的 `context.kwargs`。
 
+这四项事实由 4.1 的 `_send()` 和 4.2 的两个 Middleware 共同证明：二者读取同一个 Context，却把数据写向不同消费者。`context.kwargs` 是 transport 状态，`attributes["redacted_kwargs"]` 是观测派生状态；共享生命周期不代表共享表示。
+
 ### 5.2 成功后
 
 成功后 logger 优先读取 `response.request`。这个对象是 `requests` 实际 prepare 后的请求，诊断信息比最初 kwargs 更接近线上事实。
@@ -225,11 +473,121 @@ flowchart LR
 
 使用 PreparedRequest 产生了一个新的安全要求。Session 可能在 prepare 阶段补入默认 header，这些值在 Middleware 创建的 `redacted_kwargs` 中不一定存在。因此 logger 必须对最终 URL、最终 header 和最终 body 再执行一次脱敏。
 
+当前代码：`dev2`，`util/api_call_logger.py`
+
+```python
+def _request_parts(
+    self,
+    prepared_request: requests.PreparedRequest | None = None,
+) -> dict[str, str]:
+    if prepared_request is None:
+        method = self.method
+        url = redact_url(self.url) or self.url
+        headers = self.kwargs.get("headers")
+        body = self._fallback_request_body()
+    else:
+        method = prepared_request.method or self.method
+        url = redact_url(prepared_request.url or self.url) or self.url
+        headers = redact_headers(prepared_request.headers)
+        body = self._format_body_value(prepared_request.body)
+
+    return {
+        REQUEST_CURL_ATTACHMENT_NAME: self._format_curl(prepared_request),
+        "请求行": f"{method} {url} HTTP/1.1",
+        "请求头": self._format_headers(headers),
+        "请求体": body,
+    }
+
+
+def _response_parts(self, response: requests.Response) -> dict[str, str]:
+    return {
+        "响应行": "\n".join(
+            [
+                f"HTTP/1.1 {response.status_code} {response.reason}",
+                f"响应耗时(秒): {self._response_elapsed_seconds(response)}",
+                f"执行耗时(秒): {self._elapsed_seconds()}",
+            ]
+        ),
+        "响应头": self._format_headers(
+            redact_headers(response.headers)
+        ),
+        "响应体": self._format_response_body(response),
+    }
+
+
+def _format_body_value(self, body: Any) -> str:
+    if body is None:
+        return "<empty>"
+    if isinstance(body, bytes):
+        body = body.decode("utf-8", errors="replace")
+    return self._format_text_body(redact_text_body(str(body)))
+
+
+def _format_text_body(
+    self,
+    body: str,
+    content_type: str = "",
+) -> str:
+    if self._looks_like_json(content_type, body):
+        try:
+            parsed_body = json.loads(body)
+            return self._to_pretty_text(
+                redact_sensitive_data(parsed_body)
+            )
+        except ValueError:
+            pass
+    return self._truncate(body)
+```
+
+代码表明 PreparedRequest 路径重新处理最终 URL、headers 和 body，Response 路径独立处理响应 headers 与 body。Middleware 副本没有替代末端防御，因为它看不到 prepare 阶段才生成的数据。与此同时，非法 JSON 最终回退 `_truncate(body)`，也直接证明后文指出的原文泄漏窗口。
+
 ### 5.3 失败后
 
 `requests.RequestException` 可能携带 `PreparedRequest`。`attach_failure()` 会优先从异常中取出它，并按照与成功路径相同的请求格式化规则生成请求行、header、body 和 cURL。异常字符串再经过自由文本脱敏。
 
 若异常没有携带 prepared request，logger 回退到构造时保存的 kwargs。默认 Middleware 顺序保证这些 kwargs 已是安全副本。
+
+当前代码：`dev2`，`util/api_call_logger.py`
+
+```python
+def attach_failure(self, error: BaseException) -> None:
+    self._attach_parts(
+        self.step_name,
+        self._request_parts(self._request_from_error(error)),
+        (REQUEST_CURL_ATTACHMENT_NAME, "请求行", "请求头", "请求体"),
+    )
+    self._attach_parts(
+        self.response_step_name,
+        {
+            "响应行": "<no response>",
+            "响应头": "<empty>",
+            "响应体": "\n".join(
+                [
+                    f"异常类型: {type(error).__name__}",
+                    f"异常内容: {self._format_error_text(error)}",
+                ]
+            ),
+        },
+        ("响应行", "响应头", "响应体"),
+    )
+
+
+def _format_error_text_value(self, value: str) -> str:
+    redacted = redact_urlencoded_text(value)
+    return self._truncate(redact_text_body(redacted))
+
+
+@staticmethod
+def _request_from_error(
+    error: BaseException,
+) -> requests.PreparedRequest | None:
+    request = getattr(error, "request", None)
+    if isinstance(request, requests.PreparedRequest):
+        return request
+    return None
+```
+
+异常路径先尝试恢复真实 PreparedRequest，再进入与成功路径相同的 `_request_parts()` 安全转换；异常字符串则经过独立文本规则。logger 只生成附件，不替换或重新抛异常，请求层仍负责保持原异常控制流。
 
 ### 5.4 分叉之后仍然需要汇合
 
@@ -288,9 +646,126 @@ authorization
 | `redact_text_body` | JSON 文本或 form 文本 | 先识别结构再处理 | body 和状态文本 |
 | `redact_urlencoded_text` | form 或自由文本 | 先尝试表单，再使用有限正则 | 异常、重试和轮询文本 |
 
+当前代码：`dev2`，`util/redaction.py`
+
+```python
+def redact_request_kwargs(
+    kwargs: Mapping[str, Any],
+) -> dict[str, Any]:
+    redacted: dict[str, Any] = {}
+    for name, value in kwargs.items():
+        lowered_name = name.lower()
+        if lowered_name == "headers":
+            redacted[name] = redact_headers(value)
+        elif lowered_name in {"params", "json", "data"}:
+            redacted[name] = redact_sensitive_data(value)
+        elif _is_sensitive_key(name):
+            redacted[name] = REDACTED_VALUE
+        else:
+            redacted[name] = _safe_copy(value)
+    return redacted
+
+
+def redact_headers(
+    headers: Any,
+    *,
+    sensitive_headers: Iterable[str] | None = DEFAULT_REDACT_HEADERS,
+) -> Any:
+    if not headers:
+        return headers
+
+    sensitive_header_names = _normalized_names(sensitive_headers)
+    return {
+        name: (
+            REDACTED_VALUE
+            if str(name).lower() in sensitive_header_names
+            else value
+        )
+        for name, value in dict(headers).items()
+    }
+
+
+def redact_url(url: str | None) -> str | None:
+    if not url:
+        return url
+
+    split_url = urlsplit(url)
+    if not split_url.query:
+        return url
+
+    query_pairs = parse_qsl(split_url.query, keep_blank_values=True)
+    redacted_pairs = [
+        (
+            name,
+            REDACTED_VALUE if _is_sensitive_key(name) else value,
+        )
+        for name, value in query_pairs
+    ]
+    return urlunsplit(
+        (
+            split_url.scheme,
+            split_url.netloc,
+            split_url.path,
+            urlencode(redacted_pairs, doseq=True),
+            split_url.fragment,
+        )
+    )
+```
+
+代码证明不同载体使用不同解析边界：kwargs 只负责分派，header 按名字映射，URL 先拆 query 再重建。所有函数都返回新表示，不承担 transport 调用。query 编码可能变化也能从 `parse_qsl → urlencode` 直接推出，但变化只发生在观测字符串。
+
 ### 6.3 结构化数据递归
 
 `redact_sensitive_data()` 对 Mapping 递归处理，对 list 和 tuple 保留容器形态，并识别二元键值序列。其目标是保留足够结构用于诊断，同时把敏感节点值替换为统一占位符。
+
+当前代码：`dev2`，`util/redaction.py`
+
+```python
+def redact_sensitive_data(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            key: (
+                REDACTED_VALUE
+                if _is_sensitive_key(key)
+                else redact_sensitive_data(item)
+            )
+            for key, item in value.items()
+        }
+
+    if isinstance(value, list):
+        return [_redact_sequence_item(item) for item in value]
+
+    if isinstance(value, tuple):
+        return tuple(_redact_sequence_item(item) for item in value)
+
+    if isinstance(value, str):
+        return redact_text_body(value)
+
+    return _safe_copy(value)
+
+
+def redact_text_body(body: str, content_type: str = "") -> str:
+    if _looks_like_json(content_type, body):
+        try:
+            parsed_body = json.loads(body)
+        except ValueError:
+            return body
+        return json.dumps(
+            redact_sensitive_data(parsed_body),
+            ensure_ascii=False,
+        )
+
+    redacted_form_body = _redact_urlencoded_text(body)
+    if redacted_form_body is not None and (
+        "x-www-form-urlencoded" in content_type.lower()
+        or _contains_sensitive_form_field(body)
+    ):
+        return redacted_form_body
+
+    return body
+```
+
+递归函数以字段名决定是否替换，未命中的结构继续向下遍历。`redact_text_body()` 先选 JSON 分支，解析失败立即返回原文，不会进入 form 分支；这一真实控制流正是“畸形 JSON 泄漏窗口”的根因，而不是推测。
 
 ```mermaid
 flowchart TD
@@ -369,6 +844,70 @@ cURL 是可复制、可再次执行的命令，泄漏后影响更直接。`build
 - form body 按字段处理。
 - shell 单引号转义与脱敏分开负责。
 
+当前代码：`dev2`，`util/curl_builder.py`
+
+```python
+def build_curl(
+    prepared_request: requests.PreparedRequest,
+    *,
+    redact_headers: Iterable[str] | None = DEFAULT_REDACT_HEADERS,
+    multiline: bool = True,
+) -> str:
+    if not isinstance(prepared_request, requests.PreparedRequest):
+        raise TypeError(
+            "prepared_request must be a requests.PreparedRequest instance"
+        )
+
+    method = prepared_request.method or "GET"
+    url = redact_url(prepared_request.url)
+    if not url:
+        raise ValueError("prepared_request.url is empty")
+
+    redacted_header_names = _normalized_header_names(redact_headers)
+    parts = [f"curl -X {method.upper()} {_shell_quote(url)}"]
+
+    for name, value in prepared_request.headers.items():
+        header_value = (
+            REDACTED_VALUE
+            if name.lower() in redacted_header_names
+            else str(value)
+        )
+        parts.append(f"-H {_shell_quote(f'{name}: {header_value}')}" )
+
+    body = _request_body_to_text(
+        prepared_request.body,
+        prepared_request.headers.get("Content-Type", ""),
+    )
+    if body is not None:
+        parts.append(f"--data-raw {_shell_quote(body)}")
+
+    return _join_command_parts(parts, multiline=multiline)
+
+
+def _request_body_to_text(
+    body: object,
+    content_type: str = "",
+) -> str | None:
+    if body is None:
+        return None
+    if isinstance(body, bytes):
+        body = body.decode("utf-8", errors="replace")
+
+    text = str(body)
+    if _looks_like_json(content_type, text):
+        try:
+            parsed_body = json.loads(text)
+            return json.dumps(
+                redact_sensitive_data(parsed_body),
+                ensure_ascii=False,
+            )
+        except ValueError:
+            pass
+    return redact_text_body(text, content_type)
+```
+
+与初版对照可以直接看到三处演进：URL 从原值变为 `redact_url()` 结果；JSON body 在序列化前递归脱敏；其他 body 进入文本规则。header 仍由 cURL 自己处理，而不是接收 logger 已经格式化的字符串。cURL 因此是独立安全出口，不是 logger 的无条件可信下游。
+
 ```mermaid
 flowchart TD
     A["PreparedRequest"] --> B["logger 请求行"]
@@ -442,10 +981,59 @@ RequestException
 
 `SmokeRequest.create_stream_chat_completion()` 显式传入：
 
+当前代码：`dev2`，`module/smoke/request.py`
+
 ```python
-stream=True,
-_attach_log=False,
+def create_stream_chat_completion(
+    self,
+    payload: dict[str, Any],
+) -> requests.Response:
+    return self.post(
+        self.chat_completions_path,
+        json=payload,
+        headers={"Accept": "text/event-stream"},
+        stream=True,
+        _attach_log=False,
+    )
 ```
+
+对应当前代码：`dev2`，`common/request_middleware.py`
+
+```python
+class LoggingMiddleware:
+    def before_request(self, context: RequestContext) -> None:
+        logger_kwargs = context.attributes.get(
+            RedactionMiddleware.REDACTED_KWARGS_ATTR,
+            context.kwargs,
+        )
+        context.attributes[self.LOGGER_ATTR] = ApiCallLogger(
+            context.method,
+            context.url,
+            logger_kwargs,
+            step_name=context.request_step_name,
+            response_step_name=context.response_step_name,
+        )
+
+    def after_response(
+        self,
+        context: RequestContext,
+        response: requests.Response,
+    ) -> None:
+        if not context.attach_log:
+            return
+        self.get_logger(context).attach_success(response)
+
+    def on_exception(
+        self,
+        context: RequestContext,
+        error: BaseException,
+    ) -> None:
+        if not context.attach_log:
+            return
+        self.get_logger(context).attach_failure(error)
+```
+
+`before_request()` 没有检查 `attach_log`，所以 logger 仍被创建；只有成功和异常附件被跳过。结合 logger 的 `_format_response_body()` 会读取 `response.text`，可以直接推出此策略避免自动消费流式 body，同时保留外层延迟使用 logger 的可能。
 
 `LoggingMiddleware.before_request()` 仍会创建 logger，但 `after_response()` 和 `on_exception()` 跳过自动挂载。这样设计的直接原因是普通响应日志会读取 `response.text`，而流式响应的 body 尚未完成消费。提前读取会消耗流或改变首 token、chunk 迭代等观测行为。
 
@@ -649,6 +1237,62 @@ LoggingMiddleware 在找不到 `redacted_kwargs` 时回退到 `context.kwargs`�
 - `BaseTask.extract_task_id` 一类旧错误路径直接输出创建响应文本。
 - SSE `print_stream_raw_line()` 直接写控制台。
 
+当前代码证据：`dev2`，`common/base_assertions.py`、`common/base_task.py` 与 `module/smoke/task.py`
+
+```python
+class BaseAssertions:
+    def assert_status_code(
+        self,
+        response: requests.Response,
+        expected: int,
+    ) -> requests.Response:
+        actual = response.status_code
+        assert actual == expected, (
+            f"状态码断言失败：期望 {expected}，实际 {actual}。"
+            f"响应内容：{response.text}"
+        )
+        return response
+
+
+class BaseTask:
+    def extract_task_id(
+        self,
+        create_response: requests.Response,
+    ) -> str:
+        try:
+            response_body = create_response.json()
+        except ValueError as exc:
+            raise AssertionError(
+                "创建任务响应不是有效 JSON。"
+                f"响应内容：{create_response.text}"
+            ) from exc
+
+        if not isinstance(response_body, dict):
+            raise AssertionError(
+                "创建任务响应不是 JSON 对象。"
+                f"响应内容：{create_response.text}"
+            )
+
+        task_id = response_body.get(self.task_id_field)
+        assert task_id, (
+            f"创建任务响应中未返回 {self.task_id_field}。"
+            f"响应内容：{create_response.text}"
+        )
+        return str(task_id)
+
+
+class SmokeTask:
+    @staticmethod
+    def print_stream_raw_line(line: str) -> None:
+        try:
+            print(f"stream raw line: {line}")
+        except UnicodeEncodeError:
+            safe_line = line.encode("unicode_escape").decode("ascii")
+            print(f"stream raw line: {safe_line}")
+```
+
+三段代码都绕过 ApiCallLogger：断言和 Task 直接拼接 `response.text`，SSE helper 直接打印原始行。它们证明系统安全由全部出口共同决定，而不是 logger 单点实现是否正确。Schema、Polling 与 TestContext 的新路径已开始复用脱敏函数，但旧出口尚未全部收敛。
+
 同时，Schema 断言、Polling 和 TestContext 的若干新路径已经显式复用脱敏函数。仓库处于逐步收敛而非全量完成状态。
 
 准确安全声明应写成：当前请求 logger、cURL、retry records、polling transitions 和部分新错误路径对已知敏感字段执行脱敏；整个仓库仍有绕过统一安全出口的历史路径。
@@ -702,7 +1346,7 @@ LoggingMiddleware 在找不到 `redacted_kwargs` 时回退到 `context.kwargs`�
 
 ```text
 ................
-16 passed in 0.43s
+16 passed in 0.27s
 ```
 
 ### 15.5 实验能证明的范围

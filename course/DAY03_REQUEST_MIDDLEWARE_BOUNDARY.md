@@ -68,6 +68,40 @@ git show 56f4f15:common/base_request.py
 7. 调用 `session.request()`。
 8. 在成功或异常时挂载日志。
 
+演进前：`56f4f15`，`common/base_request.py`
+
+```python
+def request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
+    attach_log = kwargs.pop("_attach_log", True)
+    url = self._build_url(path)
+    kwargs.setdefault("timeout", self.config.timeout)
+
+    headers = kwargs.pop("headers", None)
+    if headers:
+        kwargs["headers"] = self._merge_headers(headers)
+
+    if method.upper() == "POST":
+        start_media_downloads(kwargs.get("json"))
+
+    logger = ApiCallLogger(method, url, kwargs)
+    try:
+        response = self.session.request(
+            method=method,
+            url=url,
+            **kwargs,
+        )
+    except Exception as error:
+        if attach_log:
+            logger.attach_failure(error)
+        raise
+
+    if attach_log:
+        logger.attach_success(response)
+    return response
+```
+
+代码直接证明 `request()` 同时拥有传输参数、资源发现、logger 生命周期和异常日志时机。它们在初期共享一个顺序清晰的控制流是合理的；当日志、安全和资源规则开始独立变化时，同一个函数才成为修改约束。边界问题来自变化绑定，而不是方法行数。
+
 ```mermaid
 flowchart TD
     A["公开 HTTP 方法"] --> B["request"]
@@ -94,6 +128,51 @@ flowchart TD
 ### 2.2 重复不是根因，变化绑定才是根因
 
 初版 `_request_without_attach()` 又实现了一次 URL、timeout、headers、logger、发送和异常日志。它服务于轮询的特殊日志语义：中间查询不自动挂载日志，只在最终结论处记录。
+
+演进前：`56f4f15`，`common/base_request.py`
+
+```python
+def _request_without_attach(
+    self,
+    method: str,
+    path: str,
+    *,
+    step_name: str = API_REQUEST_STEP_NAME,
+    response_step_name: str | None = None,
+    **kwargs: Any,
+) -> tuple[requests.Response, ApiCallLogger]:
+    url = self._build_url(path)
+    request_kwargs = dict(kwargs)
+    request_kwargs.setdefault("timeout", self.config.timeout)
+
+    headers = request_kwargs.pop("headers", None)
+    if headers:
+        request_kwargs["headers"] = self._merge_headers(headers)
+
+    logger_kwargs: dict[str, Any] = {"step_name": step_name}
+    if response_step_name is not None:
+        logger_kwargs["response_step_name"] = response_step_name
+
+    logger = ApiCallLogger(
+        method,
+        url,
+        request_kwargs,
+        **logger_kwargs,
+    )
+    try:
+        response = self.session.request(
+            method=method,
+            url=url,
+            **request_kwargs,
+        )
+    except Exception as error:
+        logger.attach_failure(error)
+        raise
+
+    return response, logger
+```
+
+与 `request()` 对照可见，两段代码的 URL、timeout、headers、logger 和 transport 骨架几乎一致，差异只在成功日志由谁决定。观测时机的变化迫使传输骨架复制，说明缺少的是一次发送生命周期的统一入口，而不是简单缺少一个日志开关。
 
 ```mermaid
 flowchart TD
@@ -128,22 +207,88 @@ flowchart LR
 
 `BaseRequest.request()` 不再直接知道 logger、脱敏和媒体资源处理的具体实现。它只负责解析框架控制参数、建立上下文并选择发送方式。
 
+演进后之一：`291e6ea`，`common/base_request.py`
+
 ```python
 def request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
     attach_log = kwargs.pop("_attach_log", True)
     retry_policy = kwargs.pop("retry_policy", None)
     if retry_policy is not None:
-        return self._send_with_retry(...)
+        return self._send_with_retry(
+            method,
+            path,
+            retry_policy,
+            attach_log=attach_log,
+            **kwargs,
+        )
 
-    context = self._build_request_context(method, path, attach_log=attach_log, **kwargs)
+    context = self._build_request_context(
+        method,
+        path,
+        attach_log=attach_log,
+        **kwargs,
+    )
     return self._send(context)
 ```
+
+演进后二：`291e6ea`，`common/base_request.py`
+
+```python
+def _build_request_context(
+    self,
+    method: str,
+    path: str,
+    *,
+    attach_log: bool = True,
+    request_step_name: str = API_REQUEST_STEP_NAME,
+    response_step_name: str = API_RESPONSE_STEP_NAME,
+    **kwargs: Any,
+) -> RequestContext:
+    url = self._build_url(path)
+    request_kwargs = self._copy_request_kwargs(kwargs)
+    request_kwargs.setdefault("timeout", self.config.timeout)
+
+    headers = request_kwargs.pop("headers", None)
+    if headers:
+        request_kwargs["headers"] = self._merge_headers(headers)
+
+    return RequestContext(
+        method=method.upper(),
+        path=path,
+        url=url,
+        kwargs=request_kwargs,
+        attach_log=attach_log,
+        request_step_name=request_step_name,
+        response_step_name=response_step_name,
+    )
+
+
+def _send(self, context: RequestContext) -> requests.Response:
+    self._run_before_middlewares(context)
+
+    try:
+        response = self.session.request(
+            method=context.method,
+            url=context.url,
+            **context.kwargs,
+        )
+    except Exception as error:
+        self._run_exception_middlewares(context, error)
+        raise
+
+    self._run_after_middlewares(context, response)
+    return response
+```
+
+前后代码显示职责发生了真实移动：请求构造产生独立 Context；`_send()` 只描述一个 attempt 的 before、transport、exception 和 after；具体横切行为不再出现在 transport 主函数。`_send_with_retry()` 位于 `_send()` 外层也证明 Middleware 被重复执行于每个 attempt，而不拥有 attempt 序列。
+
+这次演进保护三个不变量：现有公开调用保持兼容；每个 attempt 拥有自己的 Context；transport 异常经过通知后仍由裸 `raise` 重新抛出原对象。
 
 这里保留了 `get/post/put/patch/delete` 的公开调用方式，迁移发生在内部管道，不要求业务模块整体重写。
 
 ## 4. RequestContext 是一次 attempt 的状态所有者
 
-当前结构：
+演进后：`291e6ea`，`common/request_context.py`。当前 dev2 保持相同字段结构：
 
 ```python
 @dataclass
@@ -209,12 +354,20 @@ flowchart LR
 
 `_build_request_context()` 调用 `_copy_request_kwargs()`，逐字段尝试 `deepcopy`：
 
+当前代码：`dev2`，`common/base_request.py`
+
 ```python
-for name, value in kwargs.items():
-    try:
-        copied_kwargs[name] = deepcopy(value)
-    except Exception:
-        copied_kwargs[name] = value
+@staticmethod
+def _copy_request_kwargs(
+    kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    copied_kwargs: dict[str, Any] = {}
+    for name, value in kwargs.items():
+        try:
+            copied_kwargs[name] = deepcopy(value)
+        except Exception:
+            copied_kwargs[name] = value
+    return copied_kwargs
 ```
 
 作用是隔离嵌套 payload：Middleware 即使修改 `context.kwargs["json"]`，调用方原始字典也不会被同步修改。
@@ -251,12 +404,29 @@ flowchart TD
 
 协议使用 `typing.Protocol`：
 
+演进后：`291e6ea`，`common/request_middleware.py`。当前 dev2 保持相同协议：
+
 ```python
 class RequestMiddleware(Protocol):
-    def before_request(self, context: RequestContext) -> None: ...
-    def after_response(self, context: RequestContext, response: requests.Response) -> None: ...
-    def on_exception(self, context: RequestContext, error: BaseException) -> None: ...
+    def before_request(self, context: RequestContext) -> None:
+        ...
+
+    def after_response(
+        self,
+        context: RequestContext,
+        response: requests.Response,
+    ) -> None:
+        ...
+
+    def on_exception(
+        self,
+        context: RequestContext,
+        error: BaseException,
+    ) -> None:
+        ...
 ```
+
+这里的省略号是 Protocol 抽象方法的真实函数体，不是课程隐藏的控制流。三个方法都返回 `None`，协议没有 `next()`、retry decision 或 response replacement 返回值。这一签名本身限定了 Middleware 是通知与就地补充机制，不能凭空拥有多次发送控制权。
 
 它表达结构化类型约束，不要求实现类继承共同基类。当前没有 `runtime_checkable`，注册时也不做运行时完整性验证。缺少方法会在对应生命周期真正执行时暴露。
 
@@ -297,6 +467,40 @@ flowchart TD
 
 这意味着 `on_exception` 的语义是传输异常通知，不是所有管道异常的 finally hook。
 
+当前代码：`dev2`，`common/base_request.py`
+
+```python
+def _send(self, context: RequestContext) -> requests.Response:
+    self._run_before_middlewares(context)
+
+    try:
+        response = self.session.request(
+            method=context.method,
+            url=context.url,
+            **context.kwargs,
+        )
+    except Exception as error:
+        self._run_exception_middlewares(context, error)
+        raise
+
+    self._run_after_middlewares(context, response)
+    return response
+
+
+def _run_before_middlewares(self, context: RequestContext) -> None:
+    for middleware in self.middlewares:
+        try:
+            middleware.before_request(context)
+        except Exception as error:
+            raise RuntimeError(
+                "Request middleware "
+                f"{type(middleware).__name__} "
+                "failed in before_request"
+            ) from error
+```
+
+`_run_before_middlewares()` 位于 `try` 之外是决定性证据：before 失败不会进入 transport 的 exception 分支。循环在异常处直接退出，所以后续 before hook 不会运行。这个行为不是从 Middleware 名称推导出来的，而是 Python 控制流的直接结果。
+
 ### 5.2 `after_response`
 
 `requests` 返回任意 `Response` 后执行，包括 2xx、4xx 和 5xx。因为框架没有在 transport 后自动调用 `raise_for_status()`，HTTP 错误状态仍属于正常 response 路径。
@@ -320,6 +524,27 @@ flowchart TD
 - `on_exception` 不会执行。
 
 因此 after Middleware 必须尽量小、可预测。观测失败阻断业务响应是当前协议的明确代价。
+
+当前代码：`dev2`，`common/base_request.py`
+
+```python
+def _run_after_middlewares(
+    self,
+    context: RequestContext,
+    response: requests.Response,
+) -> None:
+    for middleware in self.middlewares:
+        try:
+            middleware.after_response(context, response)
+        except Exception as error:
+            raise RuntimeError(
+                "Request middleware "
+                f"{type(middleware).__name__} "
+                "failed in after_response"
+            ) from error
+```
+
+代码没有 `reversed(self.middlewares)`，也没有捕获后继续。因此 after 按列表正序执行，任一 hook 失败都会停止后续 hook，并使 `_send()` 无法执行 `return response`。这是当前通知模型的收益与代价，不是通用 Middleware 模式的必然语义。
 
 ### 5.3 `on_exception`
 
@@ -345,9 +570,43 @@ flowchart TD
 
 这个设计保护了最重要的诊断事实：真实网络错误不会被日志或观测错误替换。
 
+当前代码：`dev2`，`common/base_request.py`
+
+```python
+def _run_exception_middlewares(
+    self,
+    context: RequestContext,
+    request_error: BaseException,
+) -> None:
+    middleware_errors: list[RuntimeError] = []
+    for middleware in self.middlewares:
+        try:
+            middleware.on_exception(context, request_error)
+        except Exception as error:
+            middleware_errors.append(
+                RuntimeError(
+                    "Request middleware "
+                    f"{type(middleware).__name__} "
+                    "failed in on_exception"
+                )
+            )
+            middleware_errors[-1].__cause__ = error
+
+    if middleware_errors:
+        context.attributes["middleware_exception_errors"] = (
+            middleware_errors
+        )
+        for middleware_error in middleware_errors:
+            request_error.add_note(str(middleware_error))
+```
+
+exception hook 的循环与 before/after 不同：它收集错误后继续，最后把附属失败写入当前 Context 并给原请求异常添加 note。结合 `_send()` exception 分支末尾的裸 `raise`，可以证明调用方得到的仍是同一个 transport 异常对象，而不是 Middleware 的 RuntimeError。
+
 ## 6. 当前顺序不是洋葱模型
 
 三个 hook 都按注册顺序执行。注册 `[one, two]` 时，成功路径为：
+
+顺序证据就是 5.1、5.2、5.3 三个 `_run_*_middlewares()` 中相同的 `for middleware in self.middlewares`。before、after 和 exception 都没有逆序，也没有把下游调用作为参数交给 Middleware。
 
 ```text
 one.before
@@ -378,13 +637,82 @@ flowchart LR
 
 默认列表：
 
+当前代码：`dev2`，`common/request_middleware.py`
+
 ```python
-[
-    MediaResourceMiddleware(),
-    RedactionMiddleware(),
-    LoggingMiddleware(),
-]
+class RedactionMiddleware:
+    REDACTED_KWARGS_ATTR = "redacted_kwargs"
+
+    def before_request(self, context: RequestContext) -> None:
+        context.attributes[self.REDACTED_KWARGS_ATTR] = (
+            redact_request_kwargs(context.kwargs)
+        )
+
+    def after_response(
+        self,
+        context: RequestContext,
+        response: requests.Response,
+    ) -> None:
+        return None
+
+    def on_exception(
+        self,
+        context: RequestContext,
+        error: BaseException,
+    ) -> None:
+        return None
+
+
+class LoggingMiddleware:
+    LOGGER_ATTR = "api_call_logger"
+
+    def before_request(self, context: RequestContext) -> None:
+        logger_kwargs = context.attributes.get(
+            RedactionMiddleware.REDACTED_KWARGS_ATTR,
+            context.kwargs,
+        )
+        context.attributes[self.LOGGER_ATTR] = ApiCallLogger(
+            context.method,
+            context.url,
+            logger_kwargs,
+            step_name=context.request_step_name,
+            response_step_name=context.response_step_name,
+        )
+
+    def after_response(
+        self,
+        context: RequestContext,
+        response: requests.Response,
+    ) -> None:
+        if not context.attach_log:
+            return
+        self.get_logger(context).attach_success(response)
+
+    def on_exception(
+        self,
+        context: RequestContext,
+        error: BaseException,
+    ) -> None:
+        if not context.attach_log:
+            return
+        self.get_logger(context).attach_failure(error)
+
+
+class MediaResourceMiddleware:
+    def before_request(self, context: RequestContext) -> None:
+        if context.method == "POST":
+            start_media_downloads(context.kwargs.get("json"))
+
+
+def default_request_middlewares() -> list[RequestMiddleware]:
+    return [
+        MediaResourceMiddleware(),
+        RedactionMiddleware(),
+        LoggingMiddleware(),
+    ]
 ```
+
+为聚焦前置行为，片段没有重复 `MediaResourceMiddleware` 的两个空后置 hook，也没有重复 logger getter；所有影响顺序、数据依赖和 attach 策略的控制流均已保留。代码证明 Redaction 先写 `redacted_kwargs`，Logging 后读该属性；若顺序交换，`.get(..., context.kwargs)` 会回退到真实请求参数。这是隐式顺序依赖，也是当前方案的明确限制。
 
 ```mermaid
 flowchart LR
@@ -503,9 +831,157 @@ flowchart TD
 
 Middleware 可以观察每个 attempt，但重试编排必须在外层执行器中。
 
+当前代码：`dev2`，`common/base_request.py`
+
+```python
+def _send_with_retry(
+    self,
+    method: str,
+    path: str,
+    retry_policy: RetryPolicy,
+    *,
+    attach_log: bool = True,
+    request_step_name: str = API_REQUEST_STEP_NAME,
+    response_step_name: str = API_RESPONSE_STEP_NAME,
+    context_recorder: list[RequestContext] | None = None,
+    **kwargs: Any,
+) -> requests.Response:
+    first_context = self._build_request_context(
+        method,
+        path,
+        attach_log=attach_log,
+        request_step_name=request_step_name,
+        response_step_name=response_step_name,
+        **kwargs,
+    )
+
+    def context_factory(attempt_index: int) -> RequestContext:
+        context = self._build_request_context(
+            method,
+            path,
+            attach_log=attach_log,
+            request_step_name=request_step_name,
+            response_step_name=response_step_name,
+            **kwargs,
+        )
+        context.attributes["attempt_index"] = attempt_index
+        context.attributes["max_attempts"] = retry_policy.max_attempts
+        return context
+
+    return self.retry_executor.execute(
+        method=first_context.method,
+        request_kwargs=self._kwargs_with_session_headers(
+            first_context.kwargs
+        ),
+        policy=retry_policy,
+        context_factory=context_factory,
+        send_once=self._send,
+        attach_records=self._attach_retry_records,
+        context_recorder=context_recorder,
+    )
+```
+
+`RetryExecutor` 接收 `context_factory` 与 `send_once=self._send`，因此外层 executor 决定何时创建和发送下一个 attempt；每次 `_send()` 才执行一轮 Middleware。attempt index 属于重试序列，但被复制到本次 Context 供观测使用，这不等于 Middleware 拥有它。
+
 ### 9.4 轮询
 
 轮询拥有业务 deadline、远端状态迁移、最后响应和最终业务结论。一次查询内部可以执行 Middleware，但 Middleware 不拥有整个任务状态。
+
+当前代码：`dev2`，`common/base_request.py`
+
+```python
+def _poll_get_with_policy(
+    self,
+    path: str,
+    *,
+    poll_interval: float,
+    timeout: float,
+    polling_policy: PollingPolicy,
+    retry_policy: RetryPolicy | None = None,
+    **kwargs: Any,
+) -> requests.Response:
+    deadline = time.monotonic() + timeout
+    started_at = time.monotonic()
+    transitions: list[PollingTransition] = []
+    last_response: requests.Response | None = None
+    last_status: Any = None
+    last_logger: ApiCallLogger | None = None
+    attempt_index = 0
+
+    while True:
+        attempt_index += 1
+        last_response, last_logger = self._request_without_attach(
+            "GET",
+            path,
+            step_name=POLL_GET_REQUEST_STEP_NAME,
+            response_step_name=POLL_GET_RESPONSE_STEP_NAME,
+            retry_policy=retry_policy,
+            **kwargs,
+        )
+        try:
+            evaluation = evaluate_polling_response(
+                last_response,
+                polling_policy,
+            )
+        except Exception:
+            last_logger.attach_success(last_response)
+            raise
+
+        last_status = evaluation.raw_status
+        transitions.append(
+            PollingTransition(
+                attempt_index=attempt_index,
+                elapsed_seconds=round(
+                    time.monotonic() - started_at,
+                    3,
+                ),
+                state=evaluation.state,
+                raw_status=evaluation.raw_status,
+                response_status_code=last_response.status_code,
+            )
+        )
+
+        if evaluation.state is PollingState.SUCCESS:
+            self._attach_polling_transitions(last_logger, transitions)
+            last_logger.attach_success(last_response)
+            return last_response
+
+        if evaluation.state is PollingState.FAILURE:
+            self._attach_polling_transitions(last_logger, transitions)
+            last_logger.attach_success(last_response)
+            raise PollingFailedError(
+                path=path,
+                last_status=last_status,
+                last_response=last_response,
+                transitions=transitions,
+                error_value=evaluation.error_value,
+            )
+
+        if evaluation.state is PollingState.UNKNOWN:
+            self._attach_polling_transitions(last_logger, transitions)
+            last_logger.attach_success(last_response)
+            raise PollingUnknownStateError(
+                path=path,
+                last_status=last_status,
+                last_response=last_response,
+                transitions=transitions,
+            )
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            self._attach_polling_transitions(last_logger, transitions)
+            last_logger.attach_success(last_response)
+            raise PollingTimeoutError(
+                path=path,
+                timeout=timeout,
+                last_status=last_status,
+                last_response=last_response,
+                transitions=transitions,
+            )
+        time.sleep(min(poll_interval, remaining))
+```
+
+代码证明 polling 方法持有 deadline、started_at、transitions 和 last response，并在循环中重复调用 `_request_without_attach()`；每次内部请求才进入一次或多次 attempt 的 Middleware 生命周期。业务状态的成功、失败、未知和超时终点都由 polling 外层决定，不由任何 hook 决定。
 
 ```mermaid
 flowchart TD

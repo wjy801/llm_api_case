@@ -52,27 +52,44 @@ flowchart LR
 git show 56f4f15:config.py
 ```
 
-核心结构可以简化为：
+初版关键代码：`56f4f15`，`config.py`
 
 ```python
 load_dotenv()
 
+
+def _is_true(value: str | None) -> bool:
+    return value is not None and value.strip().upper() == "TRUE"
+
+
 USE_CHINA_ENVIRONMENT = _is_true(os.getenv("USE_CHINA_ENVIRONMENT"))
+
 
 @dataclass(frozen=True)
 class Settings:
-    timeout = float(os.getenv("API_TIMEOUT", 600))
-    history_report_keep_limit = int(os.getenv("HISTORY_REPORT_KEEP_LIMIT", "30"))
+    timeout: float = float(os.getenv("API_TIMEOUT", 600))
+    generate_allure_report: bool = _is_true(
+        os.getenv("GENERATE_ALLURE_REPORT", "TRUE")
+    )
+    generate_history_report: bool = _is_true(
+        os.getenv("GENERATE_HISTORY_REPORT", "FALSE")
+    )
+    history_report_keep_limit: int = int(
+        os.getenv("HISTORY_REPORT_KEEP_LIMIT", "30")
+    )
 
     if USE_CHINA_ENVIRONMENT:
-        base_url = os.getenv("CHINA_TEST_ENVIRONMENT_BASE_URL").rstrip("/")
-        api_key = os.getenv("CHINA_API_KEY").strip()
+        base_url: str = os.getenv("CHINA_TEST_ENVIRONMENT_BASE_URL").rstrip("/")
+        api_key: str = os.getenv("CHINA_API_KEY").strip()
     else:
-        base_url = os.getenv("OVERSEAS_TEST_BASE_URL").rstrip("/")
-        api_key = os.getenv("OVERSEAS_API_KEY").strip()
+        base_url: str = os.getenv("OVERSEAS_TEST_BASE_URL").rstrip("/")
+        api_key: str = os.getenv("OVERSEAS_API_KEY").strip()
+
 
 settings = Settings()
 ```
+
+该片段保留了完整的配置读取与分支，没有用伪代码代替关键控制流。证据直接表明：环境选择、字符串转换、默认值、环境分支和运行时实例创建都发生在模块导入期间；`Settings` 实例虽然 frozen，但它接收的类字段已经在类定义阶段从外部环境求值。
 
 ### 2.1 初版执行时机
 
@@ -133,9 +150,116 @@ flowchart TD
 git diff 56f4f15 291e6ea -- config.py util/config_validation.py
 ```
 
-这次改造仍使用 frozen dataclass，但引入了三个关键边界。
+这次改造仍使用 frozen dataclass，但引入了三个关键边界。演进前证据是第 2 节的类定义期读取；演进后则把同一组装过程移动到显式函数中。
 
-### 3.1 `load_settings(env)` 成为唯一组装入口
+### 3.1 `load_settings(env)` 成为受支持的统一组装入口
+
+演进后：`291e6ea`，`config.py`
+
+```python
+@dataclass(frozen=True)
+class Settings:
+    timeout: float
+    generate_allure_report: bool
+    generate_history_report: bool
+    history_report_keep_limit: int
+    base_url: str
+    api_key: str
+    environment_name: str
+
+
+def load_settings(env: Mapping[str, str | None] | None = None) -> Settings:
+    env_values = os.environ if env is None else env
+    errors: list[ConfigValidationError] = []
+
+    use_china_environment = _parse_config(
+        errors,
+        parse_bool,
+        "USE_CHINA_ENVIRONMENT",
+        env_values.get("USE_CHINA_ENVIRONMENT"),
+        default=False,
+    )
+    timeout = _parse_config(
+        errors,
+        parse_positive_float,
+        "API_TIMEOUT",
+        env_values.get("API_TIMEOUT"),
+        default=600.0,
+    )
+    generate_allure_report = _parse_config(
+        errors,
+        parse_bool,
+        "GENERATE_ALLURE_REPORT",
+        env_values.get("GENERATE_ALLURE_REPORT"),
+        default=True,
+    )
+    generate_history_report = _parse_config(
+        errors,
+        parse_bool,
+        "GENERATE_HISTORY_REPORT",
+        env_values.get("GENERATE_HISTORY_REPORT"),
+        default=False,
+    )
+    history_report_keep_limit = _parse_config(
+        errors,
+        parse_positive_int,
+        "HISTORY_REPORT_KEEP_LIMIT",
+        env_values.get("HISTORY_REPORT_KEEP_LIMIT"),
+        default=30,
+    )
+
+    if use_china_environment:
+        environment_name = "china"
+        base_url_name = "CHINA_TEST_ENVIRONMENT_BASE_URL"
+        api_key_name = "CHINA_API_KEY"
+    else:
+        environment_name = "overseas"
+        base_url_name = "OVERSEAS_TEST_BASE_URL"
+        api_key_name = "OVERSEAS_API_KEY"
+
+    base_url = _parse_config(
+        errors,
+        require_http_url,
+        base_url_name,
+        env_values.get(base_url_name),
+    )
+    api_key = _parse_config(
+        errors,
+        require_non_empty,
+        api_key_name,
+        env_values.get(api_key_name),
+    )
+
+    if errors:
+        raise aggregate_config_errors(errors)
+
+    return Settings(
+        timeout=timeout,
+        generate_allure_report=generate_allure_report,
+        generate_history_report=generate_history_report,
+        history_report_keep_limit=history_report_keep_limit,
+        base_url=base_url,
+        api_key=api_key,
+        environment_name=environment_name,
+    )
+
+
+def _parse_config(
+    errors: list[ConfigValidationError],
+    parser,
+    *args,
+    **kwargs,
+):
+    try:
+        return parser(*args, **kwargs)
+    except ConfigValidationError as error:
+        errors.append(error)
+        return None
+```
+
+代码中的状态所有权发生了三项变化：一次 `load_settings()` 调用拥有输入 Mapping、错误列表和环境选择；单字段 parser 只返回值或错误；`Settings` 只在所有字段完成后创建。初版类定义体无法注入独立输入，演进后测试可以把普通字典作为一次加载调用的全部外部状态。
+
+这次演进直接保护三个不变量：所有声明字段都经过对应 parser；只要求选中环境的 URL 与 Key；错误列表非空时绝不构造运行时 Settings。代价是加载器成为较长的手工编排函数，字段结构仍由调用顺序隐式表达，这正是第二轮模型化演进要处理的约束。
 
 ```mermaid
 flowchart LR
@@ -149,7 +273,7 @@ flowchart LR
 `env` 为 `None` 时读取 `os.environ`；测试可以传入普通字典，不依赖本机 `.env`。
 
 ```python
-settings = load_settings(
+loaded_settings = load_settings(
     {
         "OVERSEAS_TEST_BASE_URL": "https://example.org",
         "OVERSEAS_API_KEY": "test-secret",
@@ -158,7 +282,7 @@ settings = load_settings(
 )
 ```
 
-这项变化把配置解析从类定义副作用变成可调用、可注入、可单测的函数边界。
+这项变化把配置解析从类定义副作用变成可调用、可注入、可单测的函数边界。它是项目受支持的可信入口，但 dataclass 构造器仍然公开，因此“统一入口”是工程契约，不是类型系统强制限制。
 
 ### 3.2 解析规则下沉到纯函数
 
@@ -174,6 +298,68 @@ settings = load_settings(
 - `redact_config_summary`
 
 它们分别拥有单值解析规则，不拥有环境选择和最终 `Settings` 组装。
+
+演进后：`291e6ea`，`util/config_validation.py`
+
+```python
+class ConfigValidationError(RuntimeError):
+    pass
+
+
+def parse_bool(
+    name: str,
+    value: str | None,
+    *,
+    default: bool | None = None,
+) -> bool:
+    normalized_value = _normalize_optional_value(value)
+    if normalized_value is None:
+        if default is not None:
+            return default
+        raise ConfigValidationError(
+            REQUIRED_VALUE_MESSAGE.format(name=name)
+        )
+
+    upper_value = normalized_value.upper()
+    if upper_value == TRUE_VALUE:
+        return True
+    if upper_value == FALSE_VALUE:
+        return False
+    raise ConfigValidationError(
+        f"Invalid config {name}={normalized_value!r}. "
+        "Expected TRUE or FALSE."
+    )
+
+
+def require_http_url(name: str, value: str | None) -> str:
+    normalized_value = require_non_empty(name, value).rstrip("/")
+    if not normalized_value.startswith(("http://", "https://")):
+        raise ConfigValidationError(
+            f"Invalid config {name}={normalized_value!r}. "
+            "Expected http(s) URL."
+        )
+    return normalized_value
+
+
+def aggregate_config_errors(
+    errors: list[ConfigValidationError],
+) -> ConfigValidationError:
+    if not errors:
+        raise ValueError("errors must not be empty")
+
+    lines = ["Configuration validation failed:"]
+    lines.extend(f"- {error}" for error in errors)
+    return ConfigValidationError("\n".join(lines))
+
+
+def _normalize_optional_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped_value = value.strip()
+    return stripped_value or None
+```
+
+代码证明 helper 只拥有一次函数调用内的规范化值和判断规则，不保存当前环境，也不创建 `Settings`。严格 bool 规则修复了初版 `_is_true("yes") == False` 的静默降级；URL helper 把“有值、移除尾斜杠、必须是 HTTP(S)”合并为可复用契约。稳定异常文本属于 helper，错误列表的生命周期属于 `load_settings()`。
 
 ```mermaid
 flowchart TD
@@ -191,6 +377,8 @@ flowchart TD
 ### 3.3 错误聚合
 
 第一轮实现用 `_parse_config()` 捕获每个字段的 `ConfigValidationError`，继续校验其他字段，最后统一抛出：
+
+对应控制流已经在 3.1 的 `load_settings()` 与 `_parse_config()` 中完整展示。关键点不是把多个字符串连接起来，而是失败后返回 `None` 让其他独立字段继续校验，并且只有组装者拥有累计错误列表。只要构造 `Settings` 的语句严格位于 `if errors` 之后，非法中间值就不会跨越信任边界。
 
 ```text
 Configuration validation failed:
@@ -222,6 +410,8 @@ git diff 291e6ea 2748f16 -- config.py util/config_validation.py requirements.txt
 
 关键变化不是 dataclass 换成 `BaseModel`，而是出现两个不同语义的模型。
 
+演进前代码已在 3.1 完整展示：`291e6ea` 的 `config.py` 只有一个运行时 dataclass，原始输入的可缺失状态由 `load_settings()` 的局部变量隐式承接。以下演进后代码与该完整实现形成直接对照。
+
 ```mermaid
 flowchart LR
     A["EnvironmentSettingsInput"] --> B["不可信且字段可能缺失"]
@@ -236,12 +426,63 @@ flowchart LR
 
 `_EnvironmentSettingsInput` 使用 `validation_alias` 接收大写环境变量名：
 
+演进后：`2748f16`，`config.py`
+
 ```python
-use_china_environment: bool = Field(
-    default=False,
-    validation_alias="USE_CHINA_ENVIRONMENT",
-)
+class Settings(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    timeout: float
+    generate_allure_report: bool
+    generate_history_report: bool
+    history_report_keep_limit: int
+    base_url: str
+    api_key: str
+    environment_name: str
+
+
+class _EnvironmentSettingsInput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    use_china_environment: bool = Field(
+        default=False,
+        validation_alias="USE_CHINA_ENVIRONMENT",
+    )
+    api_timeout: float = Field(
+        default=600.0,
+        validation_alias="API_TIMEOUT",
+    )
+    generate_allure_report: bool = Field(
+        default=True,
+        validation_alias="GENERATE_ALLURE_REPORT",
+    )
+    generate_history_report: bool = Field(
+        default=False,
+        validation_alias="GENERATE_HISTORY_REPORT",
+    )
+    history_report_keep_limit: int = Field(
+        default=30,
+        validation_alias="HISTORY_REPORT_KEEP_LIMIT",
+    )
+    china_base_url: str | None = Field(
+        default=None,
+        validation_alias="CHINA_TEST_ENVIRONMENT_BASE_URL",
+    )
+    china_api_key: str | None = Field(
+        default=None,
+        validation_alias="CHINA_API_KEY",
+    )
+    overseas_base_url: str | None = Field(
+        default=None,
+        validation_alias="OVERSEAS_TEST_BASE_URL",
+    )
+    overseas_api_key: str | None = Field(
+        default=None,
+        validation_alias="OVERSEAS_API_KEY",
+    )
 ```
+
+前后差异不是字段换一种声明语法。`_EnvironmentSettingsInput` 首次显式拥有“尚未选择环境、两套凭据可能缺失”的中间状态；公开 `Settings` 仍只允许完整字段。`extra="ignore"` 还限定了输入模型只消费自己认识的环境变量，而不是把整个 `os.environ` 暴露给运行时对象。
 
 它必须允许两套环境字段同时存在或缺失，因为在环境选择完成前，无法把所有 URL 和 Key 都声明为必填。
 
@@ -257,6 +498,53 @@ use_china_environment: bool = Field(
 ### 4.2 字段 validator 的职责
 
 `mode="before"` 的 validator 在 Pydantic 自身转换前调用原有解析函数：
+
+演进后：`2748f16`，`config.py`
+
+```python
+BOOL_FIELDS: ClassVar[dict[str, str]] = {
+    "use_china_environment": "USE_CHINA_ENVIRONMENT",
+    "generate_allure_report": "GENERATE_ALLURE_REPORT",
+    "generate_history_report": "GENERATE_HISTORY_REPORT",
+}
+
+@field_validator(
+    "use_china_environment",
+    "generate_allure_report",
+    "generate_history_report",
+    mode="before",
+)
+@classmethod
+def _validate_bool_env(cls, value: Any, info) -> bool:
+    if isinstance(value, bool):
+        return value
+    field_name = cls.BOOL_FIELDS[info.field_name]
+    return parse_bool(
+        field_name,
+        _optional_string(value),
+        default=bool(cls.model_fields[info.field_name].default),
+    )
+
+@field_validator("api_timeout", mode="before")
+@classmethod
+def _validate_timeout(cls, value: Any) -> float:
+    return parse_positive_float(
+        "API_TIMEOUT",
+        _optional_string(value),
+        default=600.0,
+    )
+
+@field_validator("history_report_keep_limit", mode="before")
+@classmethod
+def _validate_history_keep_limit(cls, value: Any) -> int:
+    return parse_positive_int(
+        "HISTORY_REPORT_KEEP_LIMIT",
+        _optional_string(value),
+        default=30,
+    )
+```
+
+Pydantic 没有取代第一轮已经形成的字段语义。validator 先把任意输入转成 helper 所需的字符串，再复用严格 bool、正数和稳定变量名规则。字段模型负责声明何时调用规则，helper 仍负责规则本身；两者沿不同原因变化。
 
 ```mermaid
 flowchart LR
@@ -275,6 +563,48 @@ flowchart LR
 ### 4.3 model validator 的职责
 
 字段解析成功后，`_validate_selected_environment()` 校验环境组合：
+
+演进后：`2748f16`，`config.py`
+
+```python
+@model_validator(mode="after")
+def _validate_selected_environment(self) -> _EnvironmentSettingsInput:
+    errors: list[ConfigValidationError] = []
+    if self.use_china_environment:
+        _collect_config_error(
+            errors,
+            require_http_url,
+            "CHINA_TEST_ENVIRONMENT_BASE_URL",
+            self.china_base_url,
+        )
+        _collect_config_error(
+            errors,
+            require_non_empty,
+            "CHINA_API_KEY",
+            self.china_api_key,
+        )
+        if errors:
+            raise aggregate_config_errors(errors)
+        return self
+
+    _collect_config_error(
+        errors,
+        require_http_url,
+        "OVERSEAS_TEST_BASE_URL",
+        self.overseas_base_url,
+    )
+    _collect_config_error(
+        errors,
+        require_non_empty,
+        "OVERSEAS_API_KEY",
+        self.overseas_api_key,
+    )
+    if errors:
+        raise aggregate_config_errors(errors)
+    return self
+```
+
+这个分支证明环境完整性属于模型组合规则，不属于单个 URL 或 Key 字段。只有选中的一组字段进入必填校验，因此未选中环境不会扩大当前测试运行的启动前提。同一环境的 URL 与 Key 共享一次 model validator 错误列表，可以同时报告。
 
 ```mermaid
 flowchart TD
@@ -316,9 +646,73 @@ flowchart LR
 
 `ConfigDict(frozen=True)` 防止运行过程中重新赋值，保证同一个配置快照在客户端和报告模块之间保持一致。
 
+演进后：`2748f16`，`config.py`
+
+```python
+def to_settings(self) -> Settings:
+    if self.use_china_environment:
+        return Settings(
+            timeout=self.api_timeout,
+            generate_allure_report=self.generate_allure_report,
+            generate_history_report=self.generate_history_report,
+            history_report_keep_limit=self.history_report_keep_limit,
+            base_url=require_http_url(
+                "CHINA_TEST_ENVIRONMENT_BASE_URL",
+                self.china_base_url,
+            ),
+            api_key=require_non_empty(
+                "CHINA_API_KEY",
+                self.china_api_key,
+            ),
+            environment_name="china",
+        )
+
+    return Settings(
+        timeout=self.api_timeout,
+        generate_allure_report=self.generate_allure_report,
+        generate_history_report=self.generate_history_report,
+        history_report_keep_limit=self.history_report_keep_limit,
+        base_url=require_http_url(
+            "OVERSEAS_TEST_BASE_URL",
+            self.overseas_base_url,
+        ),
+        api_key=require_non_empty(
+            "OVERSEAS_API_KEY",
+            self.overseas_api_key,
+        ),
+        environment_name="overseas",
+    )
+```
+
+`to_settings()` 是信任转换的最后一道代码边界：输入模型持有两套可选字段，输出模型只得到选中环境的一套完整 URL 与 Key。这里再次调用 `require_*`，使转换本身不只依赖 model validator 的先验结论。调用方得到的对象不再需要环境分支，也无法看到未选中环境的凭据。
+
 ## 5. 当前完整执行链
 
 当前 `config.py` 在 import 时执行：
+
+当前代码：`dev2`，`config.py`
+
+```python
+def load_settings(
+    env: Mapping[str, str | None] | None = None,
+) -> Settings:
+    env_values = os.environ if env is None else env
+    try:
+        return _EnvironmentSettingsInput.model_validate(
+            dict(env_values)
+        ).to_settings()
+    except ValidationError as error:
+        errors = _config_errors_from_pydantic(error)
+        if errors:
+            raise aggregate_config_errors(errors) from error
+        raise
+
+
+settings = load_settings()
+USE_CHINA_ENVIRONMENT = settings.environment_name == "china"
+```
+
+当前代码与 `2748f16` 的核心链路保持一致。`load_settings()` 拥有一次信任转换；模块级语句决定默认配置快照在 import 时创建；兼容常量从已验证的 Settings 反向派生，而不是再次读取 `os.environ`，避免同一环境选择出现两个事实来源。
 
 ```mermaid
 flowchart TD
@@ -463,6 +857,51 @@ flowchart TD
 
 当前 `load_settings()` 捕获 Pydantic `ValidationError`，再转换为 `ConfigValidationError`。业务调用方看到的是框架稳定异常，而不是第三方库内部结构。
 
+当前代码：`dev2`，`config.py`
+
+```python
+def _config_errors_from_pydantic(
+    error: ValidationError,
+) -> list[ConfigValidationError]:
+    errors: list[ConfigValidationError] = []
+    seen_messages: set[str] = set()
+    for detail in error.errors(
+        include_url=False,
+        include_context=True,
+    ):
+        for message in _pydantic_error_messages(detail):
+            if message in seen_messages:
+                continue
+            seen_messages.add(message)
+            errors.append(ConfigValidationError(message))
+    return errors
+
+
+def _pydantic_error_messages(detail: dict[str, Any]) -> list[str]:
+    context = detail.get("ctx") or {}
+    error = context.get("error")
+    if isinstance(error, ConfigValidationError):
+        return _split_aggregate_error_message(str(error))
+    if isinstance(error, ValueError):
+        return _split_aggregate_error_message(str(error))
+    return [str(detail.get("msg", "Invalid configuration."))]
+
+
+def _split_aggregate_error_message(message: str) -> list[str]:
+    prefix = "Configuration validation failed:"
+    if not message.startswith(prefix):
+        return [message]
+
+    messages: list[str] = []
+    for line in message.splitlines()[1:]:
+        stripped_line = line.strip()
+        if stripped_line.startswith("- "):
+            messages.append(stripped_line[2:])
+    return messages or [message]
+```
+
+适配层读取 Pydantic 的结构化 context，恢复内部 helper 产生的原始错误文案，拆开 model validator 中已经聚合的多行消息并去重。这个边界保护的是外部错误契约：以后即使替换或升级建模库，调用方仍只依赖 `ConfigValidationError` 与项目定义的变量名。
+
 ```mermaid
 flowchart LR
     A["field 或 model validator 失败"] --> B["Pydantic ValidationError"]
@@ -545,6 +984,20 @@ flowchart LR
 
 - 校验需要读取真实值。
 - 展示只能使用脱敏副本。
+
+当前代码：`dev2`，`util/config_validation.py`
+
+```python
+def redact_config_summary(
+    summary: Mapping[str, Any],
+) -> dict[str, Any]:
+    redacted_summary = redact_sensitive_data(dict(summary))
+    if not isinstance(redacted_summary, dict):
+        return dict(summary)
+    return redacted_summary
+```
+
+这里先复制 Mapping，再把副本交给通用结构化脱敏函数。真实 Settings 与校验值不会被修改。状态所有权因此分开：配置快照属于运行时，安全摘要属于一次观测输出。此函数仍受 `redact_sensitive_data()` 的字段名规则约束，不是任意秘密值追踪器。
 
 ```mermaid
 flowchart LR
