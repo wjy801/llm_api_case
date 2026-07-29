@@ -393,6 +393,8 @@ git diff 56f4f15 291e6ea -- util/api_call_logger.py util/redaction.py util/curl_
 
 ## 第 5 天：从业务副作用推导 RetryPolicy
 
+完整课程内容：[DAY05_RETRY_POLICY_SIDE_EFFECT.md](DAY05_RETRY_POLICY_SIDE_EFFECT.md)
+
 ### 核心问题
 
 重试判断的第一条件为什么不是状态码，而是业务操作能否安全重复？
