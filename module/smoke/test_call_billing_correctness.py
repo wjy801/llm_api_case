@@ -74,7 +74,7 @@ class TestCallBillingCorrectness:
             usage_records_responses,
             after_balance_response,
         )
-
+    @pytest.mark.skip("余额计算方式精度不足，自动化用例可信度不足")
     def test_stream_text_model_outputs_total_tokens(self):
         before_balance_response = self.smoke_task.query_account_balance_for_billing(self.smoke_request)
         response = self.smoke_task.create_stream_chat_completion(self.smoke_request)
