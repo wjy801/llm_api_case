@@ -24,6 +24,9 @@ from common import (
 )
 
 
+pytest_plugins = ("quality.pytest_plugin",)
+
+
 ALLURE_REPORT_DIR = "allure-report"
 HISTORY_REPORT_DIR = "history_report"
 HISTORY_LATEST_DIR = "latest"
