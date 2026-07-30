@@ -127,8 +127,12 @@ def build_interface_id(
 ) -> str:
     method_part = _require_non_empty(method, "method").upper()
     protocol_part = _normalize_protocol(protocol)
-    path = _normalize_path(url_or_path)
+    path = build_url_template(url_or_path)
     return f"{method_part} {path} {protocol_part}"
+
+
+def build_url_template(url_or_path: str) -> str:
+    return _normalize_path(url_or_path)
 
 
 def normalize_failure_message(message: str) -> str:

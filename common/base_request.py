@@ -160,6 +160,9 @@ class BaseRequest:
         attach_log: bool = True,
         request_step_name: str = API_REQUEST_STEP_NAME,
         response_step_name: str = API_RESPONSE_STEP_NAME,
+        protocol: str | None = None,
+        retry_policy: RetryPolicy | None = None,
+        polling_policy: PollingPolicy | None = None,
         **kwargs: Any,
     ) -> RequestContext:
         url = self._build_url(path)
@@ -178,6 +181,9 @@ class BaseRequest:
             attach_log=attach_log,
             request_step_name=request_step_name,
             response_step_name=response_step_name,
+            protocol=protocol or ("sse" if request_kwargs.get("stream") else "http"),
+            retry_policy=retry_policy,
+            polling_policy=polling_policy,
         )
 
     def _send(self, context: RequestContext) -> requests.Response:
@@ -205,6 +211,8 @@ class BaseRequest:
         attach_log: bool = True,
         request_step_name: str = API_REQUEST_STEP_NAME,
         response_step_name: str = API_RESPONSE_STEP_NAME,
+        protocol: str | None = None,
+        polling_policy: PollingPolicy | None = None,
         context_recorder: list[RequestContext] | None = None,
         **kwargs: Any,
     ) -> requests.Response:
@@ -214,6 +222,9 @@ class BaseRequest:
             attach_log=attach_log,
             request_step_name=request_step_name,
             response_step_name=response_step_name,
+            protocol=protocol,
+            retry_policy=retry_policy,
+            polling_policy=polling_policy,
             **kwargs,
         )
 
@@ -224,6 +235,9 @@ class BaseRequest:
                 attach_log=attach_log,
                 request_step_name=request_step_name,
                 response_step_name=response_step_name,
+                protocol=protocol,
+                retry_policy=retry_policy,
+                polling_policy=polling_policy,
                 **kwargs,
             )
             context.attributes["attempt_index"] = attempt_index
@@ -283,6 +297,8 @@ class BaseRequest:
         step_name: str = API_REQUEST_STEP_NAME,
         response_step_name: str | None = None,
         retry_policy: RetryPolicy | None = None,
+        protocol: str | None = None,
+        polling_policy: PollingPolicy | None = None,
         **kwargs: Any,
     ) -> tuple[requests.Response, ApiCallLogger]:
         context = self._build_request_context(
@@ -291,6 +307,9 @@ class BaseRequest:
             attach_log=False,
             request_step_name=step_name,
             response_step_name=response_step_name or API_RESPONSE_STEP_NAME,
+            protocol=protocol,
+            retry_policy=retry_policy,
+            polling_policy=polling_policy,
             **kwargs,
         )
         try:
@@ -306,6 +325,8 @@ class BaseRequest:
                     attach_log=False,
                     request_step_name=step_name,
                     response_step_name=response_step_name or API_RESPONSE_STEP_NAME,
+                    protocol=protocol,
+                    polling_policy=polling_policy,
                     context_recorder=context_recorder,
                     **kwargs,
                 )
@@ -344,6 +365,8 @@ class BaseRequest:
                 step_name=POLL_GET_REQUEST_STEP_NAME,
                 response_step_name=POLL_GET_RESPONSE_STEP_NAME,
                 retry_policy=retry_policy,
+                protocol="polling",
+                polling_policy=polling_policy,
                 **kwargs,
             )
             try:

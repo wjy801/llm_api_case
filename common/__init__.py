@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     )
     from common.base_request import BaseRequest
     from common.base_task import BaseTask
+    from common.context_executor import submit_with_context
     from common.polling import DEFAULT_MEDIA_POLLING_POLICY, PollingPolicy, PollingState, PollingTimeoutError
     from common.retry import RetryPolicy
     from common.test_context import (
@@ -66,6 +67,7 @@ __all__ = [
     "download_links_from_poll_get",
     "start_model_result_collection",
     "stop_model_result_collection",
+    "submit_with_context",
 ]
 
 
@@ -86,6 +88,10 @@ def __getattr__(name: str):
         from common.base_decorators import BaseDecorators
 
         return BaseDecorators
+    if name == "submit_with_context":
+        from common.context_executor import submit_with_context
+
+        return submit_with_context
     if name == "RetryPolicy":
         from common.retry import RetryPolicy
 

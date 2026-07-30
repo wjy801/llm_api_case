@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
 
+from common import submit_with_context
 from module.smoke import SmokeAssertions, SmokeRequest, SmokeTask
 
 
@@ -120,7 +121,10 @@ class TestCallBillingCorrectness:
 
         with ThreadPoolExecutor(max_workers=call_count) as executor:
             future_to_index = {
-                executor.submit(TestCallBillingCorrectness._create_text_model_call_for_billing): index
+                submit_with_context(
+                    executor,
+                    TestCallBillingCorrectness._create_text_model_call_for_billing,
+                ): index
                 for index in range(call_count)
             }
             for future in as_completed(future_to_index):
