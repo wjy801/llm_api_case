@@ -3,7 +3,9 @@
 .env
 .env.*
 !.env.example
-/tests
+/tests/*
+!/tests/quality/
+!/tests/quality/**
 
 # Python cache / test cache
 __pycache__/
