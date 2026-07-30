@@ -8,6 +8,7 @@ from jsonpath_ng.ext import parse
 import pytest
 import requests
 
+from common import submit_with_context
 from module.smoke import SmokeAssertions, SmokeRequest, SmokeTask
 from module.smoke.task import B_ACCOUNT_API_KEY, B_ACCOUNT_CONTROL_KEY
 
@@ -193,7 +194,7 @@ class TestAsyncImageGeneration:
 
         with ThreadPoolExecutor(max_workers=task_count) as executor:
             future_to_index = {
-                executor.submit(TestAsyncImageGeneration._submit_async_image_task): index
+                submit_with_context(executor, TestAsyncImageGeneration._submit_async_image_task): index
                 for index in range(task_count)
             }
             for future in as_completed(future_to_index):

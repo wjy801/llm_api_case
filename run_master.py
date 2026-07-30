@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import os
 import shutil
 import sys
@@ -10,6 +11,15 @@ from typing import Sequence
 
 import pytest
 
+from quality.config import (
+    QUALITY_ENABLE_ENV,
+    QUALITY_EXECUTION_ID_ENV,
+    QUALITY_OUTPUT_DIR_ENV,
+    QUALITY_RUN_ID_ENV,
+    QualityRuntimeConfig,
+    load_quality_config,
+)
+from quality.identifiers import build_run_id
 from master_service import (
     DEFAULT_SERIAL_MARKER,
     DEFAULT_TEST_PATH,
@@ -49,9 +59,12 @@ def run(
         print(f"{len(cases)} tests collected")
         return 0
 
+    quality_config = _resolve_parent_quality_config()
+
     if not numprocesses:
         print("Parallel test execution disabled. Running all cases serially.")
-        return _run_pytest(case_nodeids + pytest_args)
+        with _quality_stage_environment(quality_config, "serial-pool"):
+            return _run_pytest(case_nodeids + pytest_args)
 
     parallel_cases, serial_cases = split_test_cases(cases, serial_marker=serial_marker)
     print(
@@ -68,14 +81,16 @@ def run(
             junit_suffix="parallel",
         )
         print(f"Running parallel pool: {len(parallel_cases)} cases")
-        results.append(_run_pytest(parallel_cases + parallel_args))
+        with _quality_stage_environment(quality_config, "parallel-pool"):
+            results.append(_run_pytest(parallel_cases + parallel_args))
     else:
         print("Parallel pool is empty. Skipping parallel stage.")
 
     if serial_cases:
         serial_args = _build_serial_args(pytest_args, junit_suffix="serial")
         print(f"Running serial pool: {len(serial_cases)} cases")
-        results.append(_run_serial_pool(serial_cases + serial_args))
+        with _quality_stage_environment(quality_config, "serial-pool"):
+            results.append(_run_serial_pool(serial_cases + serial_args))
     else:
         print("Serial pool is empty. Skipping serial stage.")
 
@@ -215,6 +230,71 @@ def _run_serial_pool(pytest_args: list[str]) -> int:
 def _run_pytest(pytest_args: list[str]) -> int:
     exit_code = pytest.main(pytest_args)
     return int(exit_code)
+
+
+def _resolve_parent_quality_config() -> QualityRuntimeConfig:
+    try:
+        configured = load_quality_config()
+    except ValueError as error:
+        print(f"Quality collection disabled: {error}")
+        return QualityRuntimeConfig(
+            enabled=False,
+            run_id=None,
+            execution_id=None,
+            output_dir=PROJECT_ROOT / "reports/quality",
+        )
+
+    output_dir = configured.output_dir
+    if not output_dir.is_absolute():
+        output_dir = PROJECT_ROOT / output_dir
+    if not configured.enabled:
+        return QualityRuntimeConfig(
+            enabled=False,
+            run_id=configured.run_id,
+            execution_id=None,
+            output_dir=output_dir,
+        )
+
+    return QualityRuntimeConfig(
+        enabled=True,
+        run_id=configured.run_id or _new_parent_run_id(),
+        execution_id=None,
+        output_dir=output_dir,
+    )
+
+
+def _new_parent_run_id() -> str:
+    job_name = os.environ.get("JOB_NAME")
+    build_number = os.environ.get("BUILD_NUMBER")
+    if job_name and build_number:
+        return build_run_id(job_name=job_name, build_number=build_number)
+    return build_run_id()
+
+
+@contextmanager
+def _quality_stage_environment(
+    quality_config: QualityRuntimeConfig,
+    execution_id: str,
+):
+    if not quality_config.enabled:
+        yield
+        return
+    values = {
+        QUALITY_ENABLE_ENV: "1",
+        QUALITY_RUN_ID_ENV: str(quality_config.run_id),
+        QUALITY_EXECUTION_ID_ENV: execution_id,
+        QUALITY_OUTPUT_DIR_ENV: str(quality_config.output_dir),
+    }
+    previous = {name: os.environ.get(name) for name in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def _merge_exit_codes(exit_codes: Sequence[int]) -> int:
