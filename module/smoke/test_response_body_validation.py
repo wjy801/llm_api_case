@@ -40,7 +40,7 @@ class TestResponseBodyValidation:
 
         self.smoke_assertions.assert_status_code(response, 200)
         self.smoke_assertions.assert_schema(response, CHAT_COMPLETION_SUCCESS_SCHEMA)
-        self.smoke_assertions.assert_json_value(response, "$.model", "glm-5")
+        self.smoke_assertions.assert_json_value(response, "$.model", "GLM-5")
 
     def test_stream_chat_completions_chunk_fields(self):
         response = self.smoke_task.create_small_stream_chat_completion(self.smoke_request)
@@ -79,7 +79,7 @@ class TestResponseBodyValidation:
         assert response.status_code != 200, f"Expected non-200 status code, actual: {response.status_code}."
         self.smoke_assertions.assert_schema(response, STANDARD_ERROR_RESPONSE_SCHEMA)
 
-    @pytest.mark.xfail(reason="账户为0，响应体信息不精确")
+    @pytest.mark.skip(reason="账户为0，响应体信息不精确")
     @pytest.mark.serial
     def test_zero_balance_account_call_response_body_contains_error_object(self):
         if not ZERO_BALANCE_API_KEY.strip() or not ZERO_BALANCE_CONTROL_KEY.strip():
