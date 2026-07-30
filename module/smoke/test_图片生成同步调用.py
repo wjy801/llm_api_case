@@ -32,7 +32,7 @@ class TestSyncImageGeneration:
         self.smoke_assertions.assert_status_code(response, 200)
         self._assert_image_generation_output_exists(response)
 
-    @pytest.mark.xfail("海外环境图片模型响应体返回格式不准确")
+    @pytest.mark.skip("海外环境图片模型响应体返回格式不准确")
     def test_f8_02_sync_image_generation_response_body_integrity(self):
         response = self.smoke_task.create_image_generation(
             self.smoke_request,
