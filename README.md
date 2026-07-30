@@ -448,3 +448,4 @@ node_modules\.bin\allure.cmd open allure-report
 .\.venv\Scripts\python.exe -m pytest tests -q
 .\.venv\Scripts\python.exe run_master.py module/smoke --collect-only -q
 ```
+
