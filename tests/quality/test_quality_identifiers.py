@@ -14,6 +14,7 @@ from quality.identifiers import (
     build_invocation_id,
     build_param_hash,
     build_run_id,
+    build_url_template,
     new_request_event_id,
     normalize_failure_message,
     normalize_nodeid,
@@ -109,6 +110,13 @@ def test_interface_id_removes_host_query_and_templates_dynamic_segments():
     )
 
     assert interface_id == "POST /v1/tasks/{id}/{uuid}/{hash} polling"
+
+
+def test_url_template_uses_same_normalization_as_interface_id():
+    path = "https://host/v1/tasks/12345?token=secret"
+
+    assert build_url_template(path) == "/v1/tasks/{id}"
+    assert build_interface_id("GET", path) == "GET /v1/tasks/{id} http"
 
 
 def test_interface_id_preserves_semantic_hyphenated_model_name():
