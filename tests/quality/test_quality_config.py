@@ -3,9 +3,15 @@ from pathlib import Path
 import pytest
 
 from quality.config import (
+    DEFAULT_QUALITY_HTTP_5XX_WARN_RATE,
+    DEFAULT_QUALITY_MIN_REQUEST_SAMPLES,
     DEFAULT_QUALITY_OUTPUT_DIR,
+    DEFAULT_QUALITY_SHADOW_GATE,
+    DEFAULT_QUALITY_TIMEOUT_WARN_RATE,
+    QualityReportConfig,
     QualityRuntimeConfig,
     load_quality_config,
+    load_quality_report_config,
     parse_quality_enabled,
 )
 
@@ -71,3 +77,44 @@ def test_load_quality_config_treats_blank_output_dir_as_default():
     config = load_quality_config({"QUALITY_OUTPUT_DIR": "   "})
 
     assert config.output_dir == DEFAULT_QUALITY_OUTPUT_DIR
+
+
+def test_load_quality_report_config_uses_defaults():
+    assert load_quality_report_config({}) == QualityReportConfig(
+        shadow_gate=DEFAULT_QUALITY_SHADOW_GATE,
+        min_request_samples=DEFAULT_QUALITY_MIN_REQUEST_SAMPLES,
+        http_5xx_warn_rate=DEFAULT_QUALITY_HTTP_5XX_WARN_RATE,
+        timeout_warn_rate=DEFAULT_QUALITY_TIMEOUT_WARN_RATE,
+    )
+
+
+def test_load_quality_report_config_reads_environment():
+    config = load_quality_report_config(
+        {
+            "QUALITY_SHADOW_GATE": "0",
+            "QUALITY_MIN_REQUEST_SAMPLES": "8",
+            "QUALITY_HTTP_5XX_WARN_RATE": "0.1",
+            "QUALITY_TIMEOUT_WARN_RATE": "0.2",
+        }
+    )
+
+    assert config == QualityReportConfig(
+        shadow_gate=False,
+        min_request_samples=8,
+        http_5xx_warn_rate=0.1,
+        timeout_warn_rate=0.2,
+    )
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"QUALITY_MIN_REQUEST_SAMPLES": "-1"},
+        {"QUALITY_HTTP_5XX_WARN_RATE": "1.1"},
+        {"QUALITY_TIMEOUT_WARN_RATE": "invalid"},
+        {"QUALITY_SHADOW_GATE": "invalid"},
+    ],
+)
+def test_load_quality_report_config_rejects_invalid_values(values):
+    with pytest.raises(ValueError):
+        load_quality_report_config(values)
