@@ -124,6 +124,12 @@ pipeline {
             steps {
                 ciPowerShell('''
                 $target = $env:SMOKE_TARGET
+                $env:QUALITY_ENABLE = '1'
+                $env:QUALITY_OUTPUT_DIR = 'reports/quality'
+                $env:QUALITY_SHADOW_GATE = '1'
+                $env:QUALITY_MIN_REQUEST_SAMPLES = '20'
+                $env:QUALITY_HTTP_5XX_WARN_RATE = '0.02'
+                $env:QUALITY_TIMEOUT_WARN_RATE = '0.05'
                 $parallelArgs = @()
                 if (![string]::IsNullOrWhiteSpace($env:TEST_PARALLEL_WORKERS) -and $env:TEST_PARALLEL_WORKERS -ne 'off' -and $env:TEST_PARALLEL_WORKERS -ne 'null') {
                     $parallelArgs = @('-n', $env:TEST_PARALLEL_WORKERS)
@@ -214,9 +220,62 @@ Map readSmokeCollectSummary() {
     return parseSmokeCollectText(readFile('reports/smoke-collect.txt'))
 }
 
+Map readQualitySummary() {
+    def unavailable = [
+        available: false,
+        overall: '质量摘要未生成',
+        integrity: '-',
+        caseTotal: '-',
+        caseFailed: '-',
+        caseError: '-',
+        caseSkipped: '-',
+        productDefect: '-',
+        configuration: '-',
+        frameworkDefect: '-',
+        unknown: '-',
+        requestTotal: '-',
+        http5xx: '-',
+        timeout: '-',
+    ]
+    try {
+        def summaryPath = 'reports/quality/summary.json'
+        def gatePath = 'reports/quality/gate-report.json'
+        if (!fileExists(summaryPath) || !fileExists(gatePath)) {
+            return unavailable
+        }
+        def summaryPayload = parseJsonObject(readFile(summaryPath))
+        def gatePayload = parseJsonObject(readFile(gatePath))
+        def summary = summaryPayload.summary instanceof Map ? summaryPayload.summary : [:]
+        def categories = summaryPayload.failure_categories instanceof Map ? summaryPayload.failure_categories : [:]
+        if (!summary || !gatePayload.overall) {
+            return unavailable
+        }
+        return [
+            available: true,
+            overall: gatePayload.overall,
+            integrity: summary.integrity_status ?: '-',
+            caseTotal: summary.case_total ?: 0,
+            caseFailed: summary.case_failed ?: 0,
+            caseError: summary.case_error ?: 0,
+            caseSkipped: summary.case_skipped ?: 0,
+            productDefect: categories.PRODUCT_DEFECT ?: 0,
+            configuration: categories.CONFIGURATION ?: 0,
+            frameworkDefect: categories.FRAMEWORK_DEFECT ?: 0,
+            unknown: categories.UNKNOWN ?: 0,
+            requestTotal: summary.request_total ?: 0,
+            http5xx: summary.http_5xx_count ?: 0,
+            timeout: summary.timeout_count ?: 0,
+        ]
+    } catch (error) {
+        echo "质量摘要读取失败：${error.getMessage()}"
+        return unavailable
+    }
+}
+
 String buildResultSummaryHtml(String status) {
     def junit = readJunitSummary()
     def smoke = readSmokeCollectSummary()
+    def quality = readQualitySummary()
     def statusColor = status == 'FAILED' ? '#b00020' : status == 'UNSTABLE' ? '#b26a00' : '#137333'
     def statusText = buildStatusText(status)
     def buildUrl = env.BUILD_URL ?: ''
@@ -264,6 +323,30 @@ String buildResultSummaryHtml(String status) {
           </td>
         </tr>
         <tr>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">质量影子门禁</td>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">
+            ${htmlEscape(quality.overall)}，完整性 ${htmlEscape(quality.integrity)}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">质量用例摘要</td>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">
+            共 ${htmlEscape(quality.caseTotal)} 项，失败 ${htmlEscape(quality.caseFailed)} 项，错误 ${htmlEscape(quality.caseError)} 项，跳过 ${htmlEscape(quality.caseSkipped)} 项
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">质量失败分类</td>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">
+            产品缺陷 ${htmlEscape(quality.productDefect)}，配置问题 ${htmlEscape(quality.configuration)}，框架缺陷 ${htmlEscape(quality.frameworkDefect)}，未知 ${htmlEscape(quality.unknown)}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">质量请求摘要</td>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">
+            共 ${htmlEscape(quality.requestTotal)} 次，HTTP 5xx ${htmlEscape(quality.http5xx)} 次，超时 ${htmlEscape(quality.timeout)} 次
+          </td>
+        </tr>
+        <tr>
           <td style="padding: 6px 10px; border: 1px solid #ddd;">运行框架单元测试</td>
           <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(booleanText(params.RUN_FRAMEWORK_TESTS))}</td>
         </tr>
@@ -297,7 +380,8 @@ String buildResultSummaryHtml(String status) {
         <a href="${htmlEscape(buildUrl)}">构建详情</a> |
         <a href="${htmlEscape(buildUrl)}console">控制台日志</a> |
         <a href="${htmlEscape(buildUrl)}allure/">Allure 报告</a> |
-        <a href="${htmlEscape(buildUrl)}testReport/">JUnit 报告</a>
+        <a href="${htmlEscape(buildUrl)}testReport/">JUnit 报告</a> |
+        <a href="${htmlEscape(buildUrl)}artifact/reports/quality/gate-report.md">质量影子门禁报告</a>
       </p>
     </div>
     """
@@ -394,6 +478,12 @@ Map parseSmokeCollectText(String text) {
         parallel: extractFirstGroup(text, /Parallel pool cases:\s*(\d+)/, '-'),
         serial: extractFirstGroup(text, /Serial pool cases:\s*(\d+)/, '-'),
     ]
+}
+
+@NonCPS
+Map parseJsonObject(String text) {
+    def parsed = new groovy.json.JsonSlurperClassic().parseText(text)
+    return parsed instanceof Map ? parsed : [:]
 }
 
 @NonCPS

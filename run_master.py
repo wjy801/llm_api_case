@@ -18,11 +18,14 @@ from quality.config import (
     QUALITY_EXECUTION_ID_ENV,
     QUALITY_OUTPUT_DIR_ENV,
     QUALITY_RUN_ID_ENV,
+    QualityReportConfig,
     QualityRuntimeConfig,
     load_quality_config,
+    load_quality_report_config,
 )
 from quality.identifiers import build_run_id
 from quality.models import IntegrityStatus, RunRecord, RunStatus
+from quality.report import QualityReportRequest, generate_quality_report
 from quality.storage import write_json_atomic
 from master_service import (
     DEFAULT_SERIAL_MARKER,
@@ -345,6 +348,11 @@ def _finalize_quality_run(
                 run_start_time=start_time,
             )
         )
+    except Exception as error:
+        print(f"Quality merge failed open: {type(error).__name__}: {error}")
+        return
+
+    try:
         write_json_atomic(
             quality_config.output_dir / "run.json",
             _build_run_record(
@@ -357,7 +365,30 @@ def _finalize_quality_run(
             ),
         )
     except Exception as error:
-        print(f"Quality merge failed open: {type(error).__name__}: {error}")
+        print(f"Quality run finalization failed open: {type(error).__name__}: {error}")
+
+    try:
+        report_config = _load_quality_report_config_fail_open()
+        generate_quality_report(
+            QualityReportRequest(
+                run_id=quality_config.run_id,
+                output_dir=quality_config.output_dir,
+                shadow_gate=report_config.shadow_gate,
+                min_request_samples=report_config.min_request_samples,
+                http_5xx_warn_rate=report_config.http_5xx_warn_rate,
+                timeout_warn_rate=report_config.timeout_warn_rate,
+            )
+        )
+    except Exception as error:
+        print(f"Quality report failed open: {type(error).__name__}: {error}")
+
+
+def _load_quality_report_config_fail_open() -> QualityReportConfig:
+    try:
+        return load_quality_report_config()
+    except ValueError as error:
+        print(f"Quality report configuration warning: {error}; using defaults")
+        return QualityReportConfig()
 
 
 def _build_run_record(
