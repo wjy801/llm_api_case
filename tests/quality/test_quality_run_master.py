@@ -13,6 +13,10 @@ QUALITY_ENV_NAMES = (
     "QUALITY_RUN_ID",
     "QUALITY_EXECUTION_ID",
     "QUALITY_OUTPUT_DIR",
+    "QUALITY_SHADOW_GATE",
+    "QUALITY_MIN_REQUEST_SAMPLES",
+    "QUALITY_HTTP_5XX_WARN_RATE",
+    "QUALITY_TIMEOUT_WARN_RATE",
 )
 
 
@@ -47,6 +51,7 @@ def _capture_pytest_environment(monkeypatch):
 def _capture_quality_finalization(monkeypatch):
     merges = []
     writes = []
+    reports = []
 
     def fake_merge(request):
         merges.append(request)
@@ -61,7 +66,8 @@ def _capture_quality_finalization(monkeypatch):
 
     monkeypatch.setattr(run_master, "merge_quality_run", fake_merge)
     monkeypatch.setattr(run_master, "write_json_atomic", lambda path, data: writes.append((path, data)) or path)
-    return merges, writes
+    monkeypatch.setattr(run_master, "generate_quality_report", lambda request: reports.append(request))
+    return merges, writes, reports
 
 
 def test_disabled_quality_preserves_existing_environment(monkeypatch):
@@ -123,7 +129,7 @@ def test_parallel_and_serial_stages_share_one_run_id(monkeypatch, tmp_path):
         lambda **kwargs: generated.append(kwargs) or "generated-run",
     )
     calls = _capture_pytest_environment(monkeypatch)
-    merges, _writes = _capture_quality_finalization(monkeypatch)
+    merges, _writes, reports = _capture_quality_finalization(monkeypatch)
 
     assert run_master.run(numprocesses="2") == 0
 
@@ -135,6 +141,7 @@ def test_parallel_and_serial_stages_share_one_run_id(monkeypatch, tmp_path):
     assert {call["quality"]["QUALITY_RUN_ID"] for call in calls} == {"generated-run"}
     assert all("-pool-1" not in call["quality"]["QUALITY_EXECUTION_ID"] for call in calls)
     assert merges[0].expected_execution_ids == ("parallel-pool", "serial-pool")
+    assert reports[0].run_id == "generated-run"
 
 
 def test_jenkins_identity_is_used_only_when_job_and_build_are_present(monkeypatch):
@@ -208,7 +215,7 @@ def test_quality_enabled_adds_default_junit_path_and_finalizes(monkeypatch, tmp_
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
     calls = _capture_pytest_environment(monkeypatch)
-    merges, writes = _capture_quality_finalization(monkeypatch)
+    merges, writes, reports = _capture_quality_finalization(monkeypatch)
 
     assert run_master.run() == 0
 
@@ -217,6 +224,7 @@ def test_quality_enabled_adds_default_junit_path_and_finalizes(monkeypatch, tmp_
     assert merges[0].expected_case_count == 1
     assert merges[0].junit_files == (output_dir / "junit" / "quality.xml",)
     assert writes
+    assert reports[0].output_dir == output_dir
 
 
 def test_quality_finalize_runs_and_original_exception_is_preserved(monkeypatch, tmp_path):
@@ -229,7 +237,7 @@ def test_quality_finalize_runs_and_original_exception_is_preserved(monkeypatch, 
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
-    merges, writes = _capture_quality_finalization(monkeypatch)
+    merges, writes, reports = _capture_quality_finalization(monkeypatch)
 
     def raise_keyboard_interrupt(args):
         raise KeyboardInterrupt
@@ -241,3 +249,69 @@ def test_quality_finalize_runs_and_original_exception_is_preserved(monkeypatch, 
 
     assert merges
     assert writes[-1][1].status is run_master.RunStatus.INTERRUPTED
+    assert reports
+
+
+def test_quality_report_failure_is_fail_open(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("QUALITY_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
+    monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
+    monkeypatch.setattr(
+        run_master,
+        "collect_test_case_items",
+        lambda path: [_case("module/test_sample.py::test_ok")],
+    )
+    _capture_pytest_environment(monkeypatch)
+    _capture_quality_finalization(monkeypatch)
+    monkeypatch.setattr(
+        run_master,
+        "generate_quality_report",
+        lambda request: (_ for _ in ()).throw(OSError("disk unavailable")),
+    )
+
+    assert run_master.run() == 0
+
+    assert "Quality report failed open: OSError: disk unavailable" in capsys.readouterr().out
+
+
+def test_quality_report_environment_is_applied(monkeypatch, tmp_path):
+    monkeypatch.setenv("QUALITY_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
+    monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
+    monkeypatch.setenv("QUALITY_SHADOW_GATE", "0")
+    monkeypatch.setenv("QUALITY_MIN_REQUEST_SAMPLES", "8")
+    monkeypatch.setenv("QUALITY_HTTP_5XX_WARN_RATE", "0.1")
+    monkeypatch.setenv("QUALITY_TIMEOUT_WARN_RATE", "0.2")
+    monkeypatch.setattr(
+        run_master,
+        "collect_test_case_items",
+        lambda path: [_case("module/test_sample.py::test_ok")],
+    )
+    _capture_pytest_environment(monkeypatch)
+    _merges, _writes, reports = _capture_quality_finalization(monkeypatch)
+
+    assert run_master.run() == 0
+
+    assert reports[0].shadow_gate is False
+    assert reports[0].min_request_samples == 8
+    assert reports[0].http_5xx_warn_rate == 0.1
+    assert reports[0].timeout_warn_rate == 0.2
+
+
+def test_invalid_quality_report_environment_uses_defaults(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("QUALITY_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
+    monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
+    monkeypatch.setenv("QUALITY_MIN_REQUEST_SAMPLES", "invalid")
+    monkeypatch.setattr(
+        run_master,
+        "collect_test_case_items",
+        lambda path: [_case("module/test_sample.py::test_ok")],
+    )
+    _capture_pytest_environment(monkeypatch)
+    _merges, _writes, reports = _capture_quality_finalization(monkeypatch)
+
+    assert run_master.run() == 0
+
+    assert reports[0].min_request_samples == 20
+    assert "Quality report configuration warning" in capsys.readouterr().out
