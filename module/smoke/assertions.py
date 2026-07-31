@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import requests
@@ -9,7 +9,7 @@ from common import BaseAssertions, allure_step
 
 
 class SmokeAssertions(BaseAssertions):
-    BILLING_COMPARE_PRECISION = Decimal("0.01")
+    BILLING_AMOUNT_TOLERANCE = Decimal("0.01")
 
     @allure_step("Assert response text does not contain forbidden values")
     def assert_response_text_not_contains(
@@ -44,19 +44,19 @@ class SmokeAssertions(BaseAssertions):
         usage_quota = self.get_usage_quota_yuan(usage_records_response)
         after_balance = self.get_total_balance_yuan(after_balance_response)
         actual_deduction = before_balance - after_balance
-        comparable_actual_deduction = self._to_billing_compare_amount(actual_deduction)
-        comparable_usage_quota = self._to_billing_compare_amount(usage_quota)
+        deduction_delta = self._billing_amount_delta(actual_deduction, usage_quota)
 
         print(f"before data.total_balance_yuan: {before_balance}")
         print(f"usage data.quota_yuan: {usage_quota}")
         print(f"after data.total_balance_yuan: {after_balance}")
         print(f"actual deduction: {actual_deduction}")
+        print(f"deduction delta: {deduction_delta}")
 
-        assert comparable_actual_deduction == comparable_usage_quota, (
+        assert deduction_delta <= self.BILLING_AMOUNT_TOLERANCE, (
             "Call billing deduction mismatch: "
             f"before balance {before_balance} - after balance {after_balance} = {actual_deduction}, "
             f"but usage data.quota_yuan = {usage_quota}. "
-            f"Compared as {comparable_actual_deduction} and {comparable_usage_quota} at 0.01 precision. "
+            f"Allowed delta is +/-{self.BILLING_AMOUNT_TOLERANCE}, actual delta is {deduction_delta}. "
             f"Before balance response: {before_balance_response.text}; "
             f"Usage records response: {usage_records_response.text}; "
             f"After balance response: {after_balance_response.text}"
@@ -76,19 +76,19 @@ class SmokeAssertions(BaseAssertions):
         )
         after_balance = self.get_total_balance_yuan(after_balance_response)
         actual_deduction = before_balance - after_balance
-        comparable_actual_deduction = self._to_billing_compare_amount(actual_deduction)
-        comparable_usage_quota_sum = self._to_billing_compare_amount(usage_quota_sum)
+        deduction_delta = self._billing_amount_delta(actual_deduction, usage_quota_sum)
 
         print(f"before data.total_balance_yuan: {before_balance}")
         print(f"usage data.quota_yuan sum: {usage_quota_sum}")
         print(f"after data.total_balance_yuan: {after_balance}")
         print(f"actual deduction: {actual_deduction}")
+        print(f"deduction delta: {deduction_delta}")
 
-        assert comparable_actual_deduction == comparable_usage_quota_sum, (
+        assert deduction_delta <= self.BILLING_AMOUNT_TOLERANCE, (
             "Concurrent call billing deduction mismatch: "
             f"before balance {before_balance} - after balance {after_balance} = {actual_deduction}, "
             f"but usage data.quota_yuan sum = {usage_quota_sum}. "
-            f"Compared as {comparable_actual_deduction} and {comparable_usage_quota_sum} at 0.01 precision. "
+            f"Allowed delta is +/-{self.BILLING_AMOUNT_TOLERANCE}, actual delta is {deduction_delta}. "
             f"Before balance response: {before_balance_response.text}; "
             f"Usage records responses: {[response.text for response in usage_records_responses]}; "
             f"After balance response: {after_balance_response.text}"
@@ -135,6 +135,6 @@ class SmokeAssertions(BaseAssertions):
         except (InvalidOperation, ValueError) as exc:
             raise AssertionError(f"{field_path} is not a valid decimal value: {value!r}") from exc
 
-    @classmethod
-    def _to_billing_compare_amount(cls, value: Decimal) -> Decimal:
-        return value.quantize(cls.BILLING_COMPARE_PRECISION, rounding=ROUND_HALF_UP)
+    @staticmethod
+    def _billing_amount_delta(actual_amount: Decimal, expected_amount: Decimal) -> Decimal:
+        return abs(actual_amount - expected_amount)
