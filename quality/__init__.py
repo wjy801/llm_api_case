@@ -5,6 +5,19 @@ from quality.collector import (
     get_collector,
     reset_collector,
 )
+from quality.aggregator import (
+    MANIFEST_VERSION,
+    MERGE_VERSION,
+    QualityMergeRequest,
+    QualityMergeResult,
+    merge_quality_run,
+)
+from quality.classifier import (
+    CLASSIFIER_RULE_VERSION,
+    FINGERPRINT_VERSION,
+    FailureEvidence,
+    classify_failure,
+)
 from quality.config import (
     DEFAULT_QUALITY_OUTPUT_DIR,
     QUALITY_ENABLE_ENV,
@@ -29,6 +42,12 @@ from quality.identifiers import (
     new_request_event_id,
     normalize_failure_message,
     normalize_nodeid,
+)
+from quality.junit import (
+    QUALITY_CASE_ID_PROPERTY,
+    QUALITY_INVOCATION_ID_PROPERTY,
+    JUnitCaseEvidence,
+    parse_junit_file,
 )
 from quality.models import (
     SCHEMA_VERSION,
@@ -81,6 +100,7 @@ from quality.storage import (
     ensure_quality_dirs,
     read_jsonl,
     write_json_atomic,
+    write_jsonl_atomic,
 )
 
 
@@ -90,12 +110,15 @@ __all__ = [
     "CasePhase",
     "CaseResult",
     "CaseStatus",
+    "CLASSIFIER_RULE_VERSION",
     "Confidence",
     "CostSource",
     "DEFAULT_QUALITY_OUTPUT_DIR",
     "FailureCategory",
+    "FailureEvidence",
     "FailureFingerprintSource",
     "FailureRecord",
+    "FINGERPRINT_VERSION",
     "GateDecision",
     "GateMode",
     "GateResult",
@@ -103,16 +126,23 @@ __all__ = [
     "IntegrityIssue",
     "IntegrityStatus",
     "IssueSeverity",
+    "JUnitCaseEvidence",
+    "MANIFEST_VERSION",
+    "MERGE_VERSION",
     "NormalizedNodeId",
     "OwnerDomain",
     "Protocol",
+    "QUALITY_CASE_ID_PROPERTY",
     "QUALITY_ENABLE_ENV",
     "QUALITY_EXECUTION_ID_ENV",
+    "QUALITY_INVOCATION_ID_PROPERTY",
     "QUALITY_OUTPUT_DIR_ENV",
     "QUALITY_RUN_ID_ENV",
     "QualityCaseContext",
     "QualityCollector",
     "QualityDirectoryLayout",
+    "QualityMergeRequest",
+    "QualityMergeResult",
     "QualityRuntimeConfig",
     "QualityRunContext",
     "QualityShardPaths",
@@ -133,6 +163,7 @@ __all__ = [
     "build_run_id",
     "build_url_template",
     "canonicalize_for_hash",
+    "classify_failure",
     "clear_case_context",
     "clear_run_context",
     "configure_collector",
@@ -141,9 +172,11 @@ __all__ = [
     "get_collector",
     "get_run_context",
     "load_quality_config",
+    "merge_quality_run",
     "new_request_event_id",
     "normalize_failure_message",
     "normalize_nodeid",
+    "parse_junit_file",
     "parse_quality_enabled",
     "read_jsonl",
     "redact_quality_value",
@@ -155,4 +188,5 @@ __all__ = [
     "set_run_context",
     "strip_url_query",
     "write_json_atomic",
+    "write_jsonl_atomic",
 ]

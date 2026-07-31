@@ -44,6 +44,26 @@ def _capture_pytest_environment(monkeypatch):
     return calls
 
 
+def _capture_quality_finalization(monkeypatch):
+    merges = []
+    writes = []
+
+    def fake_merge(request):
+        merges.append(request)
+        return type(
+            "MergeResult",
+            (),
+            {
+                "integrity_status": run_master.IntegrityStatus.COMPLETE,
+                "integrity_issues": (),
+            },
+        )()
+
+    monkeypatch.setattr(run_master, "merge_quality_run", fake_merge)
+    monkeypatch.setattr(run_master, "write_json_atomic", lambda path, data: writes.append((path, data)) or path)
+    return merges, writes
+
+
 def test_disabled_quality_preserves_existing_environment(monkeypatch):
     monkeypatch.setenv("QUALITY_ENABLE", "0")
     monkeypatch.setenv("QUALITY_RUN_ID", "outside-run")
@@ -73,6 +93,7 @@ def test_serial_run_uses_semantic_execution_id_and_restores_environment(monkeypa
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
     calls = _capture_pytest_environment(monkeypatch)
+    _capture_quality_finalization(monkeypatch)
 
     assert run_master.run() == 0
 
@@ -102,6 +123,7 @@ def test_parallel_and_serial_stages_share_one_run_id(monkeypatch, tmp_path):
         lambda **kwargs: generated.append(kwargs) or "generated-run",
     )
     calls = _capture_pytest_environment(monkeypatch)
+    merges, _writes = _capture_quality_finalization(monkeypatch)
 
     assert run_master.run(numprocesses="2") == 0
 
@@ -112,6 +134,7 @@ def test_parallel_and_serial_stages_share_one_run_id(monkeypatch, tmp_path):
     ]
     assert {call["quality"]["QUALITY_RUN_ID"] for call in calls} == {"generated-run"}
     assert all("-pool-1" not in call["quality"]["QUALITY_EXECUTION_ID"] for call in calls)
+    assert merges[0].expected_execution_ids == ("parallel-pool", "serial-pool")
 
 
 def test_jenkins_identity_is_used_only_when_job_and_build_are_present(monkeypatch):
@@ -130,6 +153,7 @@ def test_jenkins_identity_is_used_only_when_job_and_build_are_present(monkeypatc
         lambda **kwargs: captured.append(kwargs) or "jenkins-run",
     )
     calls = _capture_pytest_environment(monkeypatch)
+    _capture_quality_finalization(monkeypatch)
 
     assert run_master.run() == 0
 
@@ -171,3 +195,49 @@ def test_invalid_quality_enable_fails_open(monkeypatch, capsys):
 
     assert calls[0]["quality"]["QUALITY_ENABLE"] == "invalid"
     assert "Quality collection disabled" in capsys.readouterr().out
+
+
+def test_quality_enabled_adds_default_junit_path_and_finalizes(monkeypatch, tmp_path):
+    output_dir = tmp_path / "quality"
+    monkeypatch.setenv("QUALITY_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
+    monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(output_dir))
+    monkeypatch.setattr(
+        run_master,
+        "collect_test_case_items",
+        lambda path: [_case("module/test_sample.py::test_ok")],
+    )
+    calls = _capture_pytest_environment(monkeypatch)
+    merges, writes = _capture_quality_finalization(monkeypatch)
+
+    assert run_master.run() == 0
+
+    assert any(str(output_dir / "junit" / "quality.xml") in arg for arg in calls[0]["args"])
+    assert merges[0].run_id == "run-1"
+    assert merges[0].expected_case_count == 1
+    assert merges[0].junit_files == (output_dir / "junit" / "quality.xml",)
+    assert writes
+
+
+def test_quality_finalize_runs_and_original_exception_is_preserved(monkeypatch, tmp_path):
+    output_dir = tmp_path / "quality"
+    monkeypatch.setenv("QUALITY_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
+    monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(output_dir))
+    monkeypatch.setattr(
+        run_master,
+        "collect_test_case_items",
+        lambda path: [_case("module/test_sample.py::test_ok")],
+    )
+    merges, writes = _capture_quality_finalization(monkeypatch)
+
+    def raise_keyboard_interrupt(args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(run_master.pytest, "main", raise_keyboard_interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_master.run()
+
+    assert merges
+    assert writes[-1][1].status is run_master.RunStatus.INTERRUPTED
