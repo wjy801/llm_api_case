@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from datetime import UTC, datetime
 import os
 import shutil
 import sys
@@ -11,6 +12,7 @@ from typing import Sequence
 
 import pytest
 
+from quality.aggregator import QualityMergeRequest, merge_quality_run
 from quality.config import (
     QUALITY_ENABLE_ENV,
     QUALITY_EXECUTION_ID_ENV,
@@ -20,6 +22,8 @@ from quality.config import (
     load_quality_config,
 )
 from quality.identifiers import build_run_id
+from quality.models import IntegrityStatus, RunRecord, RunStatus
+from quality.storage import write_json_atomic
 from master_service import (
     DEFAULT_SERIAL_MARKER,
     DEFAULT_TEST_PATH,
@@ -60,11 +64,34 @@ def run(
         return 0
 
     quality_config = _resolve_parent_quality_config()
+    quality_start_time = datetime.now(UTC)
+    if quality_config.enabled:
+        _write_initial_run_record(quality_config, quality_start_time)
 
     if not numprocesses:
         print("Parallel test execution disabled. Running all cases serially.")
-        with _quality_stage_environment(quality_config, "serial-pool"):
-            return _run_pytest(case_nodeids + pytest_args)
+        stage_id = "serial-pool"
+        serial_args = _ensure_quality_junit_args(pytest_args, quality_config)
+        junit_files = (_extract_junit_path(serial_args),)
+        final_status = RunStatus.FINISHED
+        try:
+            with _quality_stage_environment(quality_config, stage_id):
+                return _run_pytest(case_nodeids + serial_args)
+        except (KeyboardInterrupt, SystemExit):
+            final_status = RunStatus.INTERRUPTED
+            raise
+        except Exception:
+            final_status = RunStatus.PARTIAL
+            raise
+        finally:
+            _finalize_quality_run(
+                quality_config,
+                start_time=quality_start_time,
+                expected_execution_ids=(stage_id,),
+                expected_case_count=len(case_nodeids),
+                junit_files=junit_files,
+                status=final_status,
+            )
 
     parallel_cases, serial_cases = split_test_cases(cases, serial_marker=serial_marker)
     print(
@@ -73,28 +100,55 @@ def run(
     )
 
     results: list[int] = []
-    if parallel_cases:
-        parallel_args = _build_parallel_args(
-            pytest_args,
-            numprocesses=numprocesses,
-            dist=dist,
-            junit_suffix="parallel",
+    executed_stage_ids: list[str] = []
+    junit_files: list[Path] = []
+    final_status = RunStatus.FINISHED
+    try:
+        if parallel_cases:
+            stage_id = "parallel-pool"
+            pytest_args = _ensure_quality_junit_args(pytest_args, quality_config)
+            parallel_args = _build_parallel_args(
+                pytest_args,
+                numprocesses=numprocesses,
+                dist=dist,
+                junit_suffix="parallel",
+            )
+            junit_files.append(_extract_junit_path(parallel_args))
+            executed_stage_ids.append(stage_id)
+            print(f"Running parallel pool: {len(parallel_cases)} cases")
+            with _quality_stage_environment(quality_config, stage_id):
+                results.append(_run_pytest(parallel_cases + parallel_args))
+        else:
+            print("Parallel pool is empty. Skipping parallel stage.")
+
+        if serial_cases:
+            stage_id = "serial-pool"
+            pytest_args = _ensure_quality_junit_args(pytest_args, quality_config)
+            serial_args = _build_serial_args(pytest_args, junit_suffix="serial")
+            junit_files.append(_extract_junit_path(serial_args))
+            executed_stage_ids.append(stage_id)
+            print(f"Running serial pool: {len(serial_cases)} cases")
+            with _quality_stage_environment(quality_config, stage_id):
+                results.append(_run_serial_pool(serial_cases + serial_args))
+        else:
+            print("Serial pool is empty. Skipping serial stage.")
+
+        return _merge_exit_codes(results)
+    except (KeyboardInterrupt, SystemExit):
+        final_status = RunStatus.INTERRUPTED
+        raise
+    except Exception:
+        final_status = RunStatus.PARTIAL
+        raise
+    finally:
+        _finalize_quality_run(
+            quality_config,
+            start_time=quality_start_time,
+            expected_execution_ids=tuple(executed_stage_ids),
+            expected_case_count=len(case_nodeids),
+            junit_files=tuple(junit_files),
+            status=final_status,
         )
-        print(f"Running parallel pool: {len(parallel_cases)} cases")
-        with _quality_stage_environment(quality_config, "parallel-pool"):
-            results.append(_run_pytest(parallel_cases + parallel_args))
-    else:
-        print("Parallel pool is empty. Skipping parallel stage.")
-
-    if serial_cases:
-        serial_args = _build_serial_args(pytest_args, junit_suffix="serial")
-        print(f"Running serial pool: {len(serial_cases)} cases")
-        with _quality_stage_environment(quality_config, "serial-pool"):
-            results.append(_run_serial_pool(serial_cases + serial_args))
-    else:
-        print("Serial pool is empty. Skipping serial stage.")
-
-    return _merge_exit_codes(results)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -162,6 +216,34 @@ def _build_parallel_args(
     return args
 
 
+def _ensure_quality_junit_args(
+    pytest_args: Sequence[str],
+    quality_config: QualityRuntimeConfig,
+) -> list[str]:
+    args = list(pytest_args)
+    if not quality_config.enabled or _extract_junit_path(args) is not None:
+        return args
+    return args + [f"--junitxml={quality_config.output_dir / 'junit' / 'quality.xml'}"]
+
+
+def _extract_junit_path(pytest_args: Sequence[str]) -> Path | None:
+    index = 0
+    while index < len(pytest_args):
+        arg = pytest_args[index]
+        if arg == "--junitxml" and index + 1 < len(pytest_args):
+            return _resolve_report_path(pytest_args[index + 1])
+        if arg.startswith("--junitxml="):
+            value = arg.split("=", 1)[1]
+            return _resolve_report_path(value)
+        index += 1
+    return None
+
+
+def _resolve_report_path(value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else (PROJECT_ROOT / path).resolve()
+
+
 def _has_collect_only(pytest_args: Sequence[str]) -> bool:
     return any(arg in {"--collect-only", "--co", "--collectonly"} for arg in pytest_args)
 
@@ -217,6 +299,97 @@ def _with_report_suffix(report_path: str, suffix: str) -> str:
     if stem.endswith(f"-{suffix}"):
         return path.as_posix()
     return path.with_name(f"{stem}-{suffix}{path.suffix}").as_posix()
+
+
+def _write_initial_run_record(
+    quality_config: QualityRuntimeConfig,
+    start_time: datetime,
+) -> None:
+    if not quality_config.enabled or not quality_config.run_id:
+        return
+    try:
+        write_json_atomic(
+            quality_config.output_dir / "run.json",
+            _build_run_record(
+                quality_config,
+                start_time=start_time,
+                end_time=None,
+                status=RunStatus.PARTIAL,
+                integrity_status=IntegrityStatus.DEGRADED,
+                integrity_issues=(),
+            ),
+        )
+    except Exception as error:
+        print(f"Quality run initialization failed: {type(error).__name__}: {error}")
+
+
+def _finalize_quality_run(
+    quality_config: QualityRuntimeConfig,
+    *,
+    start_time: datetime,
+    expected_execution_ids: tuple[str, ...],
+    expected_case_count: int,
+    junit_files: tuple[Path | None, ...],
+    status: RunStatus,
+) -> None:
+    if not quality_config.enabled or not quality_config.run_id:
+        return
+    try:
+        merge_result = merge_quality_run(
+            QualityMergeRequest(
+                run_id=quality_config.run_id,
+                output_dir=quality_config.output_dir,
+                expected_execution_ids=expected_execution_ids,
+                expected_case_count=expected_case_count,
+                junit_files=tuple(path for path in junit_files if path is not None),
+                run_start_time=start_time,
+            )
+        )
+        write_json_atomic(
+            quality_config.output_dir / "run.json",
+            _build_run_record(
+                quality_config,
+                start_time=start_time,
+                end_time=datetime.now(UTC),
+                status=status,
+                integrity_status=merge_result.integrity_status,
+                integrity_issues=merge_result.integrity_issues,
+            ),
+        )
+    except Exception as error:
+        print(f"Quality merge failed open: {type(error).__name__}: {error}")
+
+
+def _build_run_record(
+    quality_config: QualityRuntimeConfig,
+    *,
+    start_time: datetime,
+    end_time: datetime | None,
+    status: RunStatus,
+    integrity_status: IntegrityStatus,
+    integrity_issues,
+) -> RunRecord:
+    return RunRecord(
+        run_id=str(quality_config.run_id),
+        job_name=os.environ.get("JOB_NAME") or None,
+        build_number=os.environ.get("BUILD_NUMBER") or None,
+        branch=os.environ.get("BRANCH_NAME") or os.environ.get("GIT_BRANCH") or None,
+        commit_sha=os.environ.get("GIT_COMMIT") or None,
+        trigger="jenkins" if os.environ.get("JOB_NAME") and os.environ.get("BUILD_NUMBER") else "local",
+        environment=_quality_environment_name(),
+        start_time=start_time,
+        end_time=end_time,
+        status=status,
+        integrity_status=integrity_status,
+        integrity_issues=tuple(integrity_issues),
+    )
+
+
+def _quality_environment_name() -> str:
+    value = os.environ.get("USE_CHINA_ENVIRONMENT")
+    if value is None:
+        return "unknown"
+    return "china" if value.strip().upper() == "TRUE" else "overseas"
 
 
 def _run_serial_pool(pytest_args: list[str]) -> int:

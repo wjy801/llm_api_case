@@ -21,6 +21,7 @@ from quality.identifiers import (
     build_run_id,
     normalize_nodeid,
 )
+from quality.junit import QUALITY_CASE_ID_PROPERTY, QUALITY_INVOCATION_ID_PROPERTY
 from quality.models import CasePhase, CaseResult, CaseStatus, IssueSeverity
 from quality.runtime_context import (
     QualityCaseContext,
@@ -122,6 +123,15 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             )
 
 
+@pytest.fixture(autouse=True)
+def _quality_junit_identity_property(request: pytest.FixtureRequest, record_property):
+    case_context = get_case_context()
+    if case_context is not None:
+        record_property(QUALITY_CASE_ID_PROPERTY, case_context.case_id)
+        record_property(QUALITY_INVOCATION_ID_PROPERTY, case_context.invocation_id)
+    yield
+
+
 @pytest.hookimpl(hookwrapper=True, tryfirst=True)
 def pytest_runtest_protocol(item: pytest.Item, nextitem: pytest.Item | None):
     state = _get_state(item.config)
@@ -150,6 +160,7 @@ def pytest_runtest_protocol(item: pytest.Item, nextitem: pytest.Item | None):
             reset_case_context(token)
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:
     collector = _active_collector()
     if collector is None or report.when not in {"setup", "call", "teardown"}:
@@ -185,6 +196,7 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
             start_time=end_time - timedelta(milliseconds=duration_ms),
             end_time=end_time,
         )
+        _add_junit_identity_properties(report, case_context.case_id, case_context.invocation_id)
         collector.record_case(result)
     except Exception as error:
         collector.capture_integrity(
@@ -280,6 +292,20 @@ def _case_status(report: pytest.TestReport) -> CaseStatus:
 
 def _active_collector() -> QualityCollector | None:
     return get_collector()
+
+
+def _add_junit_identity_properties(
+    report: pytest.TestReport,
+    case_id: str,
+    invocation_id: str,
+) -> None:
+    properties = list(getattr(report, "user_properties", ()))
+    existing_names = {name for name, _value in properties}
+    if QUALITY_CASE_ID_PROPERTY not in existing_names:
+        properties.append((QUALITY_CASE_ID_PROPERTY, case_id))
+    if QUALITY_INVOCATION_ID_PROPERTY not in existing_names:
+        properties.append((QUALITY_INVOCATION_ID_PROPERTY, invocation_id))
+    report.user_properties = properties
 
 
 def _get_state(config: pytest.Config) -> _PluginState | None:

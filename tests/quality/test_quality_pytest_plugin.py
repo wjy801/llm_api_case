@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from quality.storage import read_jsonl
+from quality.junit import parse_junit_file
 
 
 pytest_plugins = ("pytester",)
@@ -117,6 +118,19 @@ def test_disabled_and_collect_only_do_not_create_quality_output(pytester, monkey
     assert not output_dir.exists()
 
 
+def test_plugin_adds_quality_identity_to_junit_properties(pytester, monkeypatch):
+    _prepare_plugin(pytester, monkeypatch)
+    pytester.makepyfile("def test_ok(): pass")
+    junit = pytester.path / "quality.xml"
+
+    result = _run_subprocess(pytester, "-q", f"--junitxml={junit}")
+
+    result.assert_outcomes(passed=1)
+    evidence = parse_junit_file(junit)[0]
+    assert evidence.case_id == "test_plugin_adds_quality_identity_to_junit_properties.py::test_ok"
+    assert evidence.invocation_id is not None
+
+
 def test_collection_failure_writes_integrity_without_case(pytester, monkeypatch):
     output_dir = _prepare_plugin(pytester, monkeypatch)
     pytester.makepyfile(test_broken="raise RuntimeError('collect failed')")
@@ -140,7 +154,7 @@ def test_xdist_workers_write_separate_shards_without_controller_duplicates(pytes
         """
     )
 
-    result = _run_subprocess(pytester, "-p", "xdist.plugin", "-n", "2", "-q")
+    result = _run_subprocess(pytester, "-n", "2", "-q")
 
     result.assert_outcomes(passed=4)
     case_files = sorted((output_dir / "shards").glob("cases-manual-pytest-gw*.jsonl"))

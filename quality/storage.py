@@ -73,6 +73,43 @@ def append_jsonl(path: str | Path, record: Any) -> Path:
     return target_path
 
 
+def write_jsonl_atomic(path: str | Path, records: Any) -> Path:
+    target_path = Path(path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            prefix=f".{target_path.name}.",
+            suffix=".tmp",
+            dir=target_path.parent,
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            for record in records:
+                serialized = json.dumps(
+                    _to_jsonable(record),
+                    allow_nan=False,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                temporary_file.write(serialized)
+                temporary_file.write("\n")
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+
+        os.replace(temporary_path, target_path)
+        temporary_path = None
+        return target_path
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
 def read_jsonl(path: str | Path) -> list[Any]:
     target_path = Path(path)
     records: list[Any] = []
