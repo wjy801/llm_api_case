@@ -8,6 +8,16 @@ import run_master
 from master_service import CollectedTestCase, collect_test_case_items, split_test_cases
 
 
+def _without_generated_junit_arg(args: list[str]) -> list[str]:
+    return [arg for arg in args if not arg.startswith("--junitxml=")]
+
+
+def _generated_junit_name(args: list[str]) -> str:
+    junit_args = [arg for arg in args if arg.startswith("--junitxml=")]
+    assert len(junit_args) == 1
+    return Path(junit_args[0].split("=", 1)[1]).name
+
+
 def test_collect_test_case_items_reads_function_class_and_file_markers(tmp_path: Path):
     test_file = tmp_path / "test_marker_collection.py"
     test_file.write_text(
@@ -68,7 +78,10 @@ def test_run_without_numprocesses_runs_all_cases_once(monkeypatch):
     exit_code = run_master.run("tests")
 
     assert exit_code == 0
-    assert calls == [["test_a.py::test_parallel", "test_b.py::test_serial"]]
+    assert [_without_generated_junit_arg(args) for args in calls] == [
+        ["test_a.py::test_parallel", "test_b.py::test_serial"]
+    ]
+    assert _generated_junit_name(calls[0]) == "quality.xml"
 
 
 def test_run_with_numprocesses_runs_parallel_pool_before_serial_pool(monkeypatch):
@@ -120,7 +133,10 @@ def test_run_with_empty_serial_pool_skips_serial_stage(monkeypatch):
     exit_code = run_master.run("tests", numprocesses="auto")
 
     assert exit_code == 0
-    assert calls == [["test_a.py::test_parallel", "-n", "auto"]]
+    assert [_without_generated_junit_arg(args) for args in calls] == [
+        ["test_a.py::test_parallel", "-n", "auto"]
+    ]
+    assert _generated_junit_name(calls[0]) == "quality-parallel.xml"
 
 
 def test_run_with_empty_parallel_pool_runs_serial_only(monkeypatch):
@@ -137,7 +153,8 @@ def test_run_with_empty_parallel_pool_runs_serial_only(monkeypatch):
     exit_code = run_master.run("tests", numprocesses="2")
 
     assert exit_code == 0
-    assert calls == [["test_b.py::test_serial"]]
+    assert [_without_generated_junit_arg(args) for args in calls] == [["test_b.py::test_serial"]]
+    assert _generated_junit_name(calls[0]) == "quality-serial.xml"
 
 
 def test_run_collect_only_prints_pool_counts_without_execution(monkeypatch, capsys):
@@ -185,9 +202,13 @@ def test_run_continues_serial_pool_after_parallel_failure(monkeypatch):
     exit_code = run_master.run("tests", numprocesses="2")
 
     assert exit_code == 1
-    assert calls == [
+    assert [_without_generated_junit_arg(args) for args in calls] == [
         ["test_a.py::test_parallel", "-n", "2"],
         ["test_b.py::test_serial"],
+    ]
+    assert [_generated_junit_name(args) for args in calls] == [
+        "quality-parallel.xml",
+        "quality-serial.xml",
     ]
 
 
