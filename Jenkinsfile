@@ -24,7 +24,7 @@ pipeline {
     }
 
     environment {
-        CI_MAIL_TO = '3239682586@qq.com'
+        CI_MAIL_TO = 'wujinyang@qiqikeji.com'
         CI_MAIL_FROM = '13463214057@163.com'
         GENERATE_ALLURE_REPORT = 'FALSE'
         GENERATE_HISTORY_REPORT = 'FALSE'
