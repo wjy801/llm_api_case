@@ -120,3 +120,16 @@ def test_quality_cli_argument_overrides_invalid_environment(monkeypatch, tmp_pat
     ])
 
     assert result == 0
+
+
+def test_quality_cli_semantic_merge_reports_tool_failure_when_artifacts_are_missing(tmp_path):
+    result = main([
+        "semantic-merge",
+        "--run-id",
+        "run-1",
+        "--output-dir",
+        str(tmp_path / "quality"),
+    ])
+
+    assert result == 2
+    assert (tmp_path / "quality" / "semantic" / "merged" / "manifest.json").exists()

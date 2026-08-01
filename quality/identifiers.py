@@ -22,6 +22,9 @@ _UUID_SEGMENT_PATTERN = re.compile(
 )
 _HEX_SEGMENT_PATTERN = re.compile(r"^[0-9A-Fa-f]{16,}$")
 _OPAQUE_SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9_]{24,}$")
+_TASK_ID_SEGMENT_PATTERN = re.compile(
+    r"(?i)^(?:task|request|req)[-_][A-Za-z0-9_-]+$"
+)
 _ISO_TIMESTAMP_PATTERN = re.compile(
     r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b"
 )
@@ -120,6 +123,18 @@ def new_request_event_id() -> str:
     return str(uuid.uuid4())
 
 
+def new_operation_id() -> str:
+    return f"op-{uuid.uuid4()}"
+
+
+def new_request_group_id() -> str:
+    return f"group-{uuid.uuid4()}"
+
+
+def new_polling_session_id() -> str:
+    return f"poll-{uuid.uuid4()}"
+
+
 def build_interface_id(
     method: str,
     url_or_path: str,
@@ -215,6 +230,8 @@ def _template_path_segment(segment: str) -> str:
         return "{uuid}"
     if _HEX_SEGMENT_PATTERN.fullmatch(segment):
         return "{hash}"
+    if _TASK_ID_SEGMENT_PATTERN.fullmatch(segment):
+        return "{id}"
     if (
         _OPAQUE_SEGMENT_PATTERN.fullmatch(segment)
         and any(character.isalpha() for character in segment)

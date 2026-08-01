@@ -79,6 +79,171 @@ def test_load_quality_config_treats_blank_output_dir_as_default():
     assert config.output_dir == DEFAULT_QUALITY_OUTPUT_DIR
 
 
+def test_semantic_collection_requires_quality_and_defaults_off():
+    disabled = load_quality_config({"QUALITY_SEMANTIC_ENABLE": "1"})
+    enabled = load_quality_config(
+        {"QUALITY_ENABLE": "1", "QUALITY_SEMANTIC_ENABLE": "1"}
+    )
+
+    assert disabled.semantic_enabled is False
+    assert enabled.semantic_enabled is True
+
+
+def test_invalid_semantic_setting_fails_open_with_warning():
+    config = load_quality_config(
+        {"QUALITY_ENABLE": "1", "QUALITY_SEMANTIC_ENABLE": "invalid"}
+    )
+
+    assert config.semantic_enabled is False
+    assert "QUALITY_SEMANTIC_ENABLE" in str(config.semantic_warning)
+
+
+def test_metrics_requires_quality_and_semantic_and_defaults_off():
+    without_quality = load_quality_config(
+        {"QUALITY_SEMANTIC_ENABLE": "1", "QUALITY_METRICS_ENABLE": "1"}
+    )
+    without_semantic = load_quality_config(
+        {"QUALITY_ENABLE": "1", "QUALITY_METRICS_ENABLE": "1"}
+    )
+    enabled = load_quality_config(
+        {
+            "QUALITY_ENABLE": "1",
+            "QUALITY_SEMANTIC_ENABLE": "1",
+            "QUALITY_METRICS_ENABLE": "1",
+        }
+    )
+
+    assert without_quality.metrics_enabled is False
+    assert without_semantic.metrics_enabled is False
+    assert enabled.metrics_enabled is True
+    assert enabled.metrics_warning is None
+
+
+def test_invalid_metrics_setting_fails_open_with_warning():
+    config = load_quality_config(
+        {
+            "QUALITY_ENABLE": "1",
+            "QUALITY_SEMANTIC_ENABLE": "1",
+            "QUALITY_METRICS_ENABLE": "sometimes",
+        }
+    )
+
+    assert config.metrics_enabled is False
+    assert "QUALITY_METRICS_ENABLE" in str(config.metrics_warning)
+
+
+def test_p1_report_requires_quality_and_defaults_off():
+    disabled = load_quality_config({"QUALITY_P1_REPORT_ENABLE": "1"})
+    enabled = load_quality_config(
+        {"QUALITY_ENABLE": "1", "QUALITY_P1_REPORT_ENABLE": "1"}
+    )
+
+    assert disabled.p1_report_enabled is False
+    assert "QUALITY_ENABLE=1" in str(disabled.p1_report_warning)
+    assert enabled.p1_report_enabled is True
+    assert enabled.p1_report_warning is None
+
+
+def test_invalid_p1_report_setting_fails_open_with_warning():
+    config = load_quality_config(
+        {"QUALITY_ENABLE": "1", "QUALITY_P1_REPORT_ENABLE": "sometimes"}
+    )
+
+    assert config.p1_report_enabled is False
+    assert "QUALITY_P1_REPORT_ENABLE" in str(config.p1_report_warning)
+
+
+def test_flaky_history_requires_quality_and_defaults_off(tmp_path):
+    disabled = load_quality_config(
+        {
+            "QUALITY_FLAKY_HISTORY_ENABLE": "1",
+            "QUALITY_FLAKY_DB_PATH": str(tmp_path / "history.sqlite3"),
+        }
+    )
+    enabled = load_quality_config(
+        {
+            "QUALITY_ENABLE": "1",
+            "QUALITY_FLAKY_HISTORY_ENABLE": "1",
+            "QUALITY_FLAKY_DB_PATH": str(tmp_path / "history.sqlite3"),
+        }
+    )
+
+    assert disabled.flaky_history_enabled is False
+    assert enabled.flaky_history_enabled is True
+    assert enabled.flaky_history_warning is None
+    assert enabled.flaky_database_path == tmp_path / "history.sqlite3"
+
+
+def test_flaky_history_missing_or_relative_path_is_fail_open_warning():
+    missing = load_quality_config(
+        {"QUALITY_ENABLE": "1", "QUALITY_FLAKY_HISTORY_ENABLE": "1"}
+    )
+    relative = load_quality_config(
+        {
+            "QUALITY_ENABLE": "1",
+            "QUALITY_FLAKY_HISTORY_ENABLE": "1",
+            "QUALITY_FLAKY_DB_PATH": "reports/flaky.sqlite3",
+        }
+    )
+
+    assert missing.flaky_history_enabled is True
+    assert "required" in str(missing.flaky_history_warning)
+    assert relative.flaky_history_enabled is True
+    assert "absolute" in str(relative.flaky_history_warning)
+
+
+def test_invalid_flaky_history_setting_disables_only_history():
+    config = load_quality_config(
+        {
+            "QUALITY_ENABLE": "1",
+            "QUALITY_FLAKY_HISTORY_ENABLE": "sometimes",
+        }
+    )
+
+    assert config.enabled is True
+    assert config.flaky_history_enabled is False
+    assert "QUALITY_FLAKY_HISTORY_ENABLE" in str(config.flaky_history_warning)
+
+
+def test_flaky_state_requires_quality_and_history_and_defaults_off(tmp_path):
+    path = str(tmp_path / "history.sqlite3")
+    missing_history = load_quality_config(
+        {
+            "QUALITY_ENABLE": "1",
+            "QUALITY_FLAKY_STATE_ENABLE": "1",
+            "QUALITY_FLAKY_DB_PATH": path,
+        }
+    )
+    enabled = load_quality_config(
+        {
+            "QUALITY_ENABLE": "1",
+            "QUALITY_FLAKY_HISTORY_ENABLE": "1",
+            "QUALITY_FLAKY_STATE_ENABLE": "1",
+            "QUALITY_FLAKY_DB_PATH": path,
+        }
+    )
+
+    assert missing_history.flaky_state_enabled is False
+    assert "requires" in str(missing_history.flaky_state_warning)
+    assert enabled.flaky_state_enabled is True
+    assert enabled.flaky_state_warning is None
+
+
+def test_invalid_flaky_state_setting_does_not_disable_history(tmp_path):
+    config = load_quality_config(
+        {
+            "QUALITY_ENABLE": "1",
+            "QUALITY_FLAKY_HISTORY_ENABLE": "1",
+            "QUALITY_FLAKY_STATE_ENABLE": "sometimes",
+            "QUALITY_FLAKY_DB_PATH": str(tmp_path / "history.sqlite3"),
+        }
+    )
+
+    assert config.flaky_history_enabled is True
+    assert config.flaky_state_enabled is False
+    assert "QUALITY_FLAKY_STATE_ENABLE" in str(config.flaky_state_warning)
+
+
 def test_load_quality_report_config_uses_defaults():
     assert load_quality_report_config({}) == QualityReportConfig(
         shadow_gate=DEFAULT_QUALITY_SHADOW_GATE,

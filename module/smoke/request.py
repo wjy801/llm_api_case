@@ -17,7 +17,12 @@ class SmokeRequest(BaseRequest):
     media_task_path_template = "/v1/media/tasks/{task_id}"
 
     def create_chat_completion(self, payload: dict[str, Any]) -> requests.Response:
-        return self.post(self.chat_completions_path, json=payload)
+        return self.post(
+            self.chat_completions_path,
+            json=payload,
+            _quality_operation_name="chat_completion",
+            _quality_traffic_role="workload",
+        )
 
     def create_stream_chat_completion(self, payload: dict[str, Any]) -> requests.Response:
         return self.post(
@@ -26,16 +31,32 @@ class SmokeRequest(BaseRequest):
             headers={"Accept": "text/event-stream"},
             stream=True,
             _attach_log=False,
+            _quality_operation_name="chat_completion_stream",
+            _quality_traffic_role="workload",
         )
 
     def create_image_generation(self, payload: dict[str, Any]) -> requests.Response:
-        return self.post(self.image_generations_path, json=payload)
+        return self.post(
+            self.image_generations_path,
+            json=payload,
+            _quality_operation_name="image_generation",
+            _quality_traffic_role="workload",
+        )
 
     def create_media_generation(self, payload: dict[str, Any]) -> requests.Response:
-        return self.post(self.media_generations_path, json=payload)
+        return self.post(
+            self.media_generations_path,
+            json=payload,
+            _quality_operation_name="media_generation_create",
+            _quality_traffic_role="workload",
+        )
 
     def get_media_generation_task(self, task_id: str) -> requests.Response:
-        return self.get(self.media_task_path_template.format(task_id=task_id))
+        return self.get(
+            self.media_task_path_template.format(task_id=task_id),
+            _quality_operation_name="media_generation_status",
+            _quality_traffic_role="workload",
+        )
 
     def poll_media_generation_result(
         self,
@@ -50,6 +71,8 @@ class SmokeRequest(BaseRequest):
             poll_interval=poll_interval,
             poll_timeout=poll_timeout,
             polling_policy=polling_policy,
+            _quality_operation_name="media_generation_polling",
+            _quality_traffic_role="workload",
         )
 
     def get_account_balance(self, control_api_key: str) -> requests.Response:
@@ -64,7 +87,12 @@ class SmokeRequest(BaseRequest):
             }
         )
         try:
-            return self.get(self.account_balance_path, data="")
+            return self.get(
+                self.account_balance_path,
+                data="",
+                _quality_operation_name="account_balance",
+                _quality_traffic_role="control",
+            )
         finally:
             self.reset_headers()
 
@@ -77,6 +105,8 @@ class SmokeRequest(BaseRequest):
                     "request_id": request_id,
                     "": "",
                 },
+                _quality_operation_name="usage_records",
+                _quality_traffic_role="control",
             )
         finally:
             self.reset_headers()

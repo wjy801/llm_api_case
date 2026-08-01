@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import UTC, datetime
+import json
 import os
 from pathlib import Path
 import sys
@@ -15,7 +16,39 @@ from quality.config import (
     load_quality_report_config,
 )
 from quality.models import IntegrityStatus
+from quality.metrics import RunMetricsAggregationRequest, aggregate_run_metrics
+from quality.metrics_models import RunMetricsStatus
+from quality.observation_models import SourceExpectation
+from quality.observation_report import (
+    P1ObservationRequest,
+    generate_p1_observation_report,
+)
+from quality.flaky_importer import (
+    cancel_flaky_quarantine,
+    check_flaky_database,
+    confirm_flaky_state,
+    evaluate_flaky_state,
+    import_flaky_history,
+    list_flaky_governance,
+    mark_flaky_not_flaky,
+    query_flaky_history,
+    query_flaky_states,
+    quarantine_flaky_state,
+    rebuild_flaky_states,
+    reset_flaky_epoch,
+    start_flaky_recovery,
+)
+from quality.flaky_models import (
+    EpochResetRequest,
+    FlakyEvaluationStatus,
+    FlakyImportRequest,
+    FlakyImportStatus,
+    FlakyManualActionRequest,
+    FlakyQuarantineRequest,
+    GovernanceStatus,
+)
 from quality.report import QualityReportRequest, generate_quality_report
+from quality.semantic_aggregator import SemanticMergeRequest, merge_semantic_run
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -27,6 +60,125 @@ def main(argv: list[str] | None = None) -> int:
     merge_parser.add_argument("--expected-execution", action="append", default=[])
     merge_parser.add_argument("--expected-case-count", type=int)
     merge_parser.add_argument("--junit", action="append", default=[])
+    semantic_merge_parser = subparsers.add_parser(
+        "semantic-merge",
+        help="merge one quality semantic run",
+    )
+    semantic_merge_parser.add_argument("--run-id", required=True)
+    semantic_merge_parser.add_argument("--output-dir", default="reports/quality")
+    metrics_parser = subparsers.add_parser(
+        "metrics-aggregate",
+        help="aggregate trusted P0 and semantic facts for one run",
+    )
+    metrics_parser.add_argument("--run-id", required=True)
+    metrics_parser.add_argument("--output-dir", default="reports/quality")
+    p1_report_parser = subparsers.add_parser(
+        "p1-report",
+        help="generate one P1 observation and Flaky report",
+    )
+    p1_report_parser.add_argument("--run-id", required=True)
+    p1_report_parser.add_argument("--output-dir", default="reports/quality")
+    p1_report_parser.add_argument(
+        "--metrics-source",
+        choices=[item.value for item in SourceExpectation],
+        default=SourceExpectation.REQUIRED.value,
+    )
+    p1_report_parser.add_argument(
+        "--flaky-source",
+        choices=[item.value for item in SourceExpectation],
+        default=SourceExpectation.REQUIRED.value,
+    )
+    flaky_import_parser = subparsers.add_parser(
+        "flaky-import",
+        help="import trusted P0 Case observations into Flaky history",
+    )
+    flaky_import_parser.add_argument("--run-id", required=True)
+    flaky_import_parser.add_argument("--output-dir", default="reports/quality")
+    flaky_import_parser.add_argument("--db", required=True)
+    flaky_history_parser = subparsers.add_parser(
+        "flaky-history",
+        help="query Case observation history",
+    )
+    flaky_history_parser.add_argument("--db", required=True)
+    flaky_history_parser.add_argument("--case-id", required=True)
+    flaky_history_parser.add_argument("--param-hash")
+    flaky_history_parser.add_argument("--environment")
+    flaky_history_parser.add_argument("--execution-profile")
+    flaky_history_parser.add_argument("--state-epoch", type=int)
+    flaky_reset_parser = subparsers.add_parser(
+        "flaky-reset-epoch",
+        help="explicitly increment one Case epoch scope",
+    )
+    flaky_reset_parser.add_argument("--db", required=True)
+    flaky_reset_parser.add_argument("--case-id", required=True)
+    flaky_reset_parser.add_argument("--environment", required=True)
+    flaky_reset_parser.add_argument("--execution-profile", required=True)
+    flaky_reset_parser.add_argument("--actor", required=True)
+    flaky_reset_parser.add_argument("--reason", required=True)
+    flaky_db_check_parser = subparsers.add_parser(
+        "flaky-db-check",
+        help="check Flaky history schema and SQLite integrity",
+    )
+    flaky_db_check_parser.add_argument("--db", required=True)
+    flaky_state_evaluate_parser = subparsers.add_parser(
+        "flaky-state-evaluate",
+        help="evaluate Flaky state for one imported run",
+    )
+    flaky_state_evaluate_parser.add_argument("--db", required=True)
+    flaky_state_evaluate_parser.add_argument("--run-id", required=True)
+    flaky_state_evaluate_parser.add_argument(
+        "--output-dir", default="reports/quality"
+    )
+    flaky_state_parser = subparsers.add_parser(
+        "flaky-state",
+        help="query current Flaky state projections",
+    )
+    flaky_state_parser.add_argument("--db", required=True)
+    flaky_state_parser.add_argument("--case-id", required=True)
+    flaky_state_parser.add_argument("--param-hash")
+    flaky_state_parser.add_argument("--environment")
+    flaky_state_parser.add_argument("--execution-profile")
+    flaky_state_parser.add_argument("--state-epoch", type=int)
+    flaky_rebuild_parser = subparsers.add_parser(
+        "flaky-state-rebuild",
+        help="dry-run or apply deterministic Flaky state replay",
+    )
+    flaky_rebuild_parser.add_argument("--db", required=True)
+    rebuild_mode = flaky_rebuild_parser.add_mutually_exclusive_group(required=True)
+    rebuild_mode.add_argument("--dry-run", action="store_true")
+    rebuild_mode.add_argument("--apply", action="store_true")
+    flaky_rebuild_parser.add_argument("--actor")
+    flaky_rebuild_parser.add_argument("--reason")
+    for command, help_text in (
+        ("flaky-confirm", "manually confirm a SUSPECTED Flaky state"),
+        ("flaky-mark-not-flaky", "manually correct a state to STABLE"),
+        ("flaky-start-recovery", "start recovery for a quarantined state"),
+        ("flaky-cancel-quarantine", "cancel a mistaken quarantine"),
+    ):
+        action_parser = subparsers.add_parser(command, help=help_text)
+        action_parser.add_argument("--db", required=True)
+        action_parser.add_argument("--flaky-key", required=True)
+        action_parser.add_argument("--actor", required=True)
+        action_parser.add_argument("--reason", required=True)
+    flaky_quarantine_parser = subparsers.add_parser(
+        "flaky-quarantine",
+        help="create an audited quarantine governance lifecycle",
+    )
+    flaky_quarantine_parser.add_argument("--db", required=True)
+    flaky_quarantine_parser.add_argument("--flaky-key", required=True)
+    flaky_quarantine_parser.add_argument("--owner", required=True)
+    flaky_quarantine_parser.add_argument("--actor", required=True)
+    flaky_quarantine_parser.add_argument("--reason", required=True)
+    flaky_quarantine_parser.add_argument("--expires-at", required=True)
+    flaky_governance_parser = subparsers.add_parser(
+        "flaky-governance-list",
+        help="list Flaky governance lifecycles",
+    )
+    flaky_governance_parser.add_argument("--db", required=True)
+    flaky_governance_parser.add_argument(
+        "--status", choices=[item.value for item in GovernanceStatus]
+    )
+    flaky_governance_parser.add_argument("--overdue", action="store_true")
     report_parser = subparsers.add_parser("report", help="generate a quality report")
     report_parser.add_argument("--run-id", required=True)
     report_parser.add_argument("--output-dir", default="reports/quality")
@@ -49,6 +201,50 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if parsed.command == "report":
         return _report(parsed)
+    if parsed.command == "metrics-aggregate":
+        return _metrics_aggregate(parsed)
+    if parsed.command == "p1-report":
+        return _p1_report(parsed)
+    if parsed.command == "flaky-import":
+        return _flaky_import(parsed)
+    if parsed.command == "flaky-history":
+        return _flaky_history(parsed)
+    if parsed.command == "flaky-reset-epoch":
+        return _flaky_reset_epoch(parsed)
+    if parsed.command == "flaky-db-check":
+        return _flaky_db_check(parsed)
+    if parsed.command == "flaky-state-evaluate":
+        return _flaky_state_evaluate(parsed)
+    if parsed.command == "flaky-state":
+        return _flaky_state(parsed)
+    if parsed.command == "flaky-state-rebuild":
+        return _flaky_state_rebuild(parsed)
+    if parsed.command in {
+        "flaky-confirm",
+        "flaky-mark-not-flaky",
+        "flaky-start-recovery",
+        "flaky-cancel-quarantine",
+    }:
+        return _flaky_manual_action(parsed)
+    if parsed.command == "flaky-quarantine":
+        return _flaky_quarantine(parsed)
+    if parsed.command == "flaky-governance-list":
+        return _flaky_governance_list(parsed)
+    if parsed.command == "semantic-merge":
+        result = merge_semantic_run(
+            SemanticMergeRequest(
+                run_id=parsed.run_id,
+                output_dir=Path(parsed.output_dir),
+            )
+        )
+        print(
+            "quality semantic merge completed: "
+            f"integrity={result.integrity_status.value}, "
+            f"operations={result.operations}, "
+            f"request_groups={result.request_groups}, "
+            f"polling_sessions={result.polling_sessions}"
+        )
+        return 2 if result.integrity_status is IntegrityStatus.FAILED and result.operations == 0 else 0
     if parsed.expected_case_count is not None and parsed.expected_case_count < 0:
         print("--expected-case-count must be greater than or equal to 0", file=sys.stderr)
         return 2
@@ -71,6 +267,323 @@ def main(argv: list[str] | None = None) -> int:
         f"failures={result.failure_occurrences}"
     )
     return 2 if result.integrity_status is IntegrityStatus.FAILED and result.case_results == 0 else 0
+
+
+def _metrics_aggregate(parsed: argparse.Namespace) -> int:
+    try:
+        result = aggregate_run_metrics(
+            RunMetricsAggregationRequest(
+                run_id=parsed.run_id,
+                output_dir=Path(parsed.output_dir),
+            )
+        )
+    except Exception as error:
+        print(
+            f"quality run metrics failed: {type(error).__name__}",
+            file=sys.stderr,
+        )
+        return 2
+    issue_codes = ",".join(sorted({item.code for item in result.issues})) or "none"
+    usage_summary = "unavailable"
+    if result.metrics is not None and result.metrics.run_metrics is not None:
+        counts = result.metrics.run_metrics.usage.completeness.counts
+        usage_summary = "/".join(
+            str(counts.get(name, 0)) for name in ("complete", "partial", "missing")
+        )
+    print(
+        "quality run metrics completed: "
+        f"status={result.status.value}, "
+        f"operations={result.operation_count}, "
+        f"request_groups={result.request_group_count}, "
+        f"request_events={result.request_event_count}, "
+        f"usage_complete_partial_missing={usage_summary}, "
+        f"issues={issue_codes}, "
+        "manifest=metrics/manifest.json"
+    )
+    return 2 if result.status is RunMetricsStatus.FAILED else 0
+
+
+def _p1_report(parsed: argparse.Namespace) -> int:
+    try:
+        metrics_expectation = SourceExpectation(parsed.metrics_source)
+        flaky_expectation = SourceExpectation(parsed.flaky_source)
+        result = generate_p1_observation_report(
+            P1ObservationRequest(
+                run_id=parsed.run_id,
+                output_dir=Path(parsed.output_dir),
+                metrics_expectation=metrics_expectation,
+                flaky_import_expectation=flaky_expectation,
+                flaky_evaluation_expectation=flaky_expectation,
+            )
+        )
+    except Exception as error:
+        print(
+            f"quality P1 observation report failed: {type(error).__name__}",
+            file=sys.stderr,
+        )
+        return 2
+    payload = {
+        "write_status": result.write_status,
+        "report_status": (
+            result.report_status.value if result.report_status is not None else None
+        ),
+        "issue_codes": list(result.issue_codes),
+        "manifest": "p1-observation-manifest.json",
+        "json": "p1-observation.json",
+        "markdown": "p1-observation.md",
+    }
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    return 0 if result.write_status == "complete" else 2
+
+
+def _flaky_import(parsed: argparse.Namespace) -> int:
+    try:
+        request = FlakyImportRequest(
+            run_id=parsed.run_id,
+            quality_output_dir=Path(parsed.output_dir),
+            database_path=Path(parsed.db),
+        )
+        result = import_flaky_history(request)
+    except Exception as error:
+        print(f"quality Flaky import failed: {type(error).__name__}: {error}", file=sys.stderr)
+        return 2
+    print(_model_json(result))
+    return (
+        0
+        if result.status
+        in {
+            FlakyImportStatus.IMPORTED,
+            FlakyImportStatus.NOOP,
+            FlakyImportStatus.DEGRADED,
+        }
+        else 2
+    )
+
+
+def _flaky_history(parsed: argparse.Namespace) -> int:
+    try:
+        entries = query_flaky_history(
+            Path(parsed.db),
+            case_id=parsed.case_id,
+            param_hash=parsed.param_hash,
+            environment=parsed.environment,
+            execution_profile=parsed.execution_profile,
+            state_epoch=parsed.state_epoch,
+        )
+    except Exception as error:
+        print(f"quality Flaky history query failed: {type(error).__name__}: {error}", file=sys.stderr)
+        return 2
+    print(
+        json.dumps(
+            {
+                "case_id": parsed.case_id,
+                "count": len(entries),
+                "observations": [entry.model_dump(mode="json") for entry in entries],
+            },
+            allow_nan=False,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _flaky_reset_epoch(parsed: argparse.Namespace) -> int:
+    try:
+        result = reset_flaky_epoch(
+            Path(parsed.db),
+            EpochResetRequest(
+                case_id=parsed.case_id,
+                environment=parsed.environment,
+                execution_profile=parsed.execution_profile,
+                actor=parsed.actor,
+                reason=parsed.reason,
+            ),
+        )
+    except Exception as error:
+        print(f"quality Flaky epoch reset failed: {type(error).__name__}: {error}", file=sys.stderr)
+        return 2
+    print(_model_json(result))
+    return 0
+
+
+def _flaky_db_check(parsed: argparse.Namespace) -> int:
+    try:
+        result = check_flaky_database(Path(parsed.db))
+    except Exception as error:
+        print(f"quality Flaky database check failed: {type(error).__name__}: {error}", file=sys.stderr)
+        return 2
+    print(_model_json(result))
+    return 0
+
+
+def _flaky_state_evaluate(parsed: argparse.Namespace) -> int:
+    try:
+        result = evaluate_flaky_state(
+            Path(parsed.db),
+            run_id=parsed.run_id,
+            quality_output_dir=Path(parsed.output_dir),
+        )
+    except Exception as error:
+        print(
+            f"quality Flaky state evaluation failed: {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        return 2
+    print(_model_json(result))
+    return (
+        0
+        if result.status
+        in {
+            FlakyEvaluationStatus.EVALUATED,
+            FlakyEvaluationStatus.NOOP,
+            FlakyEvaluationStatus.DEGRADED,
+        }
+        else 2
+    )
+
+
+def _flaky_state(parsed: argparse.Namespace) -> int:
+    try:
+        states = query_flaky_states(
+            Path(parsed.db),
+            case_id=parsed.case_id,
+            param_hash=parsed.param_hash,
+            environment=parsed.environment,
+            execution_profile=parsed.execution_profile,
+            state_epoch=parsed.state_epoch,
+        )
+    except Exception as error:
+        print(
+            f"quality Flaky state query failed: {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        return 2
+    print(
+        json.dumps(
+            {
+                "case_id": parsed.case_id,
+                "count": len(states),
+                "states": [state.model_dump(mode="json") for state in states],
+            },
+            allow_nan=False,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _flaky_state_rebuild(parsed: argparse.Namespace) -> int:
+    if parsed.apply and (not parsed.actor or not parsed.reason):
+        print("--apply requires --actor and --reason", file=sys.stderr)
+        return 2
+    try:
+        result = rebuild_flaky_states(Path(parsed.db), apply=parsed.apply)
+    except Exception as error:
+        print(
+            f"quality Flaky state rebuild failed: {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        return 2
+    print(
+        json.dumps(
+            result,
+            allow_nan=False,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _flaky_manual_action(parsed: argparse.Namespace) -> int:
+    request = FlakyManualActionRequest(
+        flaky_key=parsed.flaky_key,
+        actor=parsed.actor,
+        reason=parsed.reason,
+    )
+    handlers = {
+        "flaky-confirm": confirm_flaky_state,
+        "flaky-mark-not-flaky": mark_flaky_not_flaky,
+        "flaky-start-recovery": start_flaky_recovery,
+        "flaky-cancel-quarantine": cancel_flaky_quarantine,
+    }
+    try:
+        result = handlers[parsed.command](Path(parsed.db), request)
+    except Exception as error:
+        print(
+            f"quality Flaky governance action failed: {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        return 2
+    print(_model_json(result))
+    return 0
+
+
+def _flaky_quarantine(parsed: argparse.Namespace) -> int:
+    try:
+        expires_at = datetime.fromisoformat(parsed.expires_at.replace("Z", "+00:00"))
+        result = quarantine_flaky_state(
+            Path(parsed.db),
+            FlakyQuarantineRequest(
+                flaky_key=parsed.flaky_key,
+                owner=parsed.owner,
+                actor=parsed.actor,
+                reason=parsed.reason,
+                expires_at=expires_at,
+            ),
+        )
+    except Exception as error:
+        print(
+            f"quality Flaky quarantine failed: {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        return 2
+    print(_model_json(result))
+    return 0
+
+
+def _flaky_governance_list(parsed: argparse.Namespace) -> int:
+    try:
+        status = GovernanceStatus(parsed.status) if parsed.status else None
+        records = list_flaky_governance(
+            Path(parsed.db),
+            status=status,
+            overdue=parsed.overdue,
+        )
+    except Exception as error:
+        print(
+            f"quality Flaky governance query failed: {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        return 2
+    print(
+        json.dumps(
+            {
+                "count": len(records),
+                "governance": [record.model_dump(mode="json") for record in records],
+            },
+            allow_nan=False,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _model_json(model) -> str:
+    return json.dumps(
+        model.model_dump(mode="json"),
+        allow_nan=False,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    )
 
 
 def _report(parsed: argparse.Namespace) -> int:

@@ -12,6 +12,8 @@ from config import USE_CHINA_ENVIRONMENT
 from common.base_decorators import allure_step
 from common.base_request import BaseRequest
 from common.polling import DEFAULT_MEDIA_POLLING_POLICY
+from quality.semantic_context import model_id_from_kwargs, operation_scope
+from quality.semantic_models import OperationKind, TrafficRole
 
 
 if TYPE_CHECKING:
@@ -35,6 +37,7 @@ class BaseTask:
     account_balance_path = "/v1/account/balance"
     usage_records_path = "/v1/account/usage-records"
     task_id_field = "task_id"
+    task_id_aliases = ("id", "request_id")
 
     @allure_step("同步图片任务调用：/v1/images/generations")
     def create_image_generation(
@@ -51,7 +54,13 @@ class BaseTask:
         Returns:
             接口原始响应，响应体通常直接包含生成结果，例如 `data[0].url` 或 `data[0].b64_json`。
         """
-        return request_client.post(self.image_generations_path, json=payload)
+        with operation_scope(
+            OperationKind.HTTP,
+            name="image_generation",
+            role=TrafficRole.WORKLOAD,
+            model_id=model_id_from_kwargs({"json": payload}),
+        ):
+            return request_client.post(self.image_generations_path, json=payload)
 
     @allure_step("文本模型对话调用：/v1/chat/completions")
     def create_chat_completion(
@@ -68,7 +77,13 @@ class BaseTask:
         Returns:
             接口原始响应，响应体通常包含 `choices`、`usage` 等对话补全结果字段。
         """
-        return request_client.post(self.chat_completions_path, json=payload)
+        with operation_scope(
+            OperationKind.HTTP,
+            name="chat_completion",
+            role=TrafficRole.WORKLOAD,
+            model_id=model_id_from_kwargs({"json": payload}),
+        ):
+            return request_client.post(self.chat_completions_path, json=payload)
 
     @allure_step("异步媒体任务创建：/v1/media/generations")
     def create_media_generation(
@@ -85,7 +100,13 @@ class BaseTask:
         Returns:
             创建任务接口的原始响应，后续复合流程会从该响应中提取 `task_id`。
         """
-        return request_client.post(self.media_generations_path, json=payload)
+        with operation_scope(
+            OperationKind.HTTP,
+            name="media_generation_create",
+            role=TrafficRole.WORKLOAD,
+            model_id=model_id_from_kwargs({"json": payload}),
+        ):
+            return request_client.post(self.media_generations_path, json=payload)
 
     @allure_step("轮询媒体生成结果: {task_id}")
     def poll_media_generation_result(
@@ -111,13 +132,18 @@ class BaseTask:
         Returns:
             满足成功条件的最终轮询响应。
         """
-        return request_client.poll_get(
-            self.media_task_path_template.format(task_id=task_id),
-            poll_interval=poll_interval,
-            poll_timeout=poll_timeout,
-            polling_policy=polling_policy,
-            retry_policy=retry_policy,
-        )
+        with operation_scope(
+            OperationKind.POLLING,
+            name="media_generation_polling",
+            role=TrafficRole.WORKLOAD,
+        ):
+            return request_client.poll_get(
+                self.media_task_path_template.format(task_id=task_id),
+                poll_interval=poll_interval,
+                poll_timeout=poll_timeout,
+                polling_policy=polling_policy,
+                retry_policy=retry_policy,
+            )
 
     def create_and_poll_media_generation(
         self,
@@ -142,16 +168,22 @@ class BaseTask:
         Returns:
             满足成功条件的最终轮询响应。
         """
-        create_response = self.create_media_generation(request_client, payload)
-        task_id = self.extract_task_id(create_response)
-        return self.poll_media_generation_result(
-            request_client,
-            task_id,
-            poll_interval=poll_interval,
-            poll_timeout=poll_timeout,
-            polling_policy=polling_policy,
-            retry_policy=retry_policy,
-        )
+        with operation_scope(
+            OperationKind.ASYNC_TASK,
+            name="media_generation",
+            role=TrafficRole.WORKLOAD,
+            model_id=model_id_from_kwargs({"json": payload}),
+        ):
+            create_response = self.create_media_generation(request_client, payload)
+            task_id = self.extract_task_id(create_response)
+            return self.poll_media_generation_result(
+                request_client,
+                task_id,
+                poll_interval=poll_interval,
+                poll_timeout=poll_timeout,
+                polling_policy=polling_policy,
+                retry_policy=retry_policy,
+            )
 
     def extract_task_id(self, create_response: requests.Response) -> str:
         """从异步任务创建响应中提取任务 ID。
@@ -174,6 +206,15 @@ class BaseTask:
             raise AssertionError(f"创建任务响应不是 JSON 对象。响应内容：{create_response.text}")
 
         task_id = response_body.get(self.task_id_field)
+        if not task_id:
+            task_id = next(
+                (
+                    response_body.get(alias)
+                    for alias in self.task_id_aliases
+                    if response_body.get(alias)
+                ),
+                None,
+            )
         assert task_id, f"创建任务响应中未返回 {self.task_id_field}。响应内容：{create_response.text}"
         return str(task_id)
 
@@ -277,7 +318,12 @@ class BaseTask:
             }
         )
         try:
-            return request_client.get(self.account_balance_path, data="")
+            with operation_scope(
+                OperationKind.HTTP,
+                name="account_balance",
+                role=TrafficRole.CONTROL,
+            ):
+                return request_client.get(self.account_balance_path, data="")
         finally:
             request_client.reset_headers()
 
@@ -301,13 +347,18 @@ class BaseTask:
         """使用控制台密钥和 request id 调用用量记录接口。"""
         request_client.update_headers({"Authorization": f"Bearer {control_api_key}"})
         try:
-            usage_response = request_client.get(
-                self.usage_records_path,
-                params={
-                    "request_id": request_id,
-                    "": "",
-                },
-            )
+            with operation_scope(
+                OperationKind.HTTP,
+                name="usage_records",
+                role=TrafficRole.CONTROL,
+            ):
+                usage_response = request_client.get(
+                    self.usage_records_path,
+                    params={
+                        "request_id": request_id,
+                        "": "",
+                    },
+                )
         finally:
             request_client.reset_headers()
 
