@@ -11,13 +11,24 @@ pytest_plugins = ("pytester",)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _prepare_plugin(pytester, monkeypatch, *, enabled=True, execution_id="manual-pytest"):
+def _prepare_plugin(
+    pytester,
+    monkeypatch,
+    *,
+    enabled=True,
+    semantic_enabled=False,
+    execution_id="manual-pytest",
+):
     pytester.makeconftest('pytest_plugins = ("quality.pytest_plugin",)')
     output_dir = pytester.path / "quality-output"
     monkeypatch.setenv("QUALITY_ENABLE", "1" if enabled else "0")
+    monkeypatch.setenv("QUALITY_SEMANTIC_ENABLE", "1" if semantic_enabled else "0")
     monkeypatch.setenv("QUALITY_RUN_ID", "run-plugin")
     monkeypatch.setenv("QUALITY_EXECUTION_ID", execution_id)
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(output_dir))
+    monkeypatch.setenv("USE_CHINA_ENVIRONMENT", "FALSE")
+    monkeypatch.setenv("OVERSEAS_TEST_BASE_URL", "https://example.com")
+    monkeypatch.setenv("OVERSEAS_API_KEY", "test-key")
     pythonpath = os.environ.get("PYTHONPATH")
     monkeypatch.setenv(
         "PYTHONPATH",
@@ -189,3 +200,90 @@ def test_collector_failure_does_not_change_pytest_outcome(pytester, monkeypatch)
     result = _run_subprocess(pytester, "-q")
 
     result.assert_outcomes(passed=1)
+
+
+def test_semantic_plugin_writes_independent_http_operation_shards(pytester, monkeypatch):
+    output_dir = _prepare_plugin(pytester, monkeypatch, semantic_enabled=True)
+    pytester.makepyfile(
+        test_sample="""
+        import json
+        import requests
+
+        from common.base_request import BaseRequest
+
+        class Config:
+            base_url = "https://example.com"
+            api_key = "secret"
+            timeout = 5
+
+        def test_http_operation():
+            response = requests.Response()
+            response.status_code = 200
+            response.url = "https://example.com/v1/items"
+            response._content = json.dumps({"usage": {"prompt_tokens": 1}}).encode()
+            response.headers["Content-Type"] = "application/json"
+            client = BaseRequest(config=Config())
+            client.session.request = lambda method, url, **kwargs: response
+            assert client.get("/v1/items", _attach_log=False).status_code == 200
+        """
+    )
+
+    result = _run_subprocess(pytester, "-q")
+
+    result.assert_outcomes(passed=1)
+    semantic_shards = output_dir / "semantic" / "shards"
+    groups = read_jsonl(
+        semantic_shards / "request-groups-manual-pytest-master.jsonl"
+    )
+    operations = read_jsonl(
+        semantic_shards / "operations-manual-pytest-master.jsonl"
+    )
+    assert len(groups) == len(operations) == 1
+    assert groups[0]["operation_id"] == operations[0]["operation_id"]
+
+
+def test_semantic_xdist_workers_write_separate_operation_shards(pytester, monkeypatch):
+    output_dir = _prepare_plugin(pytester, monkeypatch, semantic_enabled=True)
+    pytester.makepyfile(
+        test_sample="""
+        import json
+        import requests
+
+        from common.base_request import BaseRequest
+
+        class Config:
+            base_url = "https://example.com"
+            api_key = "secret"
+            timeout = 5
+
+        def call_api():
+            response = requests.Response()
+            response.status_code = 200
+            response.url = "https://example.com/v1/items"
+            response._content = json.dumps({"usage": {"prompt_tokens": 1}}).encode()
+            response.headers["Content-Type"] = "application/json"
+            client = BaseRequest(config=Config())
+            client.session.request = lambda method, url, **kwargs: response
+            assert client.get("/v1/items", _attach_log=False).status_code == 200
+
+        def test_one(): call_api()
+        def test_two(): call_api()
+        def test_three(): call_api()
+        def test_four(): call_api()
+        """
+    )
+
+    result = _run_subprocess(pytester, "-n", "2", "-q")
+
+    result.assert_outcomes(passed=4)
+    files = sorted(
+        (output_dir / "semantic" / "shards").glob(
+            "operations-manual-pytest-gw*.jsonl"
+        )
+    )
+    assert files
+    assert not (
+        output_dir / "semantic" / "shards" / "operations-manual-pytest-master.jsonl"
+    ).exists()
+    operations = [record for path in files for record in read_jsonl(path)]
+    assert len(operations) == 4

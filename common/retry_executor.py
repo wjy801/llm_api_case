@@ -45,6 +45,7 @@ class RetryExecutor:
         send_once: Callable[[RequestContext], requests.Response],
         attach_records: Callable[[RequestContext, list[RetryAttemptRecord]], None],
         context_recorder: list[RequestContext] | None = None,
+        on_wait: Callable[[float], None] | None = None,
     ) -> requests.Response:
         retry_records: list[RetryAttemptRecord] = []
 
@@ -84,6 +85,7 @@ class RetryExecutor:
                 if not self._can_retry_within_elapsed(policy, started_at, wait_seconds):
                     raise
                 self.sleeper(wait_seconds)
+                self._notify_wait(on_wait, wait_seconds)
                 continue
 
             last_response = response
@@ -105,6 +107,7 @@ class RetryExecutor:
             if not self._can_retry_within_elapsed(policy, started_at, wait_seconds):
                 return response
             self.sleeper(wait_seconds)
+            self._notify_wait(on_wait, wait_seconds)
 
         if last_response is not None:
             return last_response
@@ -138,3 +141,11 @@ class RetryExecutor:
         if policy.max_elapsed is None:
             return True
         return (self.monotonic() - started_at + wait_seconds) <= policy.max_elapsed
+
+    @staticmethod
+    def _notify_wait(on_wait: Callable[[float], None] | None, wait_seconds: float) -> None:
+        if on_wait is not None:
+            try:
+                on_wait(wait_seconds)
+            except Exception:
+                return
