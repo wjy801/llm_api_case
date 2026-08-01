@@ -11,13 +11,12 @@ import requests
 from config import USE_CHINA_ENVIRONMENT
 from common.base_decorators import allure_step
 from common.base_request import BaseRequest
-from common.polling import DEFAULT_MEDIA_POLLING_POLICY
+from common.polling import DEFAULT_MEDIA_POLLING_POLICY, PollingPolicy
 from quality.semantic_context import model_id_from_kwargs, operation_scope
 from quality.semantic_models import OperationKind, TrafficRole
 
 
 if TYPE_CHECKING:
-    from common.polling import PollingPolicy
     from common.retry import RetryPolicy
 
 
@@ -25,6 +24,25 @@ CHINA_CONTROL_API_KEY_ENV = "CHINA_CONTROL_API_KEY"
 OVERSEAS_CONTROL_API_KEY_ENV = "OVERSEAS_CONTROL_API_KEY"
 ONEAPI_REQUEST_ID_HEADER = "x-oneapi-request-id"
 BALANCE_SETTLEMENT_WAIT_SECONDS = 5
+USAGE_RECORD_SETTLEMENT_POLL_INTERVAL_SECONDS = 2
+USAGE_RECORD_SETTLEMENT_TIMEOUT_SECONDS = 60
+USAGE_RECORD_SETTLEMENT_POLLING_POLICY = PollingPolicy(
+    status_json_path="$.data.status",
+    pending=frozenset({"queued", "pending", "processing", "running"}),
+    success=frozenset(
+        {
+            "success",
+            "succeeded",
+            "completed",
+            "failed",
+            "failure",
+            "cancelled",
+            "canceled",
+        }
+    ),
+    failure=frozenset(),
+    error_json_path=None,
+)
 
 
 class BaseTask:
@@ -281,10 +299,9 @@ class BaseTask:
         request_client: BaseRequest,
         model_response: requests.Response,
     ) -> requests.Response:
-        """从模型响应中提取 request id 并查询模型用量记录。"""
-        control_api_key = self.get_required_control_api_key()
+        """从模型响应中提取 request id，并等待对应的用量记录进入终态。"""
         request_id = self.get_request_id_from_response(model_response)
-        return self.query_usage_records_by_request_id(request_client, control_api_key, request_id)
+        return self.query_usage_records_by_request_id_for_billing(request_client, request_id)
 
     @allure_step("按 request_id 查询模型用量记录: {request_id}")
     def query_usage_records_by_request_id_for_billing(
@@ -292,9 +309,45 @@ class BaseTask:
         request_client: BaseRequest,
         request_id: str,
     ) -> requests.Response:
-        """使用指定 request id 查询模型用量记录。"""
+        """使用指定 request id 等待模型用量记录进入终态。"""
         control_api_key = self.get_required_control_api_key()
-        return self.query_usage_records_by_request_id(request_client, control_api_key, request_id)
+        return self.wait_for_usage_record_settlement_by_request_id(
+            request_client,
+            control_api_key,
+            request_id,
+        )
+
+    @allure_step("等待模型用量记录结算: {request_id}")
+    def wait_for_usage_record_settlement_by_request_id(
+        self,
+        request_client: BaseRequest,
+        control_api_key: str,
+        request_id: str,
+        *,
+        poll_interval: float = USAGE_RECORD_SETTLEMENT_POLL_INTERVAL_SECONDS,
+        poll_timeout: float = USAGE_RECORD_SETTLEMENT_TIMEOUT_SECONDS,
+    ) -> requests.Response:
+        """轮询用量记录，直到记录脱离 pending 等非终态。"""
+        request_client.update_headers({"Authorization": f"Bearer {control_api_key}"})
+        try:
+            usage_response = request_client.poll_get(
+                self.usage_records_path,
+                params={
+                    "request_id": request_id,
+                    "": "",
+                },
+                poll_interval=poll_interval,
+                poll_timeout=poll_timeout,
+                polling_policy=USAGE_RECORD_SETTLEMENT_POLLING_POLICY,
+                _quality_operation_name="usage_record_settlement",
+                _quality_traffic_role=TrafficRole.CONTROL,
+            )
+        finally:
+            request_client.reset_headers()
+
+        print("settled usage_records response body:")
+        print(self.format_response_body(usage_response))
+        return usage_response
 
     @allure_step("调用账户余额接口")
     def get_account_balance(self, request_client: BaseRequest, control_api_key: str) -> requests.Response:
