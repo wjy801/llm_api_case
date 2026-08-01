@@ -19,6 +19,7 @@ def test_real_smoke_enables_quality_report_and_email_links_artifact():
     assert "$env:QUALITY_FLAKY_STATE_ENABLE = '0'" in content
     assert "$env:QUALITY_FLAKY_STATE_ENABLE = '1'" in content
     assert "archiveArtifacts artifacts: 'allure-results/**, reports/**'" in content
+    assert "junit allowEmptyResults: true, testResults: 'reports/smoke-tests*.xml'" in content
     assert "$flakyEnvFiles = @('.env', 'D:/API_CASE/.env')" in content
     assert "Get-Content -LiteralPath $flakyEnvFile" in content
     assert "Where-Object { $_ -match '^\\\\s*QUALITY_FLAKY_DB_PATH\\\\s*=' }" in content
@@ -40,6 +41,7 @@ def test_email_summary_distinguishes_available_missing_and_not_applicable_data()
     content = JENKINSFILE.read_text(encoding="utf-8")
 
     assert "passed: 0" in content
+    assert "casePassed: summary.case_passed ?: 0" in content
     assert "failedTests: []" in content
     assert "失败用例（最多 5 项）" in content
     assert "邮件数据完整性" in content

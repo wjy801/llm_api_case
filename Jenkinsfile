@@ -173,7 +173,7 @@ pipeline {
             }
             post {
                 always {
-                    junit allowEmptyResults: true, testResults: 'reports/smoke-tests.xml'
+                    junit allowEmptyResults: true, testResults: 'reports/smoke-tests*.xml'
                 }
             }
         }
@@ -279,6 +279,7 @@ Map readQualitySummary() {
         overall: '质量摘要未生成',
         integrity: '-',
         caseTotal: '-',
+        casePassed: '-',
         caseFailed: '-',
         caseError: '-',
         caseSkipped: '-',
@@ -308,6 +309,7 @@ Map readQualitySummary() {
             overall: gatePayload.overall,
             integrity: summary.integrity_status ?: '-',
             caseTotal: summary.case_total ?: 0,
+            casePassed: summary.case_passed ?: 0,
             caseFailed: summary.case_failed ?: 0,
             caseError: summary.case_error ?: 0,
             caseSkipped: summary.case_skipped ?: 0,
@@ -541,7 +543,7 @@ String buildQualityRowsHtml(boolean realSmokeEnabled, Map quality) {
     </tr>
     <tr>
       <td style="padding: 6px 10px; border: 1px solid #ddd;">P0 用例摘要</td>
-      <td style="padding: 6px 10px; border: 1px solid #ddd;">共 ${htmlEscape(quality.caseTotal)} 项，失败 ${htmlEscape(quality.caseFailed)} 项，错误 ${htmlEscape(quality.caseError)} 项，跳过 ${htmlEscape(quality.caseSkipped)} 项</td>
+      <td style="padding: 6px 10px; border: 1px solid #ddd;">共 ${htmlEscape(quality.caseTotal)} 项，通过 ${htmlEscape(quality.casePassed)} 项，失败 ${htmlEscape(quality.caseFailed)} 项，错误 ${htmlEscape(quality.caseError)} 项，跳过 ${htmlEscape(quality.caseSkipped)} 项</td>
     </tr>
     <tr>
       <td style="padding: 6px 10px; border: 1px solid #ddd;">P0 失败分类</td>
