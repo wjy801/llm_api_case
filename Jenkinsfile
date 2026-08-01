@@ -273,316 +273,89 @@ Map readSmokeCollectSummary() {
     return summary
 }
 
-Map readQualitySummary() {
-    def unavailable = [
-        available: false,
-        overall: '质量摘要未生成',
-        integrity: '-',
-        caseTotal: '-',
-        casePassed: '-',
-        caseFailed: '-',
-        caseError: '-',
-        caseSkipped: '-',
-        productDefect: '-',
-        configuration: '-',
-        frameworkDefect: '-',
-        unknown: '-',
-        requestTotal: '-',
-        http5xx: '-',
-        timeout: '-',
-    ]
-    try {
-        def summaryPath = 'reports/quality/summary.json'
-        def gatePath = 'reports/quality/gate-report.json'
-        if (!fileExists(summaryPath) || !fileExists(gatePath)) {
-            return unavailable
-        }
-        def summaryPayload = parseJsonObject(readFile(summaryPath))
-        def gatePayload = parseJsonObject(readFile(gatePath))
-        def summary = summaryPayload.summary instanceof Map ? summaryPayload.summary : [:]
-        def categories = summaryPayload.failure_categories instanceof Map ? summaryPayload.failure_categories : [:]
-        if (!summary || !gatePayload.overall) {
-            return unavailable
-        }
-        return [
-            available: true,
-            overall: gatePayload.overall,
-            integrity: summary.integrity_status ?: '-',
-            caseTotal: summary.case_total ?: 0,
-            casePassed: summary.case_passed ?: 0,
-            caseFailed: summary.case_failed ?: 0,
-            caseError: summary.case_error ?: 0,
-            caseSkipped: summary.case_skipped ?: 0,
-            productDefect: categories.PRODUCT_DEFECT ?: 0,
-            configuration: categories.CONFIGURATION ?: 0,
-            frameworkDefect: categories.FRAMEWORK_DEFECT ?: 0,
-            unknown: categories.UNKNOWN ?: 0,
-            requestTotal: summary.request_total ?: 0,
-            http5xx: summary.http_5xx_count ?: 0,
-            timeout: summary.timeout_count ?: 0,
-        ]
-    } catch (error) {
-        echo "质量摘要读取失败：${error.getMessage()}"
-        return unavailable
-    }
-}
-
-Map readP1ObservationSummary() {
-    def unavailable = [
-        available: false,
-        reportStatus: 'P1 观察报告未生成',
-        operationCount: '-',
-        workloadOperationCount: '-',
-        operationSuccess: '-',
-        operationFailed: '-',
-        operationTimeout: '-',
-        usageComplete: '-',
-        usagePartial: '-',
-        usageMissing: '-',
-        newlySuspected: '-',
-        newlyConfirmed: '-',
-        quarantined: '-',
-        recovering: '-',
-        recovered: '-',
-        overdue: '-',
-        requiredSourceFailures: '-',
-    ]
-    try {
-        def manifestPath = 'reports/quality/p1-observation-manifest.json'
-        def reportPath = 'reports/quality/p1-observation.json'
-        if (!fileExists(manifestPath) || !fileExists(reportPath)) {
-            return unavailable
-        }
-        def manifest = parseJsonObject(readFile(manifestPath))
-        if (manifest.write_status != 'complete' || !manifest.output_hashes?.json) {
-            return unavailable
-        }
-        def payload = parseJsonObject(readFile(reportPath))
-        def overview = payload.overview instanceof Map ? payload.overview : [:]
-        if (!overview || payload.run_id != manifest.run_id) {
-            return unavailable
-        }
-        return [
-            available: true,
-            reportStatus: payload.report_status ?: '-',
-            operationCount: overview.operation_count ?: 0,
-            workloadOperationCount: overview.workload_operation_count ?: 0,
-            operationSuccess: overview.operation_success_count ?: 0,
-            operationFailed: overview.operation_failed_count ?: 0,
-            operationTimeout: overview.operation_timeout_count ?: 0,
-            usageComplete: overview.usage_complete_count ?: 0,
-            usagePartial: overview.usage_partial_count ?: 0,
-            usageMissing: overview.usage_missing_count ?: 0,
-            newlySuspected: overview.newly_suspected_count ?: 0,
-            newlyConfirmed: overview.newly_confirmed_count ?: 0,
-            quarantined: overview.quarantined_count ?: 0,
-            recovering: overview.recovering_count ?: 0,
-            recovered: overview.recovered_count ?: 0,
-            overdue: overview.overdue_count ?: 0,
-            requiredSourceFailures: overview.required_source_failure_count ?: 0,
-        ]
-    } catch (error) {
-        echo "P1 观察报告读取失败：${error.getMessage()}"
-        return unavailable
-    }
-}
-
-String buildResultSummaryHtml(String status) {
-    def junit = readJunitSummary()
-    def smoke = readSmokeCollectSummary()
-    def quality = readQualitySummary()
-    def p1 = readP1ObservationSummary()
+String buildResultSummaryHtml(String status, Map junit, Map smoke) {
     def statusColor = status == 'FAILED' ? '#b00020' : status == 'UNSTABLE' ? '#b26a00' : '#137333'
     def statusText = buildStatusText(status)
     def buildUrl = env.BUILD_URL ?: ''
     def branchName = normalizeBranchName(env.BRANCH_NAME ?: env.GIT_BRANCH)
     def gitCommit = shortGitCommit(env.GIT_COMMIT)
-    def realSmokeEnabled = String.valueOf(params.RUN_REAL_SMOKE).equalsIgnoreCase('true')
+    def failedCount = junit.failures + junit.errors
     def junitText = junit.available
-        ? "共 ${junit.tests} 项，通过 ${junit.passed} 项，失败 ${junit.failures} 项，错误 ${junit.errors} 项，跳过 ${junit.skipped} 项"
-        : 'JUnit 报告未生成'
+        ? "${junit.tests} 总计 / ${junit.passed} 通过 / ${failedCount} 失败 / ${junit.skipped} 跳过"
+        : '测试报告未生成，构建可能在测试阶段前失败，请查看控制台日志。'
     def smokeText = smoke.available
-        ? "共 ${smoke.total} 项，可并发 ${smoke.parallel} 项，需串行 ${smoke.serial} 项"
-        : 'Smoke 收集报告未生成'
-    def failedTestsRowHtml = junit.failedTests
-        ? """
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">失败用例（最多 5 项）</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd; color: #b00020;">${htmlEscape(junit.failedTests.join('；'))}</td>
-        </tr>
+        ? "${smoke.total} 项（并发 ${smoke.parallel} / 串行 ${smoke.serial}）"
+        : '未生成收集清单'
+    def failedTestsHtml = ''
+    if (junit.available && failedCount > 0) {
+        def failedItems = junit.failedTests.collect { failedTest ->
+            "<li style=\"margin: 4px 0;\">${htmlEscape(failedTest)}</li>"
+        }.join('')
+        if (!failedItems) {
+            failedItems = '<li style="margin: 4px 0;">未能从 JUnit 报告提取失败用例名称</li>'
+        }
+        failedTestsHtml = """
+        <div style="margin-top: 16px; padding: 12px 16px; background: #fff5f5; border-left: 4px solid #b00020;">
+          <div style="font-weight: 600; color: #b00020;">失败用例（最多 5 项）</div>
+          <ul style="margin: 8px 0 0; padding-left: 20px;">${failedItems}</ul>
+        </div>
         """
-        : ''
-    def qualityRowsHtml = buildQualityRowsHtml(realSmokeEnabled, quality)
-    def p1RowsHtml = buildP1RowsHtml(realSmokeEnabled, p1)
-    def dataStatusText = [
-        "JUnit：${junit.available ? '可用' : '缺失'}",
-        "Smoke 收集：${smoke.available ? '可用' : '缺失'}",
-        "P0：${realSmokeEnabled ? (quality.available ? '可用' : '缺失') : '不适用'}",
-        "P1：${realSmokeEnabled ? (p1.available ? '可用' : '缺失') : '不适用'}",
-    ].join('；')
+    }
     def reportLinks = [
         "<a href=\"${htmlEscape(buildUrl)}\">构建详情</a>",
         "<a href=\"${htmlEscape(buildUrl)}console\">控制台日志</a>",
         "<a href=\"${htmlEscape(buildUrl)}allure/\">Allure 报告</a>",
-        "<a href=\"${htmlEscape(buildUrl)}artifact/\">构建产物</a>",
     ]
     if (junit.available) {
         reportLinks << "<a href=\"${htmlEscape(buildUrl)}testReport/\">JUnit 报告</a>"
     }
-    if (smoke.available) {
-        reportLinks << "<a href=\"${htmlEscape(buildUrl)}artifact/reports/smoke-collect.txt\">Smoke 收集清单</a>"
-    }
-    if (realSmokeEnabled && quality.available) {
-        reportLinks << "<a href=\"${htmlEscape(buildUrl)}artifact/reports/quality/gate-report.md\">P0 影子门禁报告</a>"
-    }
-    if (realSmokeEnabled && p1.available) {
-        reportLinks << "<a href=\"${htmlEscape(buildUrl)}artifact/reports/quality/p1-observation.md\">P1 单次观察与 Flaky 报告</a>"
-    }
+    reportLinks << "<a href=\"${htmlEscape(buildUrl)}artifact/\">构建产物</a>"
 
     return """
-    <div style="font-family: 'Microsoft YaHei', 'PingFang SC', Arial, sans-serif; color: #222; line-height: 1.4;">
-      <h2 style="margin: 0 0 12px;">${htmlEscape(env.JOB_NAME)} #${htmlEscape(env.BUILD_NUMBER)} 构建报告：${htmlEscape(statusText)}</h2>
-      <table style="border-collapse: collapse; min-width: 680px;">
+    <div style="max-width: 720px; font-family: 'Microsoft YaHei', 'PingFang SC', Arial, sans-serif; color: #222; line-height: 1.5;">
+      <h2 style="margin: 0; color: ${statusColor};">${htmlEscape(statusText)}</h2>
+      <p style="margin: 4px 0 0; color: #555;">${htmlEscape(env.JOB_NAME)} #${htmlEscape(env.BUILD_NUMBER)}</p>
+      <p style="margin: 2px 0 16px; color: #777;">${htmlEscape(branchName)} · ${htmlEscape(gitCommit)} · ${htmlEscape(formatDurationChinese(currentBuild.duration))}</p>
+      <table style="width: 100%; border-collapse: collapse;">
         <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">构建状态</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd; color: ${statusColor};"><b>${htmlEscape(statusText)}</b></td>
+          <td style="width: 72px; padding: 9px 10px; border: 1px solid #ddd; color: #666;">测试</td>
+          <td style="padding: 9px 10px; border: 1px solid #ddd;">${htmlEscape(junitText)}</td>
         </tr>
         <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">任务名称</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(env.JOB_NAME)}</td>
+          <td style="padding: 9px 10px; border: 1px solid #ddd; color: #666;">Smoke</td>
+          <td style="padding: 9px 10px; border: 1px solid #ddd;">${htmlEscape(smokeText)}</td>
         </tr>
         <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">构建编号</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">#${htmlEscape(env.BUILD_NUMBER)}</td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">构建耗时</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(formatDurationChinese(currentBuild.duration))}</td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">分支</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(branchName)}</td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">提交版本</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(gitCommit)}</td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">JUnit 测试结果</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(junitText)}</td>
-        </tr>
-        ${failedTestsRowHtml}
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">冒烟用例收集</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(smokeText)}</td>
-        </tr>
-        ${qualityRowsHtml}
-        ${p1RowsHtml}
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">邮件数据完整性</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(dataStatusText)}</td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">运行框架单元测试</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(booleanText(params.RUN_FRAMEWORK_TESTS))}</td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">仅收集冒烟用例</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(booleanText(params.RUN_COLLECT_ONLY))}</td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">运行真实冒烟测试</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(booleanText(params.RUN_REAL_SMOKE))}</td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">运行环境</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(environmentText(params.USE_CHINA_ENVIRONMENT))}</td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">冒烟测试目标</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(params.SMOKE_TARGET)}</td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">并发进程数</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(workerText(params.TEST_PARALLEL_WORKERS))}</td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">每次构建均发送邮件</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(booleanText(params.ALWAYS_SEND_REPORT_EMAIL))}</td>
+          <td style="padding: 9px 10px; border: 1px solid #ddd; color: #666;">执行</td>
+          <td style="padding: 9px 10px; border: 1px solid #ddd;">${htmlEscape(buildExecutionSummary())}</td>
         </tr>
       </table>
-
-      <p style="margin-top: 14px;">
+      ${failedTestsHtml}
+      <p style="margin-top: 16px;">
         ${reportLinks.join(' | ')}
       </p>
+      <p style="margin-top: 8px; color: #888; font-size: 12px;">详细质量数据请在构建产物中查看。</p>
     </div>
     """
 }
 
-String buildQualityRowsHtml(boolean realSmokeEnabled, Map quality) {
-    if (!realSmokeEnabled) {
-        return """
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">P0 质量数据</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">本次未执行真实 Smoke，P0 质量结论不适用</td>
-        </tr>
-        """
+String buildExecutionSummary() {
+    def parts = []
+    if (String.valueOf(params.RUN_FRAMEWORK_TESTS).equalsIgnoreCase('true')) {
+        parts << '框架测试'
     }
-    if (!quality.available) {
-        return """
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">P0 质量数据</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd; color: #b00020;">真实 Smoke 已启用，但 P0 摘要缺失，请检查构建产物和控制台日志</td>
-        </tr>
-        """
+    if (String.valueOf(params.RUN_COLLECT_ONLY).equalsIgnoreCase('true')) {
+        parts << 'Smoke 收集'
     }
-    return """
-    <tr>
-      <td style="padding: 6px 10px; border: 1px solid #ddd;">P0 影子门禁</td>
-      <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(quality.overall)}，完整性 ${htmlEscape(quality.integrity)}</td>
-    </tr>
-    <tr>
-      <td style="padding: 6px 10px; border: 1px solid #ddd;">P0 用例摘要</td>
-      <td style="padding: 6px 10px; border: 1px solid #ddd;">共 ${htmlEscape(quality.caseTotal)} 项，通过 ${htmlEscape(quality.casePassed)} 项，失败 ${htmlEscape(quality.caseFailed)} 项，错误 ${htmlEscape(quality.caseError)} 项，跳过 ${htmlEscape(quality.caseSkipped)} 项</td>
-    </tr>
-    <tr>
-      <td style="padding: 6px 10px; border: 1px solid #ddd;">P0 失败分类</td>
-      <td style="padding: 6px 10px; border: 1px solid #ddd;">产品缺陷 ${htmlEscape(quality.productDefect)}，配置问题 ${htmlEscape(quality.configuration)}，框架缺陷 ${htmlEscape(quality.frameworkDefect)}，未知 ${htmlEscape(quality.unknown)}</td>
-    </tr>
-    <tr>
-      <td style="padding: 6px 10px; border: 1px solid #ddd;">P0 请求摘要</td>
-      <td style="padding: 6px 10px; border: 1px solid #ddd;">共 ${htmlEscape(quality.requestTotal)} 次，HTTP 5xx ${htmlEscape(quality.http5xx)} 次，超时 ${htmlEscape(quality.timeout)} 次</td>
-    </tr>
-    """
-}
-
-String buildP1RowsHtml(boolean realSmokeEnabled, Map p1) {
-    if (!realSmokeEnabled) {
-        return """
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">P1 观察数据</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">本次未执行真实 Smoke，P1 指标与 Flaky 结论不适用</td>
-        </tr>
-        """
+    if (String.valueOf(params.RUN_REAL_SMOKE).equalsIgnoreCase('true')) {
+        parts << "真实 Smoke（${params.SMOKE_TARGET}）"
+        parts << "并发 ${workerText(params.TEST_PARALLEL_WORKERS)}"
     }
-    if (!p1.available) {
-        return """
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">P1 观察数据</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd; color: #b00020;">真实 Smoke 已启用，但 P1 观察报告缺失，请检查构建产物和控制台日志</td>
-        </tr>
-        """
+    if (parts.isEmpty()) {
+        parts << '未选择测试任务'
     }
-    return """
-    <tr>
-      <td style="padding: 6px 10px; border: 1px solid #ddd;">P1 单次观察</td>
-      <td style="padding: 6px 10px; border: 1px solid #ddd;">状态 ${htmlEscape(p1.reportStatus)}，逻辑调用 ${htmlEscape(p1.operationCount)}，workload ${htmlEscape(p1.workloadOperationCount)}，成功/失败/超时 ${htmlEscape(p1.operationSuccess)}/${htmlEscape(p1.operationFailed)}/${htmlEscape(p1.operationTimeout)}</td>
-    </tr>
-    <tr>
-      <td style="padding: 6px 10px; border: 1px solid #ddd;">P1 用量与 Flaky</td>
-      <td style="padding: 6px 10px; border: 1px solid #ddd;">usage complete/partial/missing ${htmlEscape(p1.usageComplete)}/${htmlEscape(p1.usagePartial)}/${htmlEscape(p1.usageMissing)}；suspected ${htmlEscape(p1.newlySuspected)}，confirmed ${htmlEscape(p1.newlyConfirmed)}，quarantined ${htmlEscape(p1.quarantined)}，recovering ${htmlEscape(p1.recovering)}，recovered ${htmlEscape(p1.recovered)}，overdue ${htmlEscape(p1.overdue)}；必需数据源故障 ${htmlEscape(p1.requiredSourceFailures)}</td>
-    </tr>
-    """
+    parts << environmentText(params.USE_CHINA_ENVIRONMENT)
+    return parts.join(' · ')
 }
 
 String normalizeBranchName(def value) {
@@ -611,10 +384,6 @@ String buildStatusText(String status) {
         NOT_BUILT: '未执行构建',
     ]
     return labels[status] ?: '未知构建状态'
-}
-
-String booleanText(def value) {
-    return String.valueOf(value).equalsIgnoreCase('true') ? '是' : '否'
 }
 
 String environmentText(def value) {
@@ -658,12 +427,17 @@ void notifyByEmail(String status) {
 
     try {
         def statusText = buildStatusText(status)
+        def junit = readJunitSummary()
+        def smoke = readSmokeCollectSummary()
+        def resultText = junit.available
+            ? "${junit.failures + junit.errors} 失败 / ${junit.tests} 项"
+            : '测试报告未生成'
         emailext(
-            subject: "【${statusText}】${env.JOB_NAME} #${env.BUILD_NUMBER} 构建报告",
+            subject: "【${statusText}】${env.JOB_NAME} #${env.BUILD_NUMBER}｜${resultText}",
             mimeType: 'text/html',
             to: env.CI_MAIL_TO,
             from: env.CI_MAIL_FROM,
-            body: buildResultSummaryHtml(status)
+            body: buildResultSummaryHtml(status, junit, smoke)
         )
     } catch (error) {
         echo "CI 邮件通知发送失败：${error.getMessage()}"
@@ -705,12 +479,6 @@ Map parseSmokeCollectText(String text) {
         parallel: extractFirstGroup(text, /Parallel pool cases:\s*(\d+)/, '-'),
         serial: extractFirstGroup(text, /Serial pool cases:\s*(\d+)/, '-'),
     ]
-}
-
-@NonCPS
-Map parseJsonObject(String text) {
-    def parsed = new groovy.json.JsonSlurperClassic().parseText(text)
-    return parsed instanceof Map ? parsed : [:]
 }
 
 @NonCPS

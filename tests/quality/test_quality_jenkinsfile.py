@@ -4,7 +4,7 @@ from pathlib import Path
 JENKINSFILE = Path(__file__).resolve().parents[2] / "Jenkinsfile"
 
 
-def test_real_smoke_enables_quality_report_and_email_links_artifact():
+def test_real_smoke_enables_quality_reports_and_archives_artifacts():
     content = JENKINSFILE.read_text(encoding="utf-8")
 
     assert content.index("deleteDir()") < content.index("def scmVars = checkout scm")
@@ -29,26 +29,30 @@ def test_real_smoke_enables_quality_report_and_email_links_artifact():
     assert "D:\\API_CASE_DATA" not in content
     assert "$env:QUALITY_OUTPUT_DIR = 'reports/quality'" in content
     assert "$env:QUALITY_SHADOW_GATE = '1'" in content
-    assert "Map readQualitySummary()" in content
-    assert "catch (error)" in content
-    assert "artifact/reports/quality/gate-report.md" in content
-    assert "readP1ObservationSummary()" in content
-    assert "p1-observation-manifest.json" in content
-    assert "artifact/reports/quality/p1-observation.md" in content
+    assert "Map readQualitySummary()" not in content
+    assert "Map readP1ObservationSummary()" not in content
+    assert "Map parseJsonObject(String text)" not in content
 
 
-def test_email_summary_distinguishes_available_missing_and_not_applicable_data():
+def test_email_summary_is_compact_and_excludes_quality_stage_details():
     content = JENKINSFILE.read_text(encoding="utf-8")
+    email_content = content[
+        content.index("String buildResultSummaryHtml") : content.index("String normalizeBranchName")
+    ]
 
     assert "passed: 0" in content
-    assert "casePassed: summary.case_passed ?: 0" in content
     assert "failedTests: []" in content
     assert "失败用例（最多 5 项）" in content
-    assert "邮件数据完整性" in content
-    assert "本次未执行真实 Smoke，P0 质量结论不适用" in content
-    assert "本次未执行真实 Smoke，P1 指标与 Flaky 结论不适用" in content
-    assert "realSmokeEnabled && quality.available" in content
-    assert "realSmokeEnabled && p1.available" in content
+    assert "测试报告未生成，构建可能在测试阶段前失败，请查看控制台日志。" in content
+    assert "详细质量数据请在构建产物中查看。" in content
+    assert "${junit.tests} 总计 / ${junit.passed} 通过 / ${failedCount} 失败 / ${junit.skipped} 跳过" in content
+    assert "${smoke.total} 项（并发 ${smoke.parallel} / 串行 ${smoke.serial}）" in content
+    assert "buildExecutionSummary()" in email_content
+    assert "artifact/reports/quality" not in email_content
+    assert "P0" not in email_content
+    assert "P1" not in email_content
     assert "normalizeBranchName(env.BRANCH_NAME ?: env.GIT_BRANCH)" in content
     assert "shortGitCommit(env.GIT_COMMIT)" in content
+    assert 'subject: "【${statusText}】${env.JOB_NAME} #${env.BUILD_NUMBER}｜${resultText}"' in content
+    assert "body: buildResultSummaryHtml(status, junit, smoke)" in content
     assert "'dev2'" not in content
