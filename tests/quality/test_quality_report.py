@@ -219,3 +219,35 @@ def test_report_folds_phase_rows_into_final_invocation_statuses(tmp_path):
     assert sum(
         item["fingerprint_count"] for item in report["failures"]["categories"].values()
     ) >= 1
+
+
+def test_report_counts_setup_skip_with_passing_teardown_as_skipped(tmp_path):
+    output_dir = tmp_path / "quality"
+    shard = output_dir / "shards" / "cases-serial-pool-master.jsonl"
+    append_jsonl(
+        shard,
+        _case(
+            CasePhase.SETUP,
+            raw_status=CaseStatus.SKIPPED,
+            final_status=CaseStatus.SKIPPED,
+        ),
+    )
+    append_jsonl(shard, _case(CasePhase.TEARDOWN))
+    merge_quality_run(
+        QualityMergeRequest(
+            run_id="run-1",
+            output_dir=output_dir,
+            expected_execution_ids=("serial-pool",),
+            expected_case_count=1,
+        )
+    )
+    write_json_atomic(output_dir / "run.json", {"run_id": "run-1"})
+
+    result = generate_quality_report(
+        QualityReportRequest(run_id="run-1", output_dir=output_dir)
+    )
+
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))["summary"]
+    assert summary["case_total"] == 1
+    assert summary["case_passed"] == 0
+    assert summary["case_skipped"] == 1
