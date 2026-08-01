@@ -159,9 +159,19 @@ def test_observation_report_commits_complete_artifacts(semantic_runtime):
     assert manifest["output_hashes"]["markdown"] == hashlib.sha256(
         result.markdown_path.read_bytes()
     ).hexdigest()
+    payload = json.loads(result.json_path.read_text(encoding="utf-8"))
+    assert payload["report_status"] == "complete"
+    assert any(
+        item["metric_name"] == "operation.success_rate"
+        for item in payload["metrics"]["observations"]
+    )
     markdown = result.markdown_path.read_text(encoding="utf-8")
-    assert "QUARANTINED 是治理标签" in markdown
+    assert "“已隔离（QUARANTINED）”是治理标签" in markdown
     assert "P1 报告状态只表示观察数据完整性" in markdown
+    assert "报告状态：完整（`complete`）" in markdown
+    assert "业务逻辑调用：共 1 次" in markdown
+    assert "逻辑调用成功率（`operation.success_rate`）" in markdown
+    assert "输入 Token（`input tokens`）" in markdown
 
 
 def test_required_metrics_hash_mismatch_degrades_without_hiding_p0(semantic_runtime):

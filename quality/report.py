@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 from collections import Counter, defaultdict
 from collections.abc import Iterable
@@ -40,6 +41,44 @@ from quality.storage import ensure_quality_dirs, write_json_atomic
 
 
 REPORT_VERSION = "p0-report.v1"
+
+_GATE_RESULT_LABELS = {
+    "PASS": "通过",
+    "WARN": "警告",
+    "BLOCK": "阻断",
+    "NO_DATA": "无数据",
+}
+_GATE_MODE_LABELS = {"shadow": "影子观察"}
+_INTEGRITY_STATUS_LABELS = {
+    "complete": "完整",
+    "degraded": "降级",
+    "failed": "失败",
+}
+_FAILURE_CATEGORY_LABELS = {
+    "PRODUCT_DEFECT": "产品缺陷",
+    "TEST_DEFECT": "测试缺陷",
+    "FRAMEWORK_DEFECT": "框架缺陷",
+    "ENVIRONMENT": "环境问题",
+    "CONFIGURATION": "配置问题",
+    "TRANSIENT": "瞬时故障",
+    "UNKNOWN": "未知原因",
+}
+_ISSUE_SEVERITY_LABELS = {
+    "info": "提示",
+    "warn": "警告",
+    "error": "错误",
+}
+_GATE_RULE_LABELS = {
+    "p0.shadow_gate.enabled": "影子门禁已启用",
+    "p0.integrity.available": "质量数据可用",
+    "p0.integrity.degraded": "质量数据未降级",
+    "p0.failure.product_defect": "产品缺陷为零",
+    "p0.failure.configuration": "配置问题为零",
+    "p0.failure.framework_defect": "框架缺陷为零",
+    "p0.failure.unknown": "未知失败为零",
+    "p0.request.http_5xx_rate": "HTTP 5xx 比例",
+    "p0.request.timeout_rate": "请求超时比例",
+}
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
@@ -638,10 +677,10 @@ def _render_markdown(summary_envelope: dict[str, Any], gate_decision: GateDecisi
         "",
         "## 结论",
         "",
-        f"- Overall: `{gate_decision.overall.value}`",
-        f"- Mode: `{gate_decision.mode.value}`",
-        f"- Integrity: `{summary_payload['integrity_status']}`",
-        f"- Run ID: `{summary_envelope['run_id']}`",
+        f"- 总体结论：{_localized_code(gate_decision.overall.value, _GATE_RESULT_LABELS)}",
+        f"- 运行模式：{_localized_code(gate_decision.mode.value, _GATE_MODE_LABELS)}",
+        f"- 数据完整性：{_localized_code(summary_payload['integrity_status'], _INTEGRITY_STATUS_LABELS)}",
+        f"- 运行 ID：`{summary_envelope['run_id']}`",
         "",
         "## 为什么得到这个结论",
         "",
@@ -649,12 +688,15 @@ def _render_markdown(summary_envelope: dict[str, Any], gate_decision: GateDecisi
             ("规则", "结论", "实际值", "阈值", "样本量", "证据"),
             [
                 (
-                    rule.rule_id,
-                    rule.decision.value,
-                    _md_value(rule.actual),
-                    _md_value(rule.threshold),
+                    _localized_code(rule.rule_id, _GATE_RULE_LABELS),
+                    _localized_code(rule.decision.value, _GATE_RESULT_LABELS),
+                    _localized_value(rule.actual),
+                    _localized_value(rule.threshold),
                     str(rule.sample_size),
-                    "<br>".join(_truncate(item, 120) for item in rule.evidence),
+                    "<br>".join(
+                        _truncate(_localized_gate_evidence(item), 120)
+                        for item in rule.evidence
+                    ),
                 )
                 for rule in gate_decision.rules
             ],
@@ -679,10 +721,10 @@ def _render_markdown(summary_envelope: dict[str, Any], gate_decision: GateDecisi
         "## 失败分类",
         "",
         _md_table(
-            ("分类", "occurrence", "问题模式", "受影响 invocation", "示例"),
+            ("分类", "出现次数", "问题模式数", "受影响调用实例", "示例"),
             [
                 (
-                    category,
+                    _localized_code(category, _FAILURE_CATEGORY_LABELS),
                     str(details["occurrence_count"]),
                     str(details["fingerprint_count"]),
                     str(details["affected_invocation_count"]),
@@ -711,7 +753,7 @@ def _render_markdown(summary_envelope: dict[str, Any], gate_decision: GateDecisi
         "## 接口风险 Top",
         "",
         _md_table(
-            ("interface_id", "请求数", "5xx", "超时", "平均耗时", "最大耗时"),
+            ("接口标识", "请求数", "5xx", "超时", "平均耗时（毫秒）", "最大耗时（毫秒）"),
             [
                 (
                     item["interface_id"],
@@ -729,10 +771,10 @@ def _render_markdown(summary_envelope: dict[str, Any], gate_decision: GateDecisi
         "## 完整性问题",
         "",
         _md_table(
-            ("severity", "source", "code", "message"),
+            ("级别", "来源", "代码", "说明"),
             [
                 (
-                    item["severity"],
+                    _localized_code(item["severity"], _ISSUE_SEVERITY_LABELS),
                     item["source"],
                     item["code"],
                     _truncate(item["message"], 160),
@@ -740,7 +782,12 @@ def _render_markdown(summary_envelope: dict[str, Any], gate_decision: GateDecisi
                 for item in summary_envelope["integrity"]["issues"]
             ]
             or [
-                ("warn", "report", "report_warning", _truncate(warning, 160))
+                (
+                    _localized_code("warn", _ISSUE_SEVERITY_LABELS),
+                    "报告（`report`）",
+                    "报告警告（`report_warning`）",
+                    _truncate(warning, 160),
+                )
                 for warning in summary_envelope["integrity"]["report_warnings"]
             ]
             or [("-", "-", "-", "无")],
@@ -764,6 +811,55 @@ def _md_value(value: Any) -> str:
     if isinstance(value, float):
         return f"{value:.4f}"
     return str(value)
+
+
+def _localized_code(value: object, labels: dict[str, str]) -> str:
+    raw = str(value)
+    label = labels.get(raw)
+    return f"{label}（`{raw}`）" if label else f"`{raw}`"
+
+
+def _localized_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return f"{'是' if value else '否'}（`{str(value).lower()}`）"
+    raw = _md_value(value)
+    for labels in (_INTEGRITY_STATUS_LABELS, _GATE_RESULT_LABELS):
+        if raw in labels:
+            return _localized_code(raw, labels)
+    return raw
+
+
+def _localized_gate_evidence(value: str) -> str:
+    exact = {
+        "shadow gate disabled": "影子门禁已关闭",
+        "quality merged snapshot is not available": "质量归并快照不可用",
+        "quality integrity status is failed": "质量数据完整性检查失败",
+        "manifest is complete and output hashes match": "清单完整，且输出文件哈希一致",
+        "quality integrity status is degraded": "质量数据完整性已降级",
+        "quality integrity status is not degraded": "质量数据完整性未降级",
+    }
+    if value in exact:
+        return exact[value]
+    occurrence = re.fullmatch(r"([A-Z_]+) occurrence count: (\d+)", value)
+    if occurrence:
+        category, count = occurrence.groups()
+        label = _FAILURE_CATEGORY_LABELS.get(category, category)
+        return f"{label}（{category}）出现次数：{count}"
+    rate_count = re.fullmatch(r"(.+) count (\d+) of (\d+)", value)
+    if rate_count:
+        label, count, total = rate_count.groups()
+        localized_label = "超时" if label == "timeout" else label
+        separator = " " if localized_label.startswith("HTTP") else ""
+        return f"{total} 个请求中出现 {count} 次{separator}{localized_label}"
+    small_sample = re.fullmatch(
+        r"(.+) sample size (\d+) is below minimum (\d+)", value
+    )
+    if small_sample:
+        label, sample_size, minimum = small_sample.groups()
+        localized_label = "超时" if label == "timeout" else label
+        separator = " " if localized_label.startswith("HTTP") else ""
+        return f"{localized_label}{separator}样本量 {sample_size}，低于最小要求 {minimum}"
+    return value
 
 
 def _failure_example(examples: list[dict[str, str]]) -> str:
