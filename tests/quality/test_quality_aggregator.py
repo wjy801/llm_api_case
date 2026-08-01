@@ -131,3 +131,47 @@ def test_merge_recovers_valid_lines_and_classifies_failed_case_with_junit(tmp_pa
     assert cases[0]["failure_id"] == failures[0]["failure_id"]
     assert failures[0]["category"] in {"PRODUCT_DEFECT", "UNKNOWN"}
     assert any(issue["code"] == "invalid_jsonl_line" for issue in issues)
+
+
+def test_merge_treats_setup_skip_and_passing_teardown_as_skipped(tmp_path):
+    output_dir = tmp_path / "quality"
+    case_shard = output_dir / "shards" / "cases-serial-pool-master.jsonl"
+    append_jsonl(
+        case_shard,
+        _case(
+            phase=CasePhase.SETUP,
+            raw_status=CaseStatus.SKIPPED,
+            final_status=CaseStatus.SKIPPED,
+        ),
+    )
+    append_jsonl(case_shard, _case(phase=CasePhase.TEARDOWN))
+    junit = output_dir / "junit" / "quality.xml"
+    junit.parent.mkdir(parents=True)
+    junit.write_text(
+        """
+        <testsuite tests="1" skipped="1">
+          <testcase classname="c" name="n">
+            <properties>
+              <property name="quality_case_id" value="module/test_demo.py::test_case" />
+              <property name="quality_invocation_id" value="inv-1" />
+            </properties>
+            <skipped message="sample" />
+          </testcase>
+        </testsuite>
+        """,
+        encoding="utf-8",
+    )
+
+    result = merge_quality_run(
+        QualityMergeRequest(
+            run_id="run-1",
+            output_dir=output_dir,
+            expected_execution_ids=("serial-pool",),
+            expected_case_count=1,
+            junit_files=(junit,),
+        )
+    )
+
+    assert result.integrity_status is IntegrityStatus.COMPLETE
+    issues = read_jsonl(output_dir / "merged" / "integrity-issues.jsonl")
+    assert not any(issue["code"] == "junit_status_mismatch" for issue in issues)
