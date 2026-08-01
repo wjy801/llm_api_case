@@ -4,8 +4,13 @@ from typing import Any
 
 import pytest
 
-from common.base_task import BaseTask
-from common.polling import DEFAULT_MEDIA_POLLING_POLICY
+from common.base_task import (
+    USAGE_RECORD_SETTLEMENT_POLLING_POLICY,
+    USAGE_RECORD_SETTLEMENT_POLL_INTERVAL_SECONDS,
+    USAGE_RECORD_SETTLEMENT_TIMEOUT_SECONDS,
+    BaseTask,
+)
+from common.polling import DEFAULT_MEDIA_POLLING_POLICY, PollingState, evaluate_polling_response
 
 
 class FakeResponse:
@@ -61,16 +66,20 @@ class FakeGenerationRequest:
         poll_timeout: float | None = None,
         polling_policy: Any = None,
         retry_policy: Any = None,
+        **kwargs: Any,
     ) -> FakeResponse:
-        self.poll_calls.append(
-            {
-                "path": path,
-                "poll_interval": poll_interval,
-                "poll_timeout": poll_timeout,
-                "polling_policy": polling_policy,
-                "retry_policy": retry_policy,
-            }
-        )
+        call = {
+            "path": path,
+            "poll_interval": poll_interval,
+            "poll_timeout": poll_timeout,
+            "polling_policy": polling_policy,
+            "retry_policy": retry_policy,
+        }
+        call.update(kwargs)
+        self.poll_calls.append(call)
+        if path == "/v1/account/usage-records":
+            request_id = kwargs.get("params", {}).get("request_id")
+            return FakeResponse({"data": {"request_id": request_id, "status": "success"}})
         return FakeResponse({"result": {"urls": ["https://example.com/image.png"]}})
 
 
@@ -226,7 +235,7 @@ class TestBaseTask:
 
         response = task.query_usage_records_for_billing(request_client, model_response=model_response)
 
-        assert response.json() == {"data": [{"request_id": "request-001"}]}
+        assert response.json() == {"data": {"request_id": "request-001", "status": "success"}}
 
     def test_query_usage_records_for_billing_accepts_request_id(self):
         task = BaseTask()
@@ -234,7 +243,52 @@ class TestBaseTask:
 
         response = task.query_usage_records_for_billing(request_client, request_id="request-001")
 
-        assert response.json() == {"data": [{"request_id": "request-001"}]}
+        assert response.json() == {"data": {"request_id": "request-001", "status": "success"}}
+
+    def test_billing_usage_query_waits_for_terminal_record(self, monkeypatch):
+        task = BaseTask()
+        request_client = FakeGenerationRequest()
+        monkeypatch.setattr(task, "get_required_control_api_key", lambda: "control-key")
+
+        response = task.query_usage_records_by_request_id_for_billing(request_client, "request-001")
+
+        assert response.json()["data"]["status"] == "success"
+        assert request_client.poll_calls == [
+            {
+                "path": "/v1/account/usage-records",
+                "poll_interval": USAGE_RECORD_SETTLEMENT_POLL_INTERVAL_SECONDS,
+                "poll_timeout": USAGE_RECORD_SETTLEMENT_TIMEOUT_SECONDS,
+                "polling_policy": USAGE_RECORD_SETTLEMENT_POLLING_POLICY,
+                "retry_policy": None,
+                "params": {"request_id": "request-001", "": ""},
+                "_quality_operation_name": "usage_record_settlement",
+                "_quality_traffic_role": "control",
+            }
+        ]
+        assert request_client.updated_headers[-1] == {"Authorization": "Bearer control-key"}
+        assert request_client.reset_headers_count == 1
+
+    @pytest.mark.parametrize(
+        ("status", "expected_state"),
+        [
+            ("pending", PollingState.PENDING),
+            ("success", PollingState.SUCCESS),
+            ("failed", PollingState.SUCCESS),
+        ],
+    )
+    def test_usage_record_settlement_policy_recognizes_pending_and_terminal_statuses(
+        self,
+        status,
+        expected_state,
+    ):
+        response = FakeResponse({"data": {"status": status}})
+
+        evaluation = evaluate_polling_response(
+            response,
+            USAGE_RECORD_SETTLEMENT_POLLING_POLICY,
+        )
+
+        assert evaluation.state is expected_state
 
     def test_get_request_id_from_response_requires_header(self):
         with pytest.raises(AssertionError, match="x-oneapi-request-id"):
