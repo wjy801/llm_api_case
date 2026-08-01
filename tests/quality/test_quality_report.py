@@ -111,7 +111,12 @@ def test_report_generates_summary_gate_and_markdown_from_verified_snapshot(tmp_p
     assert gate["overall"] == "WARN"
     assert QualitySummary.model_validate(summary["summary"]).case_total == 1
     assert GateDecision.model_validate(gate["decision"]).overall is GateResult.WARN
-    assert "P0 质量影子门禁报告" in result.gate_report_md_path.read_text(encoding="utf-8")
+    markdown = result.gate_report_md_path.read_text(encoding="utf-8")
+    assert "P0 质量影子门禁报告" in markdown
+    assert "总体结论：警告（`WARN`）" in markdown
+    assert "HTTP 5xx 比例（`p0.request.http_5xx_rate`）" in markdown
+    assert "2 个请求中出现 1 次 HTTP 5xx" in markdown
+    assert "平均耗时（毫秒）" in markdown
 
 
 def test_report_rejects_hash_mismatch_and_emits_no_data(tmp_path):

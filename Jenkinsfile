@@ -5,6 +5,12 @@ pipeline {
         timestamps()
         timeout(time: 60, unit: 'MINUTES')
         disableConcurrentBuilds()
+        buildDiscarder(logRotator(
+            artifactDaysToKeepStr: '4',
+            artifactNumToKeepStr: '-1',
+            daysToKeepStr: '-1',
+            numToKeepStr: '-1'
+        ))
     }
 
     triggers {
@@ -282,7 +288,7 @@ String buildResultSummaryHtml(String status, Map junit, Map smoke) {
     def failedCount = junit.failures + junit.errors
     def junitText = junit.available
         ? "${junit.tests} 总计 / ${junit.passed} 通过 / ${failedCount} 失败 / ${junit.skipped} 跳过"
-        : '测试报告未生成，构建可能在测试阶段前失败，请查看控制台日志。'
+        : '测试报告未生成，构建可能在测试阶段前失败。'
     def smokeText = smoke.available
         ? "${smoke.total} 项（并发 ${smoke.parallel} / 串行 ${smoke.serial}）"
         : '未生成收集清单'
@@ -302,12 +308,16 @@ String buildResultSummaryHtml(String status, Map junit, Map smoke) {
         """
     }
     def reportLinks = [
-        "<a href=\"${htmlEscape(buildUrl)}\">构建详情</a>",
-        "<a href=\"${htmlEscape(buildUrl)}console\">控制台日志</a>",
         "<a href=\"${htmlEscape(buildUrl)}allure/\">Allure 报告</a>",
     ]
     if (junit.available) {
         reportLinks << "<a href=\"${htmlEscape(buildUrl)}testReport/\">JUnit 报告</a>"
+    }
+    if (fileExists('reports/quality/gate-report.md')) {
+        reportLinks << "<a href=\"${htmlEscape(buildUrl)}artifact/reports/quality/gate-report.md\">P0 质量门禁报告</a>"
+    }
+    if (fileExists('reports/quality/p1-observation.md')) {
+        reportLinks << "<a href=\"${htmlEscape(buildUrl)}artifact/reports/quality/p1-observation.md\">P1 观察报告</a>"
     }
     reportLinks << "<a href=\"${htmlEscape(buildUrl)}artifact/\">构建产物</a>"
 
