@@ -18,7 +18,7 @@ def test_real_smoke_enables_quality_report_and_email_links_artifact():
     assert "archiveArtifacts artifacts: 'allure-results/**, reports/**'" in content
     assert "$flakyEnvFiles = @('.env', 'D:/API_CASE/.env')" in content
     assert "Get-Content -LiteralPath $flakyEnvFile" in content
-    assert "QUALITY_FLAKY_DB_PATH\\s*=" in content
+    assert "Where-Object { $_ -match '^\\\\s*QUALITY_FLAKY_DB_PATH\\\\s*=' }" in content
     assert "IsNullOrWhiteSpace($env:QUALITY_FLAKY_DB_PATH) -and" in content
     assert "IsNullOrWhiteSpace($env:QUALITY_FLAKY_DB_PATH)" in content
     assert "D:/API_CASE_DATA" not in content
