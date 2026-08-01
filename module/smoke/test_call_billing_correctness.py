@@ -29,7 +29,11 @@ class TestCallBillingCorrectness:
             self.smoke_request,
             image_response,
         )
-        after_balance_response = self.smoke_task.query_account_balance_for_billing(self.smoke_request)
+        after_balance_response = (
+            self.smoke_task.query_account_balance_after_settlement_for_billing(
+                self.smoke_request,
+            )
+        )
 
         self.smoke_assertions.assert_call_billing_deduction_matches(
             before_balance_response,
@@ -44,7 +48,11 @@ class TestCallBillingCorrectness:
             self.smoke_request,
             chat_response,
         )
-        after_balance_response = self.smoke_task.query_account_balance_for_billing(self.smoke_request)
+        after_balance_response = (
+            self.smoke_task.query_account_balance_after_settlement_for_billing(
+                self.smoke_request,
+            )
+        )
 
         self.smoke_assertions.assert_call_billing_deduction_matches(
             before_balance_response,
@@ -63,7 +71,11 @@ class TestCallBillingCorrectness:
             )
             for request_id in request_ids
         ]
-        after_balance_response = self.smoke_task.query_account_balance_for_billing(self.smoke_request)
+        after_balance_response = (
+            self.smoke_task.query_account_balance_after_settlement_for_billing(
+                self.smoke_request,
+            )
+        )
 
         for index, usage_records_response in enumerate(usage_records_responses, start=1):
             usage_quota = self.smoke_assertions.get_usage_quota_yuan(usage_records_response)
@@ -91,7 +103,11 @@ class TestCallBillingCorrectness:
             stream_result.request_id,
         )
         self.smoke_assertions.print_glm5_actual_stream_cost(usage_records_response)
-        after_balance_response = self.smoke_task.query_account_balance_for_billing(self.smoke_request)
+        after_balance_response = (
+            self.smoke_task.query_account_balance_after_settlement_for_billing(
+                self.smoke_request,
+            )
+        )
 
         self.smoke_assertions.assert_call_billing_deduction_matches(
             before_balance_response,
@@ -105,7 +121,11 @@ class TestCallBillingCorrectness:
             self.smoke_request,
             self.smoke_task.build_sync_image_generation_payload(UNKNOWN_IMAGE_MODEL_ID),
         )
-        after_balance_response = self.smoke_task.query_account_balance_for_billing(self.smoke_request)
+        after_balance_response = (
+            self.smoke_task.query_account_balance_after_settlement_for_billing(
+                self.smoke_request,
+            )
+        )
 
         self.smoke_assertions.assert_status_code(failed_response, 404)
         self.smoke_assertions.assert_json_value(failed_response, "$.error.code", "model_not_found")
