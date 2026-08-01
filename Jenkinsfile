@@ -42,7 +42,11 @@ pipeline {
         stage('Checkout') {
             steps {
                 deleteDir()
-                checkout scm
+                script {
+                    def scmVars = checkout scm
+                    env.GIT_COMMIT = scmVars.GIT_COMMIT ?: env.GIT_COMMIT ?: ''
+                    env.GIT_BRANCH = scmVars.GIT_BRANCH ?: env.GIT_BRANCH ?: ''
+                }
             }
         }
 
@@ -218,7 +222,16 @@ void ciPowerShell(String body) {
 }
 
 Map readJunitSummary() {
-    def summary = [tests: 0, failures: 0, errors: 0, skipped: 0]
+    def summary = [
+        available: false,
+        reportCount: 0,
+        tests: 0,
+        passed: 0,
+        failures: 0,
+        errors: 0,
+        skipped: 0,
+        failedTests: [],
+    ]
     def reportFiles = [
         'reports/unit-tests.xml',
         'reports/smoke-tests.xml',
@@ -229,22 +242,35 @@ Map readJunitSummary() {
     reportFiles.each { reportFile ->
         if (fileExists(reportFile)) {
             def parsed = parseJunitXmlText(readFile(reportFile))
+            summary.available = true
+            summary.reportCount += 1
             summary.tests += parsed.tests
             summary.failures += parsed.failures
             summary.errors += parsed.errors
             summary.skipped += parsed.skipped
+            parsed.failedTests.each { failedTest ->
+                if (summary.failedTests.size() < 5 && !summary.failedTests.contains(failedTest)) {
+                    summary.failedTests << failedTest
+                }
+            }
         }
     }
 
+    summary.passed = summary.tests - summary.failures - summary.errors - summary.skipped
+    if (summary.passed < 0) {
+        summary.passed = 0
+    }
     return summary
 }
 
 Map readSmokeCollectSummary() {
     if (!fileExists('reports/smoke-collect.txt')) {
-        return [total: '-', parallel: '-', serial: '-']
+        return [available: false, total: '-', parallel: '-', serial: '-']
     }
 
-    return parseSmokeCollectText(readFile('reports/smoke-collect.txt'))
+    def summary = parseSmokeCollectText(readFile('reports/smoke-collect.txt'))
+    summary.available = true
+    return summary
 }
 
 Map readQualitySummary() {
@@ -367,8 +393,49 @@ String buildResultSummaryHtml(String status) {
     def statusColor = status == 'FAILED' ? '#b00020' : status == 'UNSTABLE' ? '#b26a00' : '#137333'
     def statusText = buildStatusText(status)
     def buildUrl = env.BUILD_URL ?: ''
-    def branchName = env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'dev2'
-    def gitCommit = env.GIT_COMMIT ?: '-'
+    def branchName = normalizeBranchName(env.BRANCH_NAME ?: env.GIT_BRANCH)
+    def gitCommit = shortGitCommit(env.GIT_COMMIT)
+    def realSmokeEnabled = String.valueOf(params.RUN_REAL_SMOKE).equalsIgnoreCase('true')
+    def junitText = junit.available
+        ? "共 ${junit.tests} 项，通过 ${junit.passed} 项，失败 ${junit.failures} 项，错误 ${junit.errors} 项，跳过 ${junit.skipped} 项"
+        : 'JUnit 报告未生成'
+    def smokeText = smoke.available
+        ? "共 ${smoke.total} 项，可并发 ${smoke.parallel} 项，需串行 ${smoke.serial} 项"
+        : 'Smoke 收集报告未生成'
+    def failedTestsRowHtml = junit.failedTests
+        ? """
+        <tr>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">失败用例（最多 5 项）</td>
+          <td style="padding: 6px 10px; border: 1px solid #ddd; color: #b00020;">${htmlEscape(junit.failedTests.join('；'))}</td>
+        </tr>
+        """
+        : ''
+    def qualityRowsHtml = buildQualityRowsHtml(realSmokeEnabled, quality)
+    def p1RowsHtml = buildP1RowsHtml(realSmokeEnabled, p1)
+    def dataStatusText = [
+        "JUnit：${junit.available ? '可用' : '缺失'}",
+        "Smoke 收集：${smoke.available ? '可用' : '缺失'}",
+        "P0：${realSmokeEnabled ? (quality.available ? '可用' : '缺失') : '不适用'}",
+        "P1：${realSmokeEnabled ? (p1.available ? '可用' : '缺失') : '不适用'}",
+    ].join('；')
+    def reportLinks = [
+        "<a href=\"${htmlEscape(buildUrl)}\">构建详情</a>",
+        "<a href=\"${htmlEscape(buildUrl)}console\">控制台日志</a>",
+        "<a href=\"${htmlEscape(buildUrl)}allure/\">Allure 报告</a>",
+        "<a href=\"${htmlEscape(buildUrl)}artifact/\">构建产物</a>",
+    ]
+    if (junit.available) {
+        reportLinks << "<a href=\"${htmlEscape(buildUrl)}testReport/\">JUnit 报告</a>"
+    }
+    if (smoke.available) {
+        reportLinks << "<a href=\"${htmlEscape(buildUrl)}artifact/reports/smoke-collect.txt\">Smoke 收集清单</a>"
+    }
+    if (realSmokeEnabled && quality.available) {
+        reportLinks << "<a href=\"${htmlEscape(buildUrl)}artifact/reports/quality/gate-report.md\">P0 影子门禁报告</a>"
+    }
+    if (realSmokeEnabled && p1.available) {
+        reportLinks << "<a href=\"${htmlEscape(buildUrl)}artifact/reports/quality/p1-observation.md\">P1 单次观察与 Flaky 报告</a>"
+    }
 
     return """
     <div style="font-family: 'Microsoft YaHei', 'PingFang SC', Arial, sans-serif; color: #222; line-height: 1.4;">
@@ -400,51 +467,18 @@ String buildResultSummaryHtml(String status) {
         </tr>
         <tr>
           <td style="padding: 6px 10px; border: 1px solid #ddd;">JUnit 测试结果</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">
-            共 ${junit.tests} 项，失败 ${junit.failures} 项，错误 ${junit.errors} 项，跳过 ${junit.skipped} 项
-          </td>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(junitText)}</td>
         </tr>
+        ${failedTestsRowHtml}
         <tr>
           <td style="padding: 6px 10px; border: 1px solid #ddd;">冒烟用例收集</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">
-            共 ${htmlEscape(smoke.total)} 项，可并发 ${htmlEscape(smoke.parallel)} 项，需串行 ${htmlEscape(smoke.serial)} 项
-          </td>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(smokeText)}</td>
         </tr>
+        ${qualityRowsHtml}
+        ${p1RowsHtml}
         <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">质量影子门禁</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">
-            ${htmlEscape(quality.overall)}，完整性 ${htmlEscape(quality.integrity)}
-          </td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">质量用例摘要</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">
-            共 ${htmlEscape(quality.caseTotal)} 项，失败 ${htmlEscape(quality.caseFailed)} 项，错误 ${htmlEscape(quality.caseError)} 项，跳过 ${htmlEscape(quality.caseSkipped)} 项
-          </td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">质量失败分类</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">
-            产品缺陷 ${htmlEscape(quality.productDefect)}，配置问题 ${htmlEscape(quality.configuration)}，框架缺陷 ${htmlEscape(quality.frameworkDefect)}，未知 ${htmlEscape(quality.unknown)}
-          </td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">质量请求摘要</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">
-            共 ${htmlEscape(quality.requestTotal)} 次，HTTP 5xx ${htmlEscape(quality.http5xx)} 次，超时 ${htmlEscape(quality.timeout)} 次
-          </td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">P1 单次观察</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">
-            状态 ${htmlEscape(p1.reportStatus)}，逻辑调用 ${htmlEscape(p1.operationCount)}，workload ${htmlEscape(p1.workloadOperationCount)}，成功/失败/超时 ${htmlEscape(p1.operationSuccess)}/${htmlEscape(p1.operationFailed)}/${htmlEscape(p1.operationTimeout)}
-          </td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">P1 用量与 Flaky</td>
-          <td style="padding: 6px 10px; border: 1px solid #ddd;">
-            usage complete/partial/missing ${htmlEscape(p1.usageComplete)}/${htmlEscape(p1.usagePartial)}/${htmlEscape(p1.usageMissing)}；suspected ${htmlEscape(p1.newlySuspected)}，confirmed ${htmlEscape(p1.newlyConfirmed)}，quarantined ${htmlEscape(p1.quarantined)}，recovering ${htmlEscape(p1.recovering)}，recovered ${htmlEscape(p1.recovered)}，overdue ${htmlEscape(p1.overdue)}；必需数据源故障 ${htmlEscape(p1.requiredSourceFailures)}
-          </td>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">邮件数据完整性</td>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(dataStatusText)}</td>
         </tr>
         <tr>
           <td style="padding: 6px 10px; border: 1px solid #ddd;">运行框架单元测试</td>
@@ -477,15 +511,92 @@ String buildResultSummaryHtml(String status) {
       </table>
 
       <p style="margin-top: 14px;">
-        <a href="${htmlEscape(buildUrl)}">构建详情</a> |
-        <a href="${htmlEscape(buildUrl)}console">控制台日志</a> |
-        <a href="${htmlEscape(buildUrl)}allure/">Allure 报告</a> |
-        <a href="${htmlEscape(buildUrl)}testReport/">JUnit 报告</a> |
-        <a href="${htmlEscape(buildUrl)}artifact/reports/quality/gate-report.md">质量影子门禁报告</a> |
-        <a href="${htmlEscape(buildUrl)}artifact/reports/quality/p1-observation.md">P1 单次观察与 Flaky 报告</a>
+        ${reportLinks.join(' | ')}
       </p>
     </div>
     """
+}
+
+String buildQualityRowsHtml(boolean realSmokeEnabled, Map quality) {
+    if (!realSmokeEnabled) {
+        return """
+        <tr>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">P0 质量数据</td>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">本次未执行真实 Smoke，P0 质量结论不适用</td>
+        </tr>
+        """
+    }
+    if (!quality.available) {
+        return """
+        <tr>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">P0 质量数据</td>
+          <td style="padding: 6px 10px; border: 1px solid #ddd; color: #b00020;">真实 Smoke 已启用，但 P0 摘要缺失，请检查构建产物和控制台日志</td>
+        </tr>
+        """
+    }
+    return """
+    <tr>
+      <td style="padding: 6px 10px; border: 1px solid #ddd;">P0 影子门禁</td>
+      <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(quality.overall)}，完整性 ${htmlEscape(quality.integrity)}</td>
+    </tr>
+    <tr>
+      <td style="padding: 6px 10px; border: 1px solid #ddd;">P0 用例摘要</td>
+      <td style="padding: 6px 10px; border: 1px solid #ddd;">共 ${htmlEscape(quality.caseTotal)} 项，失败 ${htmlEscape(quality.caseFailed)} 项，错误 ${htmlEscape(quality.caseError)} 项，跳过 ${htmlEscape(quality.caseSkipped)} 项</td>
+    </tr>
+    <tr>
+      <td style="padding: 6px 10px; border: 1px solid #ddd;">P0 失败分类</td>
+      <td style="padding: 6px 10px; border: 1px solid #ddd;">产品缺陷 ${htmlEscape(quality.productDefect)}，配置问题 ${htmlEscape(quality.configuration)}，框架缺陷 ${htmlEscape(quality.frameworkDefect)}，未知 ${htmlEscape(quality.unknown)}</td>
+    </tr>
+    <tr>
+      <td style="padding: 6px 10px; border: 1px solid #ddd;">P0 请求摘要</td>
+      <td style="padding: 6px 10px; border: 1px solid #ddd;">共 ${htmlEscape(quality.requestTotal)} 次，HTTP 5xx ${htmlEscape(quality.http5xx)} 次，超时 ${htmlEscape(quality.timeout)} 次</td>
+    </tr>
+    """
+}
+
+String buildP1RowsHtml(boolean realSmokeEnabled, Map p1) {
+    if (!realSmokeEnabled) {
+        return """
+        <tr>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">P1 观察数据</td>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">本次未执行真实 Smoke，P1 指标与 Flaky 结论不适用</td>
+        </tr>
+        """
+    }
+    if (!p1.available) {
+        return """
+        <tr>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">P1 观察数据</td>
+          <td style="padding: 6px 10px; border: 1px solid #ddd; color: #b00020;">真实 Smoke 已启用，但 P1 观察报告缺失，请检查构建产物和控制台日志</td>
+        </tr>
+        """
+    }
+    return """
+    <tr>
+      <td style="padding: 6px 10px; border: 1px solid #ddd;">P1 单次观察</td>
+      <td style="padding: 6px 10px; border: 1px solid #ddd;">状态 ${htmlEscape(p1.reportStatus)}，逻辑调用 ${htmlEscape(p1.operationCount)}，workload ${htmlEscape(p1.workloadOperationCount)}，成功/失败/超时 ${htmlEscape(p1.operationSuccess)}/${htmlEscape(p1.operationFailed)}/${htmlEscape(p1.operationTimeout)}</td>
+    </tr>
+    <tr>
+      <td style="padding: 6px 10px; border: 1px solid #ddd;">P1 用量与 Flaky</td>
+      <td style="padding: 6px 10px; border: 1px solid #ddd;">usage complete/partial/missing ${htmlEscape(p1.usageComplete)}/${htmlEscape(p1.usagePartial)}/${htmlEscape(p1.usageMissing)}；suspected ${htmlEscape(p1.newlySuspected)}，confirmed ${htmlEscape(p1.newlyConfirmed)}，quarantined ${htmlEscape(p1.quarantined)}，recovering ${htmlEscape(p1.recovering)}，recovered ${htmlEscape(p1.recovered)}，overdue ${htmlEscape(p1.overdue)}；必需数据源故障 ${htmlEscape(p1.requiredSourceFailures)}</td>
+    </tr>
+    """
+}
+
+String normalizeBranchName(def value) {
+    def branchName = String.valueOf(value ?: '').trim()
+    if (!branchName) {
+        return '-'
+    }
+    return branchName.replaceFirst('^refs/remotes/', '').replaceFirst('^origin/', '')
+}
+
+String shortGitCommit(def value) {
+    def commit = String.valueOf(value ?: '').trim()
+    if (!commit) {
+        return '-'
+    }
+    return commit.length() > 12 ? commit.substring(0, 12) : commit
 }
 
 String buildStatusText(String status) {
@@ -559,7 +670,7 @@ void notifyByEmail(String status) {
 
 @NonCPS
 Map parseJunitXmlText(String xmlText) {
-    def summary = [tests: 0, failures: 0, errors: 0, skipped: 0]
+    def summary = [tests: 0, failures: 0, errors: 0, skipped: 0, failedTests: []]
     def suiteMatcher = xmlText =~ /<testsuite\b[^>]*>/
 
     suiteMatcher.each { suiteTag ->
@@ -567,6 +678,19 @@ Map parseJunitXmlText(String xmlText) {
         summary.failures += extractIntAttribute(suiteTag, 'failures')
         summary.errors += extractIntAttribute(suiteTag, 'errors')
         summary.skipped += extractIntAttribute(suiteTag, 'skipped')
+    }
+
+    def testCaseMatcher = xmlText =~ /(?s)<testcase\b([^>]*)>(.*?)<\/testcase>/
+    while (testCaseMatcher.find() && summary.failedTests.size() < 5) {
+        def body = testCaseMatcher.group(2)
+        if (!(body =~ /<(?:failure|error)\b/).find()) {
+            continue
+        }
+        def attributes = testCaseMatcher.group(1)
+        def className = extractStringAttribute(attributes, 'classname')
+        def testName = extractStringAttribute(attributes, 'name')
+        def displayName = className && testName ? "${className}::${testName}" : testName ?: className ?: '未知失败用例'
+        summary.failedTests << displayName
     }
 
     return summary
@@ -594,6 +718,15 @@ int extractIntAttribute(String text, String attributeName) {
         return 0
     }
     return matcher.group(1) as int
+}
+
+@NonCPS
+String extractStringAttribute(String text, String attributeName) {
+    def matcher = text =~ /(?:^|\s)${attributeName}="([^"]*)"/
+    if (!matcher.find()) {
+        return ''
+    }
+    return matcher.group(1)
 }
 
 @NonCPS
