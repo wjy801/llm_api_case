@@ -134,7 +134,7 @@ pipeline {
                 foreach ($flakyEnvFile in $flakyEnvFiles) {
                     if ([string]::IsNullOrWhiteSpace($env:QUALITY_FLAKY_DB_PATH) -and (Test-Path -LiteralPath $flakyEnvFile)) {
                         $flakyDbSetting = Get-Content -LiteralPath $flakyEnvFile |
-                            Where-Object { $_ -match '^\s*QUALITY_FLAKY_DB_PATH\s*=' } |
+                            Where-Object { $_ -match '^\\s*QUALITY_FLAKY_DB_PATH\\s*=' } |
                             Select-Object -Last 1
                         if ($null -ne $flakyDbSetting) {
                             $configuredFlakyDbPath = $flakyDbSetting.Substring($flakyDbSetting.IndexOf('=') + 1).Trim()
