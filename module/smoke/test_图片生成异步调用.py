@@ -38,13 +38,13 @@ class TestAsyncImageGeneration:
             f"Expected 200 or 202, actual: {create_response.status_code}. "
             f"Response body: {create_response.text}"
         )
-        task_id = self._extract_task_id(create_response)
+        task_id = self.smoke_task.extract_task_id(create_response)
         assert task_id, f"Async image generation response should contain task_id. Response body: {create_response.text}"
         self._assert_task_status_if_present(create_response)
 
     def test_f8_08_async_image_generation_task_status_query(self):
         create_response = self.smoke_task.create_async_image_generation(self.smoke_request)
-        task_id = self._extract_task_id(create_response)
+        task_id = self.smoke_task.extract_task_id(create_response)
 
         task_response = self.smoke_task.get_media_generation_task(self.smoke_request, task_id)
 
@@ -72,7 +72,7 @@ class TestAsyncImageGeneration:
     def test_f8_10_async_image_generation_billing_deduction_matches_usage_quota(self):
         before_balance_response = self.smoke_task.query_account_balance_for_billing(self.smoke_request)
         create_response = self.smoke_task.create_async_image_generation(self.smoke_request)
-        task_id = self._extract_task_id(create_response)
+        task_id = self.smoke_task.extract_task_id(create_response)
         unfinished_balance_response = self.smoke_task.query_account_balance_for_billing(self.smoke_request)
         result_response = self._poll_task_until_finished(task_id)
 
@@ -143,7 +143,7 @@ class TestAsyncImageGeneration:
 
         for _ in range(3):
             create_response = self.smoke_task.create_async_image_generation(self.smoke_request)
-            task_ids.append(self._extract_task_id(create_response))
+            task_ids.append(self.smoke_task.extract_task_id(create_response))
 
         assert len(set(task_ids)) == 3, f"Async task IDs should be unique, actual: {task_ids!r}"
 
@@ -169,7 +169,7 @@ class TestAsyncImageGeneration:
             pytest.skip("Please configure B account API key and control key in test_response_body_validation.py first.")
 
         create_response = self.smoke_task.create_async_image_generation(self.smoke_request)
-        task_id = self._extract_task_id(create_response)
+        task_id = self.smoke_task.extract_task_id(create_response)
         b_account_request = SmokeRequest()
 
         try:
@@ -214,20 +214,9 @@ class TestAsyncImageGeneration:
         smoke_task = SmokeTask()
         try:
             create_response = smoke_task.create_async_image_generation(smoke_request)
-            return TestAsyncImageGeneration._extract_task_id(create_response)
+            return smoke_task.extract_task_id(create_response)
         finally:
             smoke_request.close()
-
-    @staticmethod
-    def _extract_task_id(response: requests.Response) -> str:
-        body = TestAsyncImageGeneration._get_json_body(response)
-        task_id = (
-            TestAsyncImageGeneration._extract_first_json_path_value(body, "$.task_id")
-            or TestAsyncImageGeneration._extract_first_json_path_value(body, "$.id")
-            or TestAsyncImageGeneration._extract_first_json_path_value(body, "$.request_id")
-        )
-        assert task_id, f"Response should contain task_id, id, or request_id. Response body: {response.text}"
-        return str(task_id)
 
     @staticmethod
     def _extract_request_id(response: requests.Response) -> str:

@@ -9,6 +9,7 @@ import json
 
 from pydantic import ValidationError
 
+from quality.case_lifecycle import fold_case_status
 from quality.classifier import (
     CLASSIFIER_RULE_VERSION,
     FINGERPRINT_VERSION,
@@ -414,7 +415,7 @@ def _reconcile(state: _MergeState) -> None:
                     related_id=invocation_id,
                 )
                 continue
-            expected_status = _fold_case_status(cases)
+            expected_status = fold_case_status(cases)
             if not _compatible_status(expected_status, evidence.status):
                 state.issue(
                     severity=IssueSeverity.WARN,
@@ -523,17 +524,6 @@ def _write_manifest(
         "integrity_status": _integrity_status(issues).value,
     }
     write_json_atomic(manifest_path, manifest)
-
-
-def _fold_case_status(cases: Iterable[CaseResult]) -> CaseStatus:
-    statuses = {case.final_status for case in cases}
-    if CaseStatus.ERROR in statuses:
-        return CaseStatus.ERROR
-    if CaseStatus.FAILED in statuses:
-        return CaseStatus.FAILED
-    if statuses and statuses <= {CaseStatus.SKIPPED, CaseStatus.XFAILED}:
-        return CaseStatus.SKIPPED
-    return CaseStatus.PASSED
 
 
 def _compatible_status(case_status: CaseStatus, junit_status: CaseStatus) -> bool:

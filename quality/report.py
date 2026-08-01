@@ -13,6 +13,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from quality.case_lifecycle import fold_case_status
 from quality.gate import (
     GATE_RULESET_VERSION,
     ShadowGateConfig,
@@ -379,21 +380,13 @@ def _empty_summary(run_id: str, integrity_status: IntegrityStatus) -> QualitySum
 
 
 def _fold_invocations(cases: Iterable[CaseResult], *, raw: bool) -> dict[str, CaseStatus]:
-    grouped: dict[str, list[CaseStatus]] = defaultdict(list)
+    grouped: dict[str, list[CaseResult]] = defaultdict(list)
     for case in cases:
-        grouped[case.invocation_id].append(case.raw_status if raw else case.final_status)
-    return {invocation_id: _fold_status(statuses) for invocation_id, statuses in grouped.items()}
-
-
-def _fold_status(statuses: Iterable[CaseStatus]) -> CaseStatus:
-    status_set = set(statuses)
-    if CaseStatus.ERROR in status_set:
-        return CaseStatus.ERROR
-    if CaseStatus.FAILED in status_set:
-        return CaseStatus.FAILED
-    if status_set and status_set <= {CaseStatus.SKIPPED, CaseStatus.XFAILED}:
-        return CaseStatus.SKIPPED
-    return CaseStatus.PASSED
+        grouped[case.invocation_id].append(case)
+    return {
+        invocation_id: fold_case_status(invocation_cases, raw=raw)
+        for invocation_id, invocation_cases in grouped.items()
+    }
 
 
 def _count_status(values: dict[str, CaseStatus], status: CaseStatus) -> int:
