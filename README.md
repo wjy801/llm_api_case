@@ -6,11 +6,22 @@
 
 ## 当前状态
 
-- 已实现请求中间件、配置校验与安全保护、基础契约断言、重试策略、轮询状态机、测试上下文与变量传递、轻量 Mock 与故障模拟。
-- 已实现 OpenAI Chat Completions、Responses、Anthropic Messages 协议用例，以及图片、视频、Smoke 等业务模块示例。
-- 已支持 Allure 原始结果、HTML 报告生成、历史报告保留、请求/响应日志、cURL 附件、前置媒体资源与模型结果附件。
-- 已接入 Jenkins 单 Job 参数化流水线，支持框架测试、Smoke 收集、真实环境可选执行、测试并发控制、并发优先与串行收尾、JUnit/Allure 报告、构建产物归档及失败恢复邮件通知。
-- 当前 CI 已具备基于测试退出码的基础阻断能力；成功率阈值、耗时分位线、重试率门禁、Flaky 历史治理和长期指标趋势仍属于后续阶段。
+- 基础层已实现请求中间件、配置校验与脱敏、契约断言、显式重试、轮询状态机、测试上下文、轻量 Mock 与故障模拟。
+- 协议与业务层已覆盖 OpenAI Chat Completions、Responses、Anthropic Messages，以及图片、视频和真实 Smoke 链路。
+- P0 已实现质量结果归并、完整性校验、失败分类、请求指标、中文影子门禁报告和机器可读产物。
+- P1 已实现逻辑调用语义、HTTP/SSE/异步耗时、Token/媒体用量覆盖、Flaky 最小历史存储、状态机与治理命令。
+- Jenkins 已支持参数化执行、并发优先与串行收尾、JUnit/Allure、P0/P1 中文报告、邮件直达链接和构建产物自动清理。
+- 当前门禁仍为影子模式；P1 不引入估算成本和性能基线，缺失数据不会按零计算，也不会伪造结论。
+
+推荐的日常使用顺序：
+
+```text
+Jenkins 构建结果
+-> P0 gate-report.md：确认本轮数据是否完整、是否存在失败或基础稳定性风险
+-> P1 p1-observation.md：查看耗时、用量覆盖和 Flaky 状态变化
+-> Allure：定位具体用例步骤、请求响应和附件
+-> Flaky CLI：对已确认的问题执行纠正、隔离或恢复治理
+```
 
 ## 目录结构
 
@@ -42,9 +53,21 @@ module/
   smoke/                   # Smoke 用例、响应 Schema、业务 payload builder
   protocol_testing/        # OpenAI/Anthropic 协议兼容性用例
 
+quality/
+  collector.py             # P0 Case/请求事实采集
+  aggregator.py            # P0 分片归并与完整性校验
+  classifier.py            # 失败分类与稳定指纹
+  report.py                # P0 摘要、影子门禁及中文 Markdown
+  semantic_*.py            # 逻辑调用、请求组、轮询与流式语义
+  metrics.py               # P1 单次运行指标聚合
+  observation_report.py    # P1 中文观察与 Flaky 报告
+  flaky*.py                # Flaky 历史、状态机、投影与治理
+  migrations/flaky/        # Flaky SQLite 迁移脚本
+
 tests/
   mock_helpers.py          # 离线响应、故障、流式响应和睡眠记录工具
-  test_*.py                # 框架基础能力单测与真实环境样例测试
+  quality/                 # P0/P1、Flaky、Jenkins 集成回归测试
+  test_*.py                # 框架基础能力单测
 
 dev/                       # 各阶段设计方案
 code_history/              # 各阶段独立变更历史
@@ -65,6 +88,7 @@ package.json               # Allure CLI 依赖
 allure-results/
 allure-report/
 history_report/
+reports/
 node_modules/
 .pytest_cache/
 __pycache__/
@@ -101,15 +125,40 @@ USE_CHINA_ENVIRONMENT=TRUE
 
 CHINA_TEST_ENVIRONMENT_BASE_URL=https://pre.juhemoxing.com
 CHINA_API_KEY=your-china-api-key
+CHINA_CONTROL_API_KEY=your-china-control-api-key
 
 OVERSEAS_TEST_BASE_URL=https://pre.tokensave.pro
 OVERSEAS_API_KEY=your-overseas-api-key
+OVERSEAS_CONTROL_API_KEY=your-overseas-control-api-key
 
 API_TIMEOUT=600
 GENERATE_ALLURE_REPORT=TRUE
 GENERATE_HISTORY_REPORT=FALSE
 HISTORY_REPORT_KEEP_LIMIT=30
 ```
+
+账单、余额及用量查询需要对应环境的 `*_CONTROL_API_KEY`。特殊账号 Key 继续按 `.env.example` 配置，不写入代码或 Jenkinsfile。
+
+本地启用完整 P0/P1 数据链路时，可在 PowerShell 当前进程中设置：
+
+```powershell
+$env:QUALITY_ENABLE = '1'
+$env:QUALITY_SEMANTIC_ENABLE = '1'
+$env:QUALITY_METRICS_ENABLE = '1'
+$env:QUALITY_P1_REPORT_ENABLE = '1'
+$env:QUALITY_OUTPUT_DIR = 'reports/quality'
+$env:QUALITY_SHADOW_GATE = '1'
+```
+
+启用 Flaky 历史与状态机还需要：
+
+```powershell
+$env:QUALITY_FLAKY_HISTORY_ENABLE = '1'
+$env:QUALITY_FLAKY_STATE_ENABLE = '1'
+$env:QUALITY_FLAKY_DB_PATH = 'D:\your-persistent-path\flaky-history.db'
+```
+
+`QUALITY_FLAKY_DB_PATH` 必须是可写的绝对持久路径，父目录需要提前创建；同一个数据库只允许一个 Jenkins Job 独占写入。Jenkins 真实 Smoke 会自动打开 P0、语义指标和 P1 报告，并在检测到有效数据库路径时启用 Flaky 历史。
 
 环境开关：
 
@@ -432,6 +481,106 @@ pytestmark = pytest.mark.serial
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
+## 质量工程 P0/P1
+
+质量能力由 `run_master.py` 在测试结束时统一收口，测试代码仍按原方式编写，不需要直接调用聚合器：
+
+```text
+pytest Case/请求事实分片
+-> P0 归并与完整性校验
+-> 失败分类、请求指标与影子门禁
+-> 逻辑调用/请求组/轮询语义归并
+-> P1 耗时与资源用量聚合
+-> Flaky 历史导入和状态评估
+-> P1 单次观察报告
+```
+
+### P0：可信结果与影子门禁
+
+P0 解决“这轮结果能不能信、为什么失败”：
+
+- 对并发池和串行池的 Case、请求及失败事实统一归并。
+- 校验执行分片、预期用例数量、文件哈希和运行 ID，完整性异常不会被包装成正常结论。
+- 按产品、测试、框架、环境、配置、瞬时故障和未知原因聚合失败。
+- 统计请求总量、HTTP 5xx、超时和接口耗时。
+- 输出影子门禁 `PASS/WARN/BLOCK/NO_DATA`；影子门禁只提供决策证据，不修改 pytest/Jenkins 结果。
+
+请求成功率与用例通过率不是同一指标：负向用例和轮询中的中间业务状态可能计为请求失败，但用例仍可按预期通过。人工判断应优先看用例结果、5xx、超时和失败分类，而不是孤立使用请求成功率。
+
+主要产物：
+
+| 文件 | 用途 |
+| --- | --- |
+| `reports/quality/run.json` | 本次运行身份、时间、状态及完整性 |
+| `reports/quality/summary.json` | P0 完整机器数据 |
+| `reports/quality/gate-report.json` | 机器可读门禁规则与证据 |
+| `reports/quality/gate-report.md` | 中文 P0 门禁报告，人工查看首选 |
+| `reports/quality/merged/*.jsonl` | 归并后的 Case、请求、失败和完整性事实 |
+
+### P1：单次运行指标与用量覆盖
+
+P1 解决“真实调用慢在哪里、资源数据是否完整”：
+
+- 以逻辑调用而不是单个 HTTP 请求为主要观察单位。
+- 区分 HTTP、SSE、异步任务、轮询等待和控制流量。
+- 聚合调用总耗时、响应头等待、轮询总耗时和轮询休眠时间。
+- 聚合输入/输出 Token、媒体数量及对应样本量。
+- 用 `complete/partial/no_data/not_applicable` 表达完整性；缺失值不按零计算。
+- 当前不估算成本，也不建立性能基线或耗时门禁。
+
+逻辑调用失败数同样不等于测试失败数：验证错误响应、失败任务或流式中断的负向场景可能产生预期失败调用。P1 用于观察真实工作负载，不替代 P0 用例结论。
+
+主要产物：
+
+| 文件 | 用途 |
+| --- | --- |
+| `reports/quality/metrics/run-metrics.json` | 完整单次运行指标 |
+| `reports/quality/p1-observation.json` | P1 机器可读观察报告 |
+| `reports/quality/p1-observation.md` | 中文 P1 指标与 Flaky 报告，人工查看首选 |
+| `reports/quality/semantic/merged/*.jsonl` | 逻辑调用、请求组和轮询会话事实 |
+
+两份 Markdown 报告优先使用中文，同时保留规则 ID、指标键、状态码、问题代码和版本号；JSON 字段与原始枚举保持不变，便于机器消费和问题追踪。
+
+### Flaky 状态机与治理
+
+Flaky 历史只导入可信、已完成运行中的可比较用例；skip/xfail/xpass 不进入波动判断。状态流转为：
+
+```text
+OBSERVING（观察中）
+-> STABLE（稳定）或 SUSPECTED（疑似不稳定）
+-> CONFIRMED（已确认不稳定）
+-> QUARANTINED（已隔离）
+-> RECOVERING（恢复观察中）
+```
+
+默认规则要求至少 3 个一致样本才能判定稳定；确认 Flaky 需要至少 4 个样本、至少 2 次通过、2 次失败和 2 次结果切换。单次失败不会直接判定 Flaky。
+
+常用命令：
+
+```powershell
+# 查看所有治理命令
+.\.venv\Scripts\python.exe -m quality.cli --help
+
+# 检查数据库结构与 SQLite 完整性
+.\.venv\Scripts\python.exe -m quality.cli flaky-db-check --db D:\path\flaky-history.db
+
+# 查询一个用例的历史与当前状态
+.\.venv\Scripts\python.exe -m quality.cli flaky-history --db D:\path\flaky-history.db --case-id "module/smoke/test_xxx.py::TestXxx::test_xxx"
+.\.venv\Scripts\python.exe -m quality.cli flaky-state --db D:\path\flaky-history.db --case-id "module/smoke/test_xxx.py::TestXxx::test_xxx"
+```
+
+如果用例语义或测试实现已经明确改变，应使用 `flaky-reset-epoch` 开启新样本周期；已知代码修复导致的“失败变通过”不应直接确认为 Flaky。`QUARANTINED` 只是带 owner、原因和到期时间的治理标签，不会自动跳过用例。
+
+### Smoke 中的质量能力
+
+`module/smoke` 已接入真实模型调用、响应契约、账单和异步任务观察：
+
+- 共享余额、计费及其他会互相污染状态的用例标记为 `serial`。
+- 模型账单采用实际余额扣减与 usage 金额的区间断言，不引入估算成本。
+- 预扣款场景在模型调用后的第二次余额查询前默认等待 5 秒，再读取结算数据。
+- 异步任务完成前的余额查询仍立即执行，用于验证未完成任务不会提前扣款。
+- 一个用例并发调用多个模型时，按 request ID 分别查询 usage 后求和，与账户余额扣减比较。
+
 ## Allure 报告
 
 `pytest.ini` 默认配置：
@@ -482,8 +631,8 @@ Checkout
 - `Prepare Python Env`：创建或复用 `.venv`，安装 Python 和 npm 依赖，并清理本次 `reports/` 目录。
 - `Framework Unit Tests`：执行 `tests/` 下的框架测试并发布 `reports/unit-tests.xml`。
 - `Collect Smoke Cases`：只收集真实业务用例，不调用真实接口；收集结果以 UTF-8 写入 `reports/smoke-collect.txt`。
-- `Real Smoke`：按 `SMOKE_TARGET` 执行真实业务用例，支持并发优先、串行收尾。
-- `post`：统一发布 Allure、归档 `allure-results/**` 和 `reports/**`，并按构建状态发送邮件。
+- `Real Smoke`：按 `SMOKE_TARGET` 执行真实业务用例，支持并发优先、串行收尾，并在结束时生成 P0/P1/Flaky 产物。
+- `post`：统一发布 JUnit/Allure、归档 `allure-results/**` 和 `reports/**`，并按构建状态发送邮件。
 
 ### 构建参数
 
@@ -492,11 +641,14 @@ Checkout
 | `RUN_FRAMEWORK_TESTS` | `true` | 执行 `tests/` 框架测试 |
 | `RUN_COLLECT_ONLY` | `true` | 收集 `module/smoke` 用例，不真实调用接口 |
 | `RUN_REAL_SMOKE` | `false` | 是否执行真实业务 Smoke |
+| `ALWAYS_SEND_REPORT_EMAIL` | `false` | 成功构建也发送报告邮件；失败和不稳定始终发送 |
 | `USE_CHINA_ENVIRONMENT` | `TRUE` | 选择国内或默认环境配置 |
 | `SMOKE_TARGET` | `module/smoke` | 真实 Smoke 的目标目录、文件或 nodeid |
 | `TEST_PARALLEL_WORKERS` | `off` | `off/auto/2/4/8`，控制 pytest-xdist worker 数量 |
 
 默认参数只执行框架测试和 Smoke 收集，不执行真实接口，避免因外部服务、账号余额和调用成本造成非预期影响。
+
+`Jenkinsfile` 还配置了每日 `00:00` 的参数化真实 Smoke。真实接口会产生模型调用和账单数据；不需要定时执行时，应在 Jenkins Job 的 Build Triggers 中停用对应触发器。
 
 ### 推荐构建模式
 
@@ -537,7 +689,7 @@ SMOKE_TARGET=module/smoke/test_response_body_validation.py
 -> 并发池结束后串行执行
 ```
 
-并发池和串行池分别生成 JUnit 文件，并非物理合并成单个 XML 文件。流水线会归档两个报告，邮件摘要会读取并汇总统计；当前 Jenkins JUnit 测试结果页只显式发布 `reports/smoke-tests.xml`，并行 Smoke 的通配发布规则仍待扩展。
+并发池和串行池分别生成 JUnit 文件，并非物理合并成单个 XML 文件。流水线通过 `reports/smoke-tests*.xml` 统一发布两个用例池的结果，邮件摘要会去重并汇总统计。
 
 以下用例通常应标记为 `serial`：
 
@@ -556,6 +708,17 @@ SMOKE_TARGET=module/smoke/test_response_body_validation.py
 - `reports/unit-tests.xml`。
 - `reports/smoke-collect.txt`。
 - 真实 Smoke 的 `smoke-tests.xml`，或并发模式下的 `smoke-tests-parallel.xml` 与 `smoke-tests-serial.xml`。
+- `reports/quality/gate-report.md`：中文 P0 质量门禁报告。
+- `reports/quality/p1-observation.md`：中文 P1 单次观察与 Flaky 报告。
+- `reports/quality/**` 下的 JSON/JSONL 完整机器证据。
+
+Jenkins 只保留最近 4 天的归档产物；构建编号、结果、参数和控制台历史不按天数或数量删除。Flaky SQLite 位于 Job 外部持久路径，不受产物清理影响。
+
+查看一次真实 Smoke 时，推荐在对应构建的 `Artifacts -> reports -> quality` 中先打开：
+
+1. `gate-report.md`：确认数据完整性、门禁结论和失败分类。
+2. `p1-observation.md`：查看耗时、usage 覆盖、Flaky 迁移和待关注事项。
+3. Allure：需要定位具体请求、响应或附件时再进入。
 
 ### 邮件通知
 
@@ -564,36 +727,55 @@ SMOKE_TARGET=module/smoke/test_response_body_validation.py
 ```text
 FAILURE  -> FAILED 邮件
 UNSTABLE -> UNSTABLE 邮件
+SUCCESS 且 ALWAYS_SEND_REPORT_EMAIL=true -> SUCCESS 邮件
 SUCCESS 且上一轮为 FAILURE/UNSTABLE -> FIXED 邮件
-连续 SUCCESS -> 不发送
+其他连续 SUCCESS -> 不发送
 ```
 
 邮件正文包含构建状态、分支、提交、JUnit 汇总、Smoke 收集数量、执行参数和报告入口，不附带完整 Console 日志、`.env`、API Key、请求体或响应体。
+
+邮件报告入口包括：
+
+- Allure 报告。
+- JUnit 报告（存在 JUnit 结果时）。
+- P0 质量门禁报告（存在 `gate-report.md` 时）。
+- P1 观察报告（存在 `p1-observation.md` 时）。
+- 构建产物列表。
+
+邮件不再展示“构建详情”和“控制台日志”链接；P0/P1 文件未生成时不会发送无效链接。
 
 SMTP 授权码只配置在 Jenkins 中，不写入 `Jenkinsfile` 或仓库。
 
 ### 当前质量门禁
 
-当前已实现的基础阻断：
+当前 Jenkins 阻断逻辑：
 
 - 框架测试失败会使构建失败。
 - Smoke 收集失败会使构建失败。
 - 真实 Smoke 返回非零退出码会使构建失败。
 - Jenkins 超时和节点执行异常会反映到构建状态。
 
-当前尚未实现：
+P0 影子门禁已实现：
 
-- 基于通过率阈值的质量门禁。
-- 接口耗时 P95/P99 趋势和门禁。
-- 重试率、轮询超时率等稳定性指标门禁。
-- Flaky 用例自动识别、隔离和历史治理。
-- 跨构建长期指标聚合与可视化看板。
+- 数据可用性和归并完整性校验。
+- 产品缺陷、配置问题、框架缺陷和未知失败分类规则。
+- HTTP 5xx 比例和超时比例规则，默认最小请求样本量为 20。
+- `PASS/WARN/BLOCK/NO_DATA` 结论及逐规则证据。
+
+影子门禁当前不会覆盖 pytest/Jenkins 结果，目的是先积累可信样本并验证规则。当前明确不做：
+
+- 基于测试通过率的强制阻断。
+- 性能基线、P95/P99 趋势门禁。
+- 估算成本或账本价格对账。
+- Flaky 自动跳过或自动重跑。
+- MR 精准选测、覆盖率/契约矩阵和智能测试生成。
 
 Jenkins 环境复建和迁移参考：
 
 - `JENKINS_MIGRATION_TEMPLATE.md`
-- `dev/jenkins_ci_configuration_guide.md`
-- `dev/jenkins_email_notification_design.md`
+- `dev/P0质量数据底座详细开发方案.md`
+- `dev/P1真实接口成本耗时稳定性整体开发思路.md`
+- `dev_plan/P1迭代三Flaky状态机与治理详细开发方案.md`
 
 ### 本地验收
 
