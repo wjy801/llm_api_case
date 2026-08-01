@@ -7,6 +7,7 @@ JENKINSFILE = Path(__file__).resolve().parents[2] / "Jenkinsfile"
 def test_real_smoke_enables_quality_report_and_email_links_artifact():
     content = JENKINSFILE.read_text(encoding="utf-8")
 
+    assert "deleteDir()\n                checkout scm" in content
     assert "$env:QUALITY_ENABLE = '1'" in content
     assert "$env:QUALITY_SEMANTIC_ENABLE = '1'" in content
     assert "$env:QUALITY_METRICS_ENABLE = '1'" in content
