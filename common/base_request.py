@@ -30,6 +30,29 @@ from common.retry import (
     RetryPolicy,
 )
 from common.retry_executor import RetryExecutor
+from quality.semantic_context import (
+    OperationHandle,
+    PollingSessionHandle,
+    add_polling_sleep,
+    begin_operation,
+    begin_polling_session,
+    bind_request_context,
+    bind_stream_response,
+    detach_operation,
+    finish_operation,
+    finish_polling_session,
+    finish_request_group,
+    model_id_from_kwargs,
+    observe_polling_state,
+    operation_kind_for_request,
+    start_request_group,
+)
+from quality.semantic_models import (
+    OperationKind,
+    OperationOutcome,
+    PollingOutcome,
+    TrafficRole,
+)
 from util import (
     API_REQUEST_STEP_NAME,
     ApiCallLogger,
@@ -59,11 +82,45 @@ class BaseRequest:
     def request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
         attach_log = kwargs.pop("_attach_log", True)
         retry_policy = kwargs.pop("retry_policy", None)
-        if retry_policy is not None:
-            return self._send_with_retry(method, path, retry_policy, attach_log=attach_log, **kwargs)
+        operation_name = str(kwargs.pop("_quality_operation_name", "")).strip()
+        traffic_role = kwargs.pop("_quality_traffic_role", TrafficRole.UNKNOWN)
+        stream = bool(kwargs.get("stream"))
+        operation_kind = operation_kind_for_request(stream=stream)
+        operation_handle = begin_operation(
+            operation_kind,
+            name=operation_name or ("sse_request" if stream else "http_request"),
+            role=traffic_role,
+            model_id=model_id_from_kwargs(kwargs),
+        )
+        try:
+            if retry_policy is not None:
+                response = self._send_with_retry(
+                    method,
+                    path,
+                    retry_policy,
+                    attach_log=attach_log,
+                    **kwargs,
+                )
+            else:
+                context = self._build_request_context(method, path, attach_log=attach_log, **kwargs)
+                response = self._send_single_group(context)
+        except BaseException as error:
+            finish_operation(operation_handle, self._operation_outcome_for_error(error))
+            raise
 
-        context = self._build_request_context(method, path, attach_log=attach_log, **kwargs)
-        return self._send(context)
+        if operation_handle.owned and stream and 200 <= response.status_code < 300:
+            bind_stream_response(response, operation_handle)
+            detach_operation(operation_handle)
+        else:
+            finish_operation(
+                operation_handle,
+                (
+                    OperationOutcome.SUCCESS
+                    if 200 <= response.status_code < 300
+                    else OperationOutcome.FAILED
+                ),
+            )
+        return response
 
     def set_header(self, name: str, value: str) -> None:
         self.session.headers[name] = value
@@ -99,14 +156,48 @@ class BaseRequest:
         if timeout <= 0:
             raise ValueError("poll_timeout must be greater than 0")
 
-        return self._poll_get_with_policy(
-            path,
-            poll_interval=poll_interval,
-            timeout=timeout,
-            polling_policy=polling_policy,
-            retry_policy=retry_policy,
-            **kwargs,
+        operation_name = str(kwargs.pop("_quality_operation_name", "polling")).strip() or "polling"
+        traffic_role = kwargs.pop("_quality_traffic_role", TrafficRole.UNKNOWN)
+        operation_handle = begin_operation(
+            OperationKind.POLLING,
+            name=operation_name,
+            role=traffic_role,
+            model_id=model_id_from_kwargs(kwargs),
         )
+        polling_handle = begin_polling_session()
+        try:
+            response = self._poll_get_with_policy(
+                path,
+                poll_interval=poll_interval,
+                timeout=timeout,
+                polling_policy=polling_policy,
+                retry_policy=retry_policy,
+                semantic_polling_handle=polling_handle,
+                **kwargs,
+            )
+        except PollingFailedError:
+            finish_polling_session(polling_handle, PollingOutcome.FAILURE)
+            finish_operation(operation_handle, OperationOutcome.FAILED)
+            raise
+        except PollingUnknownStateError:
+            finish_polling_session(polling_handle, PollingOutcome.UNKNOWN)
+            finish_operation(operation_handle, OperationOutcome.UNKNOWN)
+            raise
+        except PollingTimeoutError:
+            finish_polling_session(polling_handle, PollingOutcome.TIMEOUT)
+            finish_operation(operation_handle, OperationOutcome.TIMEOUT)
+            raise
+        except (KeyboardInterrupt, SystemExit):
+            finish_polling_session(polling_handle, PollingOutcome.INTERRUPTED)
+            finish_operation(operation_handle, OperationOutcome.INTERRUPTED)
+            raise
+        except BaseException as error:
+            finish_polling_session(polling_handle, PollingOutcome.FAILURE)
+            finish_operation(operation_handle, self._operation_outcome_for_error(error))
+            raise
+        finish_polling_session(polling_handle, PollingOutcome.SUCCESS)
+        finish_operation(operation_handle, OperationOutcome.SUCCESS)
+        return response
 
     def post(self, path: str, **kwargs: Any) -> requests.Response:
         return self.request("POST", path, **kwargs)
@@ -202,6 +293,19 @@ class BaseRequest:
         self._run_after_middlewares(context, response)
         return response
 
+    def _send_single_group(self, context: RequestContext) -> requests.Response:
+        group_id = start_request_group(
+            method=context.method,
+            path=context.path,
+            protocol=context.protocol,
+            configured_max_attempts=1,
+        )
+        bind_request_context(context, group_id)
+        try:
+            return self._send(context)
+        finally:
+            finish_request_group(group_id)
+
     def _send_with_retry(
         self,
         method: str,
@@ -228,6 +332,14 @@ class BaseRequest:
             **kwargs,
         )
 
+        group_id = start_request_group(
+            method=first_context.method,
+            path=first_context.path,
+            protocol=first_context.protocol,
+            configured_max_attempts=retry_policy.max_attempts,
+        )
+        retry_waits: list[float] = []
+
         def context_factory(attempt_index: int) -> RequestContext:
             context = self._build_request_context(
                 method,
@@ -242,17 +354,21 @@ class BaseRequest:
             )
             context.attributes["attempt_index"] = attempt_index
             context.attributes["max_attempts"] = retry_policy.max_attempts
+            bind_request_context(context, group_id)
             return context
-
-        return self.retry_executor.execute(
-            method=first_context.method,
-            request_kwargs=self._kwargs_with_session_headers(first_context.kwargs),
-            policy=retry_policy,
-            context_factory=context_factory,
-            send_once=self._send,
-            attach_records=self._attach_retry_records,
-            context_recorder=context_recorder,
-        )
+        try:
+            return self.retry_executor.execute(
+                method=first_context.method,
+                request_kwargs=self._kwargs_with_session_headers(first_context.kwargs),
+                policy=retry_policy,
+                context_factory=context_factory,
+                send_once=self._send,
+                attach_records=self._attach_retry_records,
+                context_recorder=context_recorder,
+                on_wait=retry_waits.append,
+            )
+        finally:
+            finish_request_group(group_id, retry_wait_seconds=sum(retry_waits))
 
     def _run_before_middlewares(self, context: RequestContext) -> None:
         for middleware in self.middlewares:
@@ -314,7 +430,7 @@ class BaseRequest:
         )
         try:
             if retry_policy is None:
-                response = self._send(context)
+                response = self._send_single_group(context)
                 response_context = context
             else:
                 context_recorder: list[RequestContext] = []
@@ -347,6 +463,7 @@ class BaseRequest:
         timeout: float,
         polling_policy: PollingPolicy,
         retry_policy: RetryPolicy | None = None,
+        semantic_polling_handle: PollingSessionHandle | None = None,
         **kwargs: Any,
     ) -> requests.Response:
         deadline = time.monotonic() + timeout
@@ -376,6 +493,8 @@ class BaseRequest:
                 raise
 
             last_status = evaluation.raw_status
+            if semantic_polling_handle is not None:
+                observe_polling_state(semantic_polling_handle, evaluation.state.value)
             transitions.append(
                 PollingTransition(
                     attempt_index=attempt_index,
@@ -424,7 +543,16 @@ class BaseRequest:
                     transitions=transitions,
                 )
 
-            time.sleep(min(poll_interval, remaining))
+            sleep_seconds = min(poll_interval, remaining)
+            sleep_started_at = time.monotonic()
+            try:
+                time.sleep(sleep_seconds)
+            finally:
+                if semantic_polling_handle is not None:
+                    add_polling_sleep(
+                        semantic_polling_handle,
+                        time.monotonic() - sleep_started_at,
+                    )
 
     @staticmethod
     def _get_optional_api_call_logger(context: RequestContext) -> ApiCallLogger:
@@ -453,6 +581,14 @@ class BaseRequest:
         transitions: list[PollingTransition],
     ) -> None:
         logger.attach_polling_transitions(format_polling_transitions(transitions))
+
+    @staticmethod
+    def _operation_outcome_for_error(error: BaseException) -> OperationOutcome:
+        if isinstance(error, (KeyboardInterrupt, SystemExit)):
+            return OperationOutcome.INTERRUPTED
+        if isinstance(error, (requests.Timeout, TimeoutError)):
+            return OperationOutcome.TIMEOUT
+        return OperationOutcome.FAILED
 
 
 class NoopApiCallLogger(ApiCallLogger):

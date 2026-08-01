@@ -125,6 +125,32 @@ pipeline {
                 ciPowerShell('''
                 $target = $env:SMOKE_TARGET
                 $env:QUALITY_ENABLE = '1'
+                $env:QUALITY_SEMANTIC_ENABLE = '1'
+                $env:QUALITY_METRICS_ENABLE = '1'
+                $env:QUALITY_P1_REPORT_ENABLE = '1'
+                $env:QUALITY_FLAKY_HISTORY_ENABLE = '0'
+                $env:QUALITY_FLAKY_STATE_ENABLE = '0'
+                $flakyEnvFiles = @('.env', 'D:/API_CASE/.env')
+                foreach ($flakyEnvFile in $flakyEnvFiles) {
+                    if ([string]::IsNullOrWhiteSpace($env:QUALITY_FLAKY_DB_PATH) -and (Test-Path -LiteralPath $flakyEnvFile)) {
+                        $flakyDbSetting = Get-Content -LiteralPath $flakyEnvFile |
+                            Where-Object { $_ -match '^\s*QUALITY_FLAKY_DB_PATH\s*=' } |
+                            Select-Object -Last 1
+                        if ($null -ne $flakyDbSetting) {
+                            $configuredFlakyDbPath = $flakyDbSetting.Substring($flakyDbSetting.IndexOf('=') + 1).Trim()
+                            if (![string]::IsNullOrWhiteSpace($configuredFlakyDbPath)) {
+                                $env:QUALITY_FLAKY_DB_PATH = $configuredFlakyDbPath
+                            }
+                        }
+                    }
+                }
+                if (![string]::IsNullOrWhiteSpace($env:QUALITY_FLAKY_DB_PATH)) {
+                    $env:QUALITY_FLAKY_HISTORY_ENABLE = '1'
+                    $env:QUALITY_FLAKY_STATE_ENABLE = '1'
+                    Write-Host 'Flaky history and state evaluation enabled with the externally configured job database path.'
+                } else {
+                    Write-Host 'Flaky history and state evaluation disabled because QUALITY_FLAKY_DB_PATH is not configured.'
+                }
                 $env:QUALITY_OUTPUT_DIR = 'reports/quality'
                 $env:QUALITY_SHADOW_GATE = '1'
                 $env:QUALITY_MIN_REQUEST_SAMPLES = '20'
@@ -272,10 +298,71 @@ Map readQualitySummary() {
     }
 }
 
+Map readP1ObservationSummary() {
+    def unavailable = [
+        available: false,
+        reportStatus: 'P1 观察报告未生成',
+        operationCount: '-',
+        workloadOperationCount: '-',
+        operationSuccess: '-',
+        operationFailed: '-',
+        operationTimeout: '-',
+        usageComplete: '-',
+        usagePartial: '-',
+        usageMissing: '-',
+        newlySuspected: '-',
+        newlyConfirmed: '-',
+        quarantined: '-',
+        recovering: '-',
+        recovered: '-',
+        overdue: '-',
+        requiredSourceFailures: '-',
+    ]
+    try {
+        def manifestPath = 'reports/quality/p1-observation-manifest.json'
+        def reportPath = 'reports/quality/p1-observation.json'
+        if (!fileExists(manifestPath) || !fileExists(reportPath)) {
+            return unavailable
+        }
+        def manifest = parseJsonObject(readFile(manifestPath))
+        if (manifest.write_status != 'complete' || !manifest.output_hashes?.json) {
+            return unavailable
+        }
+        def payload = parseJsonObject(readFile(reportPath))
+        def overview = payload.overview instanceof Map ? payload.overview : [:]
+        if (!overview || payload.run_id != manifest.run_id) {
+            return unavailable
+        }
+        return [
+            available: true,
+            reportStatus: payload.report_status ?: '-',
+            operationCount: overview.operation_count ?: 0,
+            workloadOperationCount: overview.workload_operation_count ?: 0,
+            operationSuccess: overview.operation_success_count ?: 0,
+            operationFailed: overview.operation_failed_count ?: 0,
+            operationTimeout: overview.operation_timeout_count ?: 0,
+            usageComplete: overview.usage_complete_count ?: 0,
+            usagePartial: overview.usage_partial_count ?: 0,
+            usageMissing: overview.usage_missing_count ?: 0,
+            newlySuspected: overview.newly_suspected_count ?: 0,
+            newlyConfirmed: overview.newly_confirmed_count ?: 0,
+            quarantined: overview.quarantined_count ?: 0,
+            recovering: overview.recovering_count ?: 0,
+            recovered: overview.recovered_count ?: 0,
+            overdue: overview.overdue_count ?: 0,
+            requiredSourceFailures: overview.required_source_failure_count ?: 0,
+        ]
+    } catch (error) {
+        echo "P1 观察报告读取失败：${error.getMessage()}"
+        return unavailable
+    }
+}
+
 String buildResultSummaryHtml(String status) {
     def junit = readJunitSummary()
     def smoke = readSmokeCollectSummary()
     def quality = readQualitySummary()
+    def p1 = readP1ObservationSummary()
     def statusColor = status == 'FAILED' ? '#b00020' : status == 'UNSTABLE' ? '#b26a00' : '#137333'
     def statusText = buildStatusText(status)
     def buildUrl = env.BUILD_URL ?: ''
@@ -347,6 +434,18 @@ String buildResultSummaryHtml(String status) {
           </td>
         </tr>
         <tr>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">P1 单次观察</td>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">
+            状态 ${htmlEscape(p1.reportStatus)}，逻辑调用 ${htmlEscape(p1.operationCount)}，workload ${htmlEscape(p1.workloadOperationCount)}，成功/失败/超时 ${htmlEscape(p1.operationSuccess)}/${htmlEscape(p1.operationFailed)}/${htmlEscape(p1.operationTimeout)}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">P1 用量与 Flaky</td>
+          <td style="padding: 6px 10px; border: 1px solid #ddd;">
+            usage complete/partial/missing ${htmlEscape(p1.usageComplete)}/${htmlEscape(p1.usagePartial)}/${htmlEscape(p1.usageMissing)}；suspected ${htmlEscape(p1.newlySuspected)}，confirmed ${htmlEscape(p1.newlyConfirmed)}，quarantined ${htmlEscape(p1.quarantined)}，recovering ${htmlEscape(p1.recovering)}，recovered ${htmlEscape(p1.recovered)}，overdue ${htmlEscape(p1.overdue)}；必需数据源故障 ${htmlEscape(p1.requiredSourceFailures)}
+          </td>
+        </tr>
+        <tr>
           <td style="padding: 6px 10px; border: 1px solid #ddd;">运行框架单元测试</td>
           <td style="padding: 6px 10px; border: 1px solid #ddd;">${htmlEscape(booleanText(params.RUN_FRAMEWORK_TESTS))}</td>
         </tr>
@@ -381,7 +480,8 @@ String buildResultSummaryHtml(String status) {
         <a href="${htmlEscape(buildUrl)}console">控制台日志</a> |
         <a href="${htmlEscape(buildUrl)}allure/">Allure 报告</a> |
         <a href="${htmlEscape(buildUrl)}testReport/">JUnit 报告</a> |
-        <a href="${htmlEscape(buildUrl)}artifact/reports/quality/gate-report.md">质量影子门禁报告</a>
+        <a href="${htmlEscape(buildUrl)}artifact/reports/quality/gate-report.md">质量影子门禁报告</a> |
+        <a href="${htmlEscape(buildUrl)}artifact/reports/quality/p1-observation.md">P1 单次观察与 Flaky 报告</a>
       </p>
     </div>
     """

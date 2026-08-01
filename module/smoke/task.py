@@ -10,6 +10,7 @@ import pytest
 import requests
 
 from common import BaseTask, allure_step
+from common.streaming import iter_sse_lines
 from module.smoke.assertions import SmokeAssertions
 from module.smoke.request import SmokeRequest
 
@@ -261,10 +262,4 @@ class SmokeTask(BaseTask):
 
     @staticmethod
     def iter_stream_lines(response: requests.Response):
-        for raw_line in response.iter_lines(decode_unicode=False):
-            if not raw_line:
-                continue
-            if isinstance(raw_line, bytes):
-                yield raw_line.decode("utf-8", errors="replace")
-            else:
-                yield str(raw_line)
+        yield from iter_sse_lines(response)

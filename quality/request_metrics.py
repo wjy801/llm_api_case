@@ -23,6 +23,7 @@ from quality.models import (
     RequestUsage,
 )
 from quality.runtime_context import get_case_context
+from quality.semantic_context import observe_request_metric
 
 
 REQUEST_EVENT_ID_ATTR = "quality_request_event_id"
@@ -88,6 +89,7 @@ def record_response(context: RequestContext, response: requests.Response) -> Non
         usage=_usage(response_body, protocol),
     )
     collector.record_request(metric)
+    _observe_semantic(context, metric)
 
 
 def record_exception(context: RequestContext, error: BaseException) -> None:
@@ -124,6 +126,7 @@ def record_exception(context: RequestContext, error: BaseException) -> None:
         error_type=type(error).__name__,
     )
     collector.record_request(metric)
+    _observe_semantic(context, metric)
 
 
 def _response_business_status(
@@ -196,7 +199,7 @@ def _usage(body: Mapping[str, Any] | None, protocol: Protocol) -> RequestUsage:
         return RequestUsage()
     raw_usage = body.get("usage")
     if not isinstance(raw_usage, Mapping):
-        return RequestUsage()
+        raw_usage = {}
     return RequestUsage(
         input_tokens=_first_value(
             _non_negative_int(raw_usage.get("input_tokens")),
@@ -206,7 +209,30 @@ def _usage(body: Mapping[str, Any] | None, protocol: Protocol) -> RequestUsage:
             _non_negative_int(raw_usage.get("output_tokens")),
             _non_negative_int(raw_usage.get("completion_tokens")),
         ),
+        media_count=_media_count(body),
     )
+
+
+def _media_count(body: Mapping[str, Any]) -> int | None:
+    data = body.get("data")
+    if isinstance(data, list):
+        media_items = [
+            item
+            for item in data
+            if isinstance(item, Mapping)
+            and any(name in item for name in ("url", "b64_json", "image_url", "video_url"))
+        ]
+        if media_items:
+            return len(media_items)
+    result = body.get("result")
+    if not isinstance(result, Mapping):
+        return None
+    urls = result.get("urls")
+    if isinstance(urls, list):
+        return len(urls)
+    if any(result.get(name) for name in ("url", "b64_json", "image_url", "video_url")):
+        return 1
+    return None
 
 
 def _response_json(
@@ -273,3 +299,10 @@ def _already_written(context: RequestContext) -> bool:
 
 def _mark_written(context: RequestContext) -> None:
     context.attributes[REQUEST_METRIC_WRITTEN_ATTR] = True
+
+
+def _observe_semantic(context: RequestContext, metric: RequestMetric) -> None:
+    try:
+        observe_request_metric(context, metric)
+    except Exception:
+        return

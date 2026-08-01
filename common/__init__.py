@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from common.context_executor import submit_with_context
     from common.polling import DEFAULT_MEDIA_POLLING_POLICY, PollingPolicy, PollingState, PollingTimeoutError
     from common.retry import RetryPolicy
+    from common.streaming import iter_sse_lines
     from common.test_context import (
         ContextCleanupError,
         ContextExtractionError,
@@ -68,6 +69,7 @@ __all__ = [
     "start_model_result_collection",
     "stop_model_result_collection",
     "submit_with_context",
+    "iter_sse_lines",
 ]
 
 
@@ -92,6 +94,10 @@ def __getattr__(name: str):
         from common.context_executor import submit_with_context
 
         return submit_with_context
+    if name == "iter_sse_lines":
+        from common.streaming import iter_sse_lines
+
+        return iter_sse_lines
     if name == "RetryPolicy":
         from common.retry import RetryPolicy
 
