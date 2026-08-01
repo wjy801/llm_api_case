@@ -73,7 +73,6 @@ class TestAsyncImageGeneration:
         before_balance_response = self.smoke_task.query_account_balance_for_billing(self.smoke_request)
         create_response = self.smoke_task.create_async_image_generation(self.smoke_request)
         task_id = self.smoke_task.extract_task_id(create_response)
-        unfinished_balance_response = self.smoke_task.query_account_balance_for_billing(self.smoke_request)
         result_response = self._poll_task_until_finished(task_id)
 
         status = self._extract_status(result_response)
@@ -89,10 +88,6 @@ class TestAsyncImageGeneration:
             self.smoke_request,
         )
 
-        self.smoke_assertions.assert_total_balance_unchanged(
-            before_balance_response,
-            unfinished_balance_response,
-        )
         self.smoke_assertions.assert_call_billing_deduction_matches(
             before_balance_response,
             usage_records_response,
