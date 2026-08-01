@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,9 @@ from master_service import CollectedTestCase
 
 QUALITY_ENV_NAMES = (
     "QUALITY_ENABLE",
+    "QUALITY_SEMANTIC_ENABLE",
+    "QUALITY_METRICS_ENABLE",
+    "QUALITY_P1_REPORT_ENABLE",
     "QUALITY_RUN_ID",
     "QUALITY_EXECUTION_ID",
     "QUALITY_OUTPUT_DIR",
@@ -315,3 +319,187 @@ def test_invalid_quality_report_environment_uses_defaults(monkeypatch, tmp_path,
 
     assert reports[0].min_request_samples == 20
     assert "Quality report configuration warning" in capsys.readouterr().out
+
+
+def test_semantic_merge_runs_after_p0_finalize_when_enabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("QUALITY_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_SEMANTIC_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
+    monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
+    monkeypatch.setattr(
+        run_master,
+        "collect_test_case_items",
+        lambda path: [_case("module/test_sample.py::test_ok")],
+    )
+    _capture_pytest_environment(monkeypatch)
+    _capture_quality_finalization(monkeypatch)
+    semantic_merges = []
+    monkeypatch.setattr(
+        run_master,
+        "merge_semantic_run",
+        lambda request: semantic_merges.append(request),
+    )
+
+    assert run_master.run() == 0
+
+    assert semantic_merges[0].run_id == "run-1"
+    assert semantic_merges[0].output_dir == tmp_path / "quality"
+
+
+def test_semantic_merge_failure_is_fail_open(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("QUALITY_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_SEMANTIC_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
+    monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
+    monkeypatch.setattr(
+        run_master,
+        "collect_test_case_items",
+        lambda path: [_case("module/test_sample.py::test_ok")],
+    )
+    _capture_pytest_environment(monkeypatch)
+    _capture_quality_finalization(monkeypatch)
+    monkeypatch.setattr(
+        run_master,
+        "merge_semantic_run",
+        lambda request: (_ for _ in ()).throw(OSError("semantic disk unavailable")),
+    )
+
+    assert run_master.run() == 0
+    assert "Quality semantic merge failed open" in capsys.readouterr().out
+
+
+def test_metrics_runs_after_semantic_when_enabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("QUALITY_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_SEMANTIC_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_METRICS_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
+    monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
+    monkeypatch.setattr(
+        run_master,
+        "collect_test_case_items",
+        lambda path: [_case("module/test_sample.py::test_ok")],
+    )
+    _capture_pytest_environment(monkeypatch)
+    _capture_quality_finalization(monkeypatch)
+    order = []
+    monkeypatch.setattr(
+        run_master,
+        "merge_semantic_run",
+        lambda request: order.append("semantic"),
+    )
+    monkeypatch.setattr(
+        run_master,
+        "aggregate_run_metrics",
+        lambda request: (
+            order.append("metrics")
+            or SimpleNamespace(
+                status=SimpleNamespace(value="aggregated"),
+                operation_count=1,
+                request_group_count=1,
+                request_event_count=1,
+            )
+        ),
+    )
+
+    assert run_master.run() == 0
+    assert order == ["semantic", "metrics"]
+
+
+def test_metrics_exception_is_fail_open(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("QUALITY_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_SEMANTIC_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_METRICS_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
+    monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
+    monkeypatch.setattr(
+        run_master,
+        "collect_test_case_items",
+        lambda path: [_case("module/test_sample.py::test_ok")],
+    )
+    _capture_pytest_environment(monkeypatch)
+    _capture_quality_finalization(monkeypatch)
+    monkeypatch.setattr(run_master, "merge_semantic_run", lambda request: None)
+    monkeypatch.setattr(
+        run_master,
+        "aggregate_run_metrics",
+        lambda request: (_ for _ in ()).throw(OSError("metrics disk unavailable")),
+    )
+
+    assert run_master.run() == 0
+    assert "Quality run metrics failed open" in capsys.readouterr().out
+
+
+def test_p1_observation_runs_after_metrics_with_explicit_expectations(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("QUALITY_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_SEMANTIC_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_METRICS_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_P1_REPORT_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
+    monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
+    monkeypatch.setattr(
+        run_master,
+        "collect_test_case_items",
+        lambda path: [_case("module/test_sample.py::test_ok")],
+    )
+    _capture_pytest_environment(monkeypatch)
+    _capture_quality_finalization(monkeypatch)
+    order = []
+    monkeypatch.setattr(
+        run_master, "merge_semantic_run", lambda request: order.append("semantic")
+    )
+    monkeypatch.setattr(
+        run_master,
+        "aggregate_run_metrics",
+        lambda request: (
+            order.append("metrics")
+            or SimpleNamespace(
+                status=SimpleNamespace(value="aggregated"),
+                operation_count=1,
+                request_group_count=1,
+                request_event_count=1,
+            )
+        ),
+    )
+    requests = []
+    monkeypatch.setattr(
+        run_master,
+        "generate_p1_observation_report",
+        lambda request: (
+            order.append("p1")
+            or requests.append(request)
+            or SimpleNamespace(
+                write_status="complete",
+                report_status=SimpleNamespace(value="complete"),
+            )
+        ),
+    )
+
+    assert run_master.run() == 0
+    assert order == ["semantic", "metrics", "p1"]
+    assert requests[0].metrics_expectation.value == "required"
+    assert requests[0].flaky_import_expectation.value == "disabled"
+    assert requests[0].flaky_evaluation_expectation.value == "disabled"
+
+
+def test_p1_observation_exception_is_fail_open(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("QUALITY_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_P1_REPORT_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
+    monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
+    monkeypatch.setattr(
+        run_master,
+        "collect_test_case_items",
+        lambda path: [_case("module/test_sample.py::test_ok")],
+    )
+    _capture_pytest_environment(monkeypatch)
+    _capture_quality_finalization(monkeypatch)
+    monkeypatch.setattr(
+        run_master,
+        "generate_p1_observation_report",
+        lambda request: (_ for _ in ()).throw(OSError("report disk unavailable")),
+    )
+
+    assert run_master.run() == 0
+    assert "Quality P1 observation report failed open" in capsys.readouterr().out

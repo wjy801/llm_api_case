@@ -24,8 +24,22 @@ from quality.config import (
     load_quality_report_config,
 )
 from quality.identifiers import build_run_id
+from quality.flaky_importer import (
+    evaluate_flaky_state,
+    import_flaky_history,
+    write_flaky_no_data_report,
+    write_flaky_state_no_data_report,
+)
+from quality.flaky_models import FlakyImportRequest, FlakyImportStatus
 from quality.models import IntegrityStatus, RunRecord, RunStatus
+from quality.metrics import RunMetricsAggregationRequest, aggregate_run_metrics
+from quality.observation_models import SourceExpectation
+from quality.observation_report import (
+    P1ObservationRequest,
+    generate_p1_observation_report,
+)
 from quality.report import QualityReportRequest, generate_quality_report
+from quality.semantic_aggregator import SemanticMergeRequest, merge_semantic_run
 from quality.storage import write_json_atomic
 from master_service import (
     DEFAULT_SERIAL_MARKER,
@@ -382,6 +396,165 @@ def _finalize_quality_run(
     except Exception as error:
         print(f"Quality report failed open: {type(error).__name__}: {error}")
 
+    if quality_config.semantic_enabled:
+        try:
+            merge_semantic_run(
+                SemanticMergeRequest(
+                    run_id=quality_config.run_id,
+                    output_dir=quality_config.output_dir,
+                )
+            )
+        except Exception as error:
+            print(f"Quality semantic merge failed open: {type(error).__name__}: {error}")
+
+    if quality_config.metrics_warning and not quality_config.metrics_enabled:
+        print(f"Quality run metrics configuration warning: {quality_config.metrics_warning}")
+    if quality_config.metrics_enabled:
+        try:
+            metrics_result = aggregate_run_metrics(
+                RunMetricsAggregationRequest(
+                    run_id=quality_config.run_id,
+                    output_dir=quality_config.output_dir,
+                )
+            )
+            print(
+                "Quality run metrics completed: "
+                f"status={metrics_result.status.value}, "
+                f"operations={metrics_result.operation_count}, "
+                f"request_groups={metrics_result.request_group_count}, "
+                f"request_events={metrics_result.request_event_count}"
+            )
+        except Exception as error:
+            print(f"Quality run metrics failed open: {type(error).__name__}: {error}")
+
+    flaky_import_result = None
+    if quality_config.flaky_history_warning and not quality_config.flaky_history_enabled:
+        print(f"Quality Flaky history configuration warning: {quality_config.flaky_history_warning}")
+    if quality_config.flaky_history_enabled:
+        try:
+            if status is not RunStatus.FINISHED:
+                result = write_flaky_no_data_report(
+                    run_id=quality_config.run_id,
+                    quality_output_dir=quality_config.output_dir,
+                    code="run_not_finished",
+                    summary=f"run status {status.value!r} is not importable",
+                )
+            elif quality_config.flaky_history_warning:
+                print(
+                    "Quality Flaky history configuration warning: "
+                    f"{quality_config.flaky_history_warning}"
+                )
+                result = write_flaky_no_data_report(
+                    run_id=quality_config.run_id,
+                    quality_output_dir=quality_config.output_dir,
+                    code="invalid_flaky_history_configuration",
+                    summary=quality_config.flaky_history_warning,
+                )
+            elif quality_config.flaky_database_path is None:
+                result = write_flaky_no_data_report(
+                    run_id=quality_config.run_id,
+                    quality_output_dir=quality_config.output_dir,
+                    code="flaky_database_path_missing",
+                    summary="Flaky history database path is missing",
+                )
+            else:
+                result = import_flaky_history(
+                    FlakyImportRequest(
+                        run_id=quality_config.run_id,
+                        quality_output_dir=quality_config.output_dir,
+                        database_path=quality_config.flaky_database_path,
+                    )
+                )
+            print(
+                "Quality Flaky history import completed: "
+                f"status={result.status.value}, inserted={result.inserted_count}"
+            )
+            flaky_import_result = result
+        except Exception as error:
+            print(f"Quality Flaky history import failed open: {type(error).__name__}: {error}")
+
+    if quality_config.flaky_state_warning and not quality_config.flaky_state_enabled:
+        print(
+            "Quality Flaky state configuration warning: "
+            f"{quality_config.flaky_state_warning}"
+        )
+    if quality_config.flaky_state_enabled:
+        try:
+            if quality_config.flaky_database_path is None:
+                state_result = write_flaky_state_no_data_report(
+                    run_id=quality_config.run_id,
+                    quality_output_dir=quality_config.output_dir,
+                    code="flaky_database_path_missing",
+                    summary="Flaky state database path is missing",
+                )
+            elif flaky_import_result is None or flaky_import_result.status not in {
+                FlakyImportStatus.IMPORTED,
+                FlakyImportStatus.NOOP,
+                FlakyImportStatus.DEGRADED,
+            }:
+                state_result = write_flaky_state_no_data_report(
+                    run_id=quality_config.run_id,
+                    quality_output_dir=quality_config.output_dir,
+                    code="flaky_history_import_not_ready",
+                    summary="Flaky history import did not produce an evaluable run",
+                )
+            else:
+                state_result = evaluate_flaky_state(
+                    quality_config.flaky_database_path,
+                    run_id=quality_config.run_id,
+                    quality_output_dir=quality_config.output_dir,
+                )
+            print(
+                "Quality Flaky state evaluation completed: "
+                f"status={state_result.status.value}, "
+                f"affected={state_result.affected_count}, "
+                f"transitioned={state_result.transitioned_count}"
+            )
+        except Exception as error:
+            print(f"Quality Flaky state evaluation failed open: {type(error).__name__}: {error}")
+
+    if quality_config.p1_report_warning and not quality_config.p1_report_enabled:
+        print(
+            "Quality P1 observation report configuration warning: "
+            f"{quality_config.p1_report_warning}"
+        )
+    if quality_config.p1_report_enabled:
+        try:
+            p1_result = generate_p1_observation_report(
+                P1ObservationRequest(
+                    run_id=quality_config.run_id,
+                    output_dir=quality_config.output_dir,
+                    metrics_expectation=(
+                        SourceExpectation.REQUIRED
+                        if quality_config.metrics_enabled
+                        else SourceExpectation.DISABLED
+                    ),
+                    flaky_import_expectation=(
+                        SourceExpectation.REQUIRED
+                        if quality_config.flaky_history_enabled
+                        else SourceExpectation.DISABLED
+                    ),
+                    flaky_evaluation_expectation=(
+                        SourceExpectation.REQUIRED
+                        if quality_config.flaky_state_enabled
+                        else SourceExpectation.DISABLED
+                    ),
+                )
+            )
+            message = (
+                f"write_status={p1_result.write_status}, "
+                f"report_status={p1_result.report_status.value if p1_result.report_status else '-'}"
+            )
+            if p1_result.write_status == "complete":
+                print(f"Quality P1 observation report completed: {message}")
+            else:
+                print(f"Quality P1 observation report failed open: {message}")
+        except Exception as error:
+            print(
+                "Quality P1 observation report failed open: "
+                f"{type(error).__name__}: {error}"
+            )
+
 
 def _load_quality_report_config_fail_open() -> QualityReportConfig:
     try:
@@ -457,6 +630,17 @@ def _resolve_parent_quality_config() -> QualityRuntimeConfig:
             run_id=configured.run_id,
             execution_id=None,
             output_dir=output_dir,
+            semantic_enabled=False,
+            semantic_warning=configured.semantic_warning,
+            metrics_enabled=False,
+            metrics_warning=configured.metrics_warning,
+            p1_report_enabled=False,
+            p1_report_warning=configured.p1_report_warning,
+            flaky_history_enabled=False,
+            flaky_database_path=configured.flaky_database_path,
+            flaky_history_warning=configured.flaky_history_warning,
+            flaky_state_enabled=False,
+            flaky_state_warning=configured.flaky_state_warning,
         )
 
     return QualityRuntimeConfig(
@@ -464,6 +648,17 @@ def _resolve_parent_quality_config() -> QualityRuntimeConfig:
         run_id=configured.run_id or _new_parent_run_id(),
         execution_id=None,
         output_dir=output_dir,
+        semantic_enabled=configured.semantic_enabled,
+        semantic_warning=configured.semantic_warning,
+        metrics_enabled=configured.metrics_enabled,
+        metrics_warning=configured.metrics_warning,
+        p1_report_enabled=configured.p1_report_enabled,
+        p1_report_warning=configured.p1_report_warning,
+        flaky_history_enabled=configured.flaky_history_enabled,
+        flaky_database_path=configured.flaky_database_path,
+        flaky_history_warning=configured.flaky_history_warning,
+        flaky_state_enabled=configured.flaky_state_enabled,
+        flaky_state_warning=configured.flaky_state_warning,
     )
 
 

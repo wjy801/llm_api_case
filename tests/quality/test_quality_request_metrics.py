@@ -127,6 +127,23 @@ def test_http_failure_and_timeout_exception_are_recorded(quality_runtime):
     assert timeout["error_type"] == "Timeout"
 
 
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ({"data": [{"url": "https://example.com/a.png"}]}, 1),
+        ({"result": {"urls": ["https://example.com/a.png", "https://example.com/b.png"]}}, 2),
+    ],
+)
+def test_http_media_count_uses_only_explicit_response_results(body, expected, quality_runtime):
+    context = _context(method="POST")
+    start_request_capture(context)
+
+    record_response(context, _response(body=body))
+
+    metric = read_jsonl(quality_runtime.paths.requests)[0]
+    assert metric["usage"]["media_count"] == expected
+
+
 def test_post_without_idempotency_is_not_marked_retryable(quality_runtime):
     context = _context(method="POST", retry_policy=RetryPolicy(base_delay=0, jitter=False))
     start_request_capture(context)

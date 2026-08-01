@@ -55,10 +55,12 @@ class TestAsyncImageGeneration:
         )
 
     def test_f8_09_async_image_generation_task_succeeds_with_result(self):
-        create_response = self.smoke_task.create_async_image_generation(self.smoke_request)
-        task_id = self._extract_task_id(create_response)
-
-        result_response = self._poll_task_until_finished(task_id)
+        result_response = self.smoke_task.create_and_poll_media_generation(
+            self.smoke_request,
+            self.smoke_task.build_async_image_generation_payload(),
+            poll_interval=ASYNC_IMAGE_POLL_INTERVAL_SECONDS,
+            poll_timeout=ASYNC_IMAGE_POLL_TIMEOUT_SECONDS,
+        )
 
         status = self._extract_status(result_response)
         assert status in ASYNC_IMAGE_SUCCESS_STATUS_VALUES, (
@@ -110,9 +112,12 @@ class TestAsyncImageGeneration:
         pass
 
     def test_f8_14_async_image_generation_result_image_url_is_accessible(self):
-        create_response = self.smoke_task.create_async_image_generation(self.smoke_request)
-        task_id = self._extract_task_id(create_response)
-        result_response = self._poll_task_until_finished(task_id)
+        result_response = self.smoke_task.create_and_poll_media_generation(
+            self.smoke_request,
+            self.smoke_task.build_async_image_generation_payload(),
+            poll_interval=ASYNC_IMAGE_POLL_INTERVAL_SECONDS,
+            poll_timeout=ASYNC_IMAGE_POLL_TIMEOUT_SECONDS,
+        )
 
         status = self._extract_status(result_response)
         assert status in ASYNC_IMAGE_SUCCESS_STATUS_VALUES, (

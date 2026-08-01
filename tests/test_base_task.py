@@ -168,6 +168,12 @@ class TestBaseTask:
         with pytest.raises(AssertionError, match="未返回 task_id"):
             task.extract_task_id(FakeResponse({}))
 
+    @pytest.mark.parametrize("field", ["id", "request_id"])
+    def test_extract_task_id_accepts_existing_smoke_aliases(self, field):
+        task = BaseTask()
+
+        assert task.extract_task_id(FakeResponse({field: "task-001"})) == "task-001"
+
     def test_get_account_balance_uses_control_key_and_resets_headers(self):
         task = BaseTask()
         request_client = FakeGenerationRequest()

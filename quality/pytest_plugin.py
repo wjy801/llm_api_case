@@ -32,6 +32,12 @@ from quality.runtime_context import (
     set_case_context,
     set_run_context,
 )
+from quality.semantic_collector import (
+    SemanticCollector,
+    configure_semantic_collector,
+    get_semantic_collector,
+    reset_semantic_collector,
+)
 
 
 _STATE_ATTR = "_quality_plugin_state"
@@ -44,6 +50,7 @@ class _PluginState:
     config: QualityRuntimeConfig
     run_context: QualityRunContext | None = None
     collector: QualityCollector | None = None
+    semantic_collector: SemanticCollector | None = None
     run_token: Any = None
 
 
@@ -59,6 +66,11 @@ def pytest_configure(config: pytest.Config) -> None:
 
     state = _PluginState(config=runtime_config)
     setattr(config, _STATE_ATTR, state)
+    if runtime_config.semantic_warning:
+        _write_warning(
+            config,
+            f"quality semantic collection disabled: {runtime_config.semantic_warning}",
+        )
     if not runtime_config.enabled:
         return
 
@@ -79,6 +91,20 @@ def pytest_configure(config: pytest.Config) -> None:
             run_context,
             warning_sink=lambda message: _write_warning(config, message),
         )
+        if runtime_config.semantic_enabled:
+            try:
+                state.semantic_collector = configure_semantic_collector(
+                    run_context,
+                    warning_sink=lambda message: _write_warning(config, message),
+                )
+            except Exception as error:
+                reset_semantic_collector()
+                state.semantic_collector = None
+                _write_warning(
+                    config,
+                    "quality semantic collector initialization failed: "
+                    f"{type(error).__name__}: {error}",
+                )
     except Exception as error:
         if state.run_token is not None:
             reset_run_context(state.run_token)
@@ -102,6 +128,8 @@ def pytest_configure_node(node: Any) -> None:
         "run_id": state.config.run_id,
         "execution_id": state.config.execution_id,
         "output_dir": str(state.config.output_dir),
+        "semantic_enabled": state.config.semantic_enabled,
+        "semantic_warning": state.config.semantic_warning,
     }
 
 
@@ -156,6 +184,11 @@ def pytest_runtest_protocol(item: pytest.Item, nextitem: pytest.Item | None):
     try:
         yield
     finally:
+        semantic_collector = get_semantic_collector()
+        if semantic_collector is not None:
+            semantic_collector.finalize_pending(
+                case_context.invocation_id if "case_context" in locals() else None
+            )
         if token is not None:
             reset_case_context(token)
 
@@ -226,9 +259,13 @@ def pytest_unconfigure(config: pytest.Config) -> None:
     if state is None:
         return
     try:
+        if state.semantic_collector is not None:
+            state.semantic_collector.finalize_pending()
         if state.run_token is not None:
             reset_run_context(state.run_token)
     finally:
+        if state.semantic_collector is not None:
+            reset_semantic_collector()
         if state.collector is not None:
             reset_collector()
         delattr(config, _STATE_ATTR)
@@ -243,6 +280,8 @@ def _resolve_runtime_config(config: pytest.Config) -> QualityRuntimeConfig:
             run_id=_required(payload.get("run_id"), "run_id"),
             execution_id=_required(payload.get("execution_id"), "execution_id"),
             output_dir=Path(payload["output_dir"]),
+            semantic_enabled=bool(payload.get("semantic_enabled", False)),
+            semantic_warning=payload.get("semantic_warning"),
         )
 
     loaded = load_quality_config()
@@ -257,6 +296,8 @@ def _resolve_runtime_config(config: pytest.Config) -> QualityRuntimeConfig:
         run_id=loaded.run_id or build_run_id(),
         execution_id=loaded.execution_id or _MANUAL_EXECUTION_ID,
         output_dir=output_dir,
+        semantic_enabled=loaded.semantic_enabled,
+        semantic_warning=loaded.semantic_warning,
     )
 
 
