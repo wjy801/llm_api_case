@@ -25,7 +25,7 @@ def build_pipeline_report(
     )
     collect = _collect_stage(context, sources)
     real_smoke = _test_stage(
-        "真实 Smoke",
+        "接口测试",
         "real_smoke",
         context.real_smoke_enabled,
         sources.smoke_tests,
@@ -81,19 +81,19 @@ def _collect_stage(
     sources: LoadedPipelineSources,
 ) -> StageResult:
     if not context.smoke_collect_enabled:
-        return StageResult("Smoke 收集", StageStatus.NOT_RUN, "本轮参数未启用")
+        return StageResult("用例收集", StageStatus.NOT_RUN, "本轮参数未启用")
     if sources.smoke_collect.available:
         return StageResult(
-            "Smoke 收集",
+            "用例收集",
             StageStatus.PASSED,
             _collect_summary_text(sources.smoke_collect),
         )
     explicit = sources.stage_statuses.get("smoke_collect")
     if explicit is StageStatus.FAILED:
-        return StageResult("Smoke 收集", StageStatus.FAILED, "收集失败")
+        return StageResult("用例收集", StageStatus.FAILED, "收集失败")
     if explicit in {StageStatus.BLOCKED, StageStatus.NOT_RUN}:
-        return StageResult("Smoke 收集", StageStatus.BLOCKED, "被前序失败或中断阻止")
-    return StageResult("Smoke 收集", StageStatus.NO_DATA, "已选择执行，但收集清单不可用")
+        return StageResult("用例收集", StageStatus.BLOCKED, "被前序失败或中断阻止")
+    return StageResult("用例收集", StageStatus.NO_DATA, "已选择执行，但收集清单不可用")
 
 
 def _quality_stage(
@@ -102,9 +102,9 @@ def _quality_stage(
     real_smoke_status: StageStatus,
 ) -> StageResult:
     if not context.real_smoke_enabled:
-        return StageResult("质量观测", StageStatus.NOT_RUN, "真实 Smoke 未启用")
+        return StageResult("质量观测", StageStatus.NOT_RUN, "接口测试未启用")
     if real_smoke_status is StageStatus.BLOCKED:
-        return StageResult("质量观测", StageStatus.BLOCKED, "真实 Smoke 未执行")
+        return StageResult("质量观测", StageStatus.BLOCKED, "接口测试未执行")
     if sources.quality_available:
         return StageResult("质量观测", StageStatus.PASSED, "P0 运行身份与汇总完整")
     return StageResult("质量观测", StageStatus.NO_DATA, "本轮 Quality 核心产物不可用")

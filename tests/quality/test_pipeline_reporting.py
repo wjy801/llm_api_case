@@ -57,7 +57,12 @@ def test_default_safe_pipeline_generates_summary_without_quality_run(tmp_path):
     markdown = (reports / "pipeline-summary.md").read_text(encoding="utf-8")
     assert "本轮按配置执行完成" in markdown
     assert "共收集 41 项；并发池 15 项，串行池 26 项" in markdown
-    assert "真实 Smoke | 未执行" in markdown
+    assert "用例收集 | 通过" in markdown
+    assert "接口测试 | 未执行" in markdown
+    assert "RUN_COLLECT_ONLY" not in markdown
+    assert "RUN_REAL_SMOKE" not in markdown
+    assert "SMOKE_TARGET" not in markdown
+    assert "Smoke" not in markdown
     assert "## 请求质量" not in markdown
 
 
@@ -223,7 +228,7 @@ def test_selected_stage_without_artifact_is_not_reported_as_zero_tests(tmp_path)
     assert report.conclusion.value == "FAIL"
     stage_status = {item.name: item.status.value for item in report.stages}
     assert stage_status["框架单测"] == "FAILED"
-    assert stage_status["真实 Smoke"] == "BLOCKED"
+    assert stage_status["接口测试"] == "BLOCKED"
     markdown = (reports / "pipeline-summary.md").read_text(encoding="utf-8")
     assert "0 总计" not in markdown
 

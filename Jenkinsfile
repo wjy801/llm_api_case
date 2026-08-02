@@ -484,7 +484,7 @@ String buildResultSummaryHtml(String status, Map junit, Map smoke) {
           <td style="padding: 9px 10px; border: 1px solid #ddd;">${htmlEscape(junitText)}</td>
         </tr>
         <tr>
-          <td style="padding: 9px 10px; border: 1px solid #ddd; color: #666;">Smoke</td>
+          <td style="padding: 9px 10px; border: 1px solid #ddd; color: #666;">用例收集</td>
           <td style="padding: 9px 10px; border: 1px solid #ddd;">${htmlEscape(smokeText)}</td>
         </tr>
         <tr>
@@ -507,10 +507,10 @@ String buildExecutionSummary() {
         parts << '框架测试'
     }
     if (String.valueOf(params.RUN_COLLECT_ONLY).equalsIgnoreCase('true')) {
-        parts << 'Smoke 收集'
+        parts << '用例收集'
     }
     if (String.valueOf(params.RUN_REAL_SMOKE).equalsIgnoreCase('true')) {
-        parts << "真实 Smoke（${params.SMOKE_TARGET}）"
+        parts << "接口测试（${params.SMOKE_TARGET}）"
         parts << "并发 ${workerText(params.TEST_PARALLEL_WORKERS)}"
     }
     if (parts.isEmpty()) {
