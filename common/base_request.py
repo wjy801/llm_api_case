@@ -30,9 +30,12 @@ from common.retry import (
     RetryPolicy,
 )
 from common.retry_executor import RetryExecutor
-from quality.semantic_context import (
-    OperationHandle,
-    PollingSessionHandle,
+from common.runtime_hooks import (
+    RuntimeOperationKind,
+    RuntimeOperationOutcome,
+    RuntimePollingLease,
+    RuntimePollingOutcome,
+    RuntimeTrafficRole,
     add_polling_sleep,
     begin_operation,
     begin_polling_session,
@@ -44,14 +47,8 @@ from quality.semantic_context import (
     finish_request_group,
     model_id_from_kwargs,
     observe_polling_state,
-    operation_kind_for_request,
+    operation_outcome_for_error,
     start_request_group,
-)
-from quality.semantic_models import (
-    OperationKind,
-    OperationOutcome,
-    PollingOutcome,
-    TrafficRole,
 )
 from util import (
     API_REQUEST_STEP_NAME,
@@ -83,9 +80,9 @@ class BaseRequest:
         attach_log = kwargs.pop("_attach_log", True)
         retry_policy = kwargs.pop("retry_policy", None)
         operation_name = str(kwargs.pop("_quality_operation_name", "")).strip()
-        traffic_role = kwargs.pop("_quality_traffic_role", TrafficRole.UNKNOWN)
+        traffic_role = kwargs.pop("_quality_traffic_role", RuntimeTrafficRole.UNKNOWN)
         stream = bool(kwargs.get("stream"))
-        operation_kind = operation_kind_for_request(stream=stream)
+        operation_kind = RuntimeOperationKind.SSE if stream else RuntimeOperationKind.HTTP
         operation_handle = begin_operation(
             operation_kind,
             name=operation_name or ("sse_request" if stream else "http_request"),
@@ -115,9 +112,9 @@ class BaseRequest:
             finish_operation(
                 operation_handle,
                 (
-                    OperationOutcome.SUCCESS
+                    RuntimeOperationOutcome.SUCCESS
                     if 200 <= response.status_code < 300
-                    else OperationOutcome.FAILED
+                    else RuntimeOperationOutcome.FAILED
                 ),
             )
         return response
@@ -157,9 +154,9 @@ class BaseRequest:
             raise ValueError("poll_timeout must be greater than 0")
 
         operation_name = str(kwargs.pop("_quality_operation_name", "polling")).strip() or "polling"
-        traffic_role = kwargs.pop("_quality_traffic_role", TrafficRole.UNKNOWN)
+        traffic_role = kwargs.pop("_quality_traffic_role", RuntimeTrafficRole.UNKNOWN)
         operation_handle = begin_operation(
-            OperationKind.POLLING,
+            RuntimeOperationKind.POLLING,
             name=operation_name,
             role=traffic_role,
             model_id=model_id_from_kwargs(kwargs),
@@ -172,31 +169,31 @@ class BaseRequest:
                 timeout=timeout,
                 polling_policy=polling_policy,
                 retry_policy=retry_policy,
-                semantic_polling_handle=polling_handle,
+                runtime_polling_lease=polling_handle,
                 **kwargs,
             )
         except PollingFailedError:
-            finish_polling_session(polling_handle, PollingOutcome.FAILURE)
-            finish_operation(operation_handle, OperationOutcome.FAILED)
+            finish_polling_session(polling_handle, RuntimePollingOutcome.FAILURE)
+            finish_operation(operation_handle, RuntimeOperationOutcome.FAILED)
             raise
         except PollingUnknownStateError:
-            finish_polling_session(polling_handle, PollingOutcome.UNKNOWN)
-            finish_operation(operation_handle, OperationOutcome.UNKNOWN)
+            finish_polling_session(polling_handle, RuntimePollingOutcome.UNKNOWN)
+            finish_operation(operation_handle, RuntimeOperationOutcome.UNKNOWN)
             raise
         except PollingTimeoutError:
-            finish_polling_session(polling_handle, PollingOutcome.TIMEOUT)
-            finish_operation(operation_handle, OperationOutcome.TIMEOUT)
+            finish_polling_session(polling_handle, RuntimePollingOutcome.TIMEOUT)
+            finish_operation(operation_handle, RuntimeOperationOutcome.TIMEOUT)
             raise
         except (KeyboardInterrupt, SystemExit):
-            finish_polling_session(polling_handle, PollingOutcome.INTERRUPTED)
-            finish_operation(operation_handle, OperationOutcome.INTERRUPTED)
+            finish_polling_session(polling_handle, RuntimePollingOutcome.INTERRUPTED)
+            finish_operation(operation_handle, RuntimeOperationOutcome.INTERRUPTED)
             raise
         except BaseException as error:
-            finish_polling_session(polling_handle, PollingOutcome.FAILURE)
+            finish_polling_session(polling_handle, RuntimePollingOutcome.FAILURE)
             finish_operation(operation_handle, self._operation_outcome_for_error(error))
             raise
-        finish_polling_session(polling_handle, PollingOutcome.SUCCESS)
-        finish_operation(operation_handle, OperationOutcome.SUCCESS)
+        finish_polling_session(polling_handle, RuntimePollingOutcome.SUCCESS)
+        finish_operation(operation_handle, RuntimeOperationOutcome.SUCCESS)
         return response
 
     def post(self, path: str, **kwargs: Any) -> requests.Response:
@@ -294,17 +291,17 @@ class BaseRequest:
         return response
 
     def _send_single_group(self, context: RequestContext) -> requests.Response:
-        group_id = start_request_group(
+        group_lease = start_request_group(
             method=context.method,
             path=context.path,
             protocol=context.protocol,
             configured_max_attempts=1,
         )
-        bind_request_context(context, group_id)
+        bind_request_context(context, group_lease)
         try:
             return self._send(context)
         finally:
-            finish_request_group(group_id)
+            finish_request_group(group_lease)
 
     def _send_with_retry(
         self,
@@ -332,7 +329,7 @@ class BaseRequest:
             **kwargs,
         )
 
-        group_id = start_request_group(
+        group_lease = start_request_group(
             method=first_context.method,
             path=first_context.path,
             protocol=first_context.protocol,
@@ -354,7 +351,7 @@ class BaseRequest:
             )
             context.attributes["attempt_index"] = attempt_index
             context.attributes["max_attempts"] = retry_policy.max_attempts
-            bind_request_context(context, group_id)
+            bind_request_context(context, group_lease)
             return context
         try:
             return self.retry_executor.execute(
@@ -368,7 +365,7 @@ class BaseRequest:
                 on_wait=retry_waits.append,
             )
         finally:
-            finish_request_group(group_id, retry_wait_seconds=sum(retry_waits))
+            finish_request_group(group_lease, retry_wait_seconds=sum(retry_waits))
 
     def _run_before_middlewares(self, context: RequestContext) -> None:
         for middleware in self.middlewares:
@@ -463,7 +460,7 @@ class BaseRequest:
         timeout: float,
         polling_policy: PollingPolicy,
         retry_policy: RetryPolicy | None = None,
-        semantic_polling_handle: PollingSessionHandle | None = None,
+        runtime_polling_lease: RuntimePollingLease | None = None,
         **kwargs: Any,
     ) -> requests.Response:
         deadline = time.monotonic() + timeout
@@ -493,8 +490,8 @@ class BaseRequest:
                 raise
 
             last_status = evaluation.raw_status
-            if semantic_polling_handle is not None:
-                observe_polling_state(semantic_polling_handle, evaluation.state.value)
+            if runtime_polling_lease is not None:
+                observe_polling_state(runtime_polling_lease, evaluation.state.value)
             transitions.append(
                 PollingTransition(
                     attempt_index=attempt_index,
@@ -548,9 +545,9 @@ class BaseRequest:
             try:
                 time.sleep(sleep_seconds)
             finally:
-                if semantic_polling_handle is not None:
+                if runtime_polling_lease is not None:
                     add_polling_sleep(
-                        semantic_polling_handle,
+                        runtime_polling_lease,
                         time.monotonic() - sleep_started_at,
                     )
 
@@ -583,12 +580,8 @@ class BaseRequest:
         logger.attach_polling_transitions(format_polling_transitions(transitions))
 
     @staticmethod
-    def _operation_outcome_for_error(error: BaseException) -> OperationOutcome:
-        if isinstance(error, (KeyboardInterrupt, SystemExit)):
-            return OperationOutcome.INTERRUPTED
-        if isinstance(error, (requests.Timeout, TimeoutError)):
-            return OperationOutcome.TIMEOUT
-        return OperationOutcome.FAILED
+    def _operation_outcome_for_error(error: BaseException) -> RuntimeOperationOutcome:
+        return operation_outcome_for_error(error)
 
 
 class NoopApiCallLogger(ApiCallLogger):
