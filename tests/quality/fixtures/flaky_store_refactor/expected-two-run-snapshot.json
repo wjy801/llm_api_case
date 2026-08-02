@@ -1,0 +1,326 @@
+{
+  "data": {
+    "case_observation": [
+      {
+        "case_id": "module/test_demo.py::test_case",
+        "decisive_phase": "call",
+        "environment": "overseas",
+        "environment_rule_version": "flaky-environment.v1",
+        "epoch_scope_key": "epoch-scope-v1-183c1f6c96733314cd54b976e68955aaebe740a8567fcd2574dc3955f4a01ef0",
+        "execution_profile": "serial",
+        "execution_profile_rule_version": "flaky-execution-profile.v1",
+        "failure_category": "PRODUCT_DEFECT",
+        "failure_id": "fail-call-assertionerror-demo",
+        "final_status": "failed",
+        "fingerprint_version": "p0-fingerprint.v1",
+        "flaky_key": "flaky-v1-25da3bac80d80149101032c64c20615e1c5f6cebd3377305c4f773c5347455d8",
+        "identity_rule_version": "flaky-identity.v1",
+        "invocation_id": "inv-run-2",
+        "observation_id": "observation-v1-5d276dd8a29957ae5a4a396829d431d27db403fb72b77d90388bebc2612bd893",
+        "observation_outcome": "fail",
+        "observation_rule_version": "flaky-observation.v1",
+        "observed_at": "2026-08-01T01:00:00.003000+00:00",
+        "param_hash": "param-hash",
+        "raw_status": "failed",
+        "run_id": "run-2",
+        "state_epoch": 1
+      },
+      {
+        "case_id": "module/test_demo.py::test_case",
+        "decisive_phase": "call",
+        "environment": "overseas",
+        "environment_rule_version": "flaky-environment.v1",
+        "epoch_scope_key": "epoch-scope-v1-183c1f6c96733314cd54b976e68955aaebe740a8567fcd2574dc3955f4a01ef0",
+        "execution_profile": "serial",
+        "execution_profile_rule_version": "flaky-execution-profile.v1",
+        "failure_category": null,
+        "failure_id": null,
+        "final_status": "passed",
+        "fingerprint_version": "p0-fingerprint.v1",
+        "flaky_key": "flaky-v1-25da3bac80d80149101032c64c20615e1c5f6cebd3377305c4f773c5347455d8",
+        "identity_rule_version": "flaky-identity.v1",
+        "invocation_id": "inv-run-1",
+        "observation_id": "observation-v1-7e66d5a95478c3bafa0951d4f3e407e094904fe83c643e8541daf96938981e23",
+        "observation_outcome": "pass",
+        "observation_rule_version": "flaky-observation.v1",
+        "observed_at": "2026-08-01T01:00:00.003000+00:00",
+        "param_hash": "param-hash",
+        "raw_status": "passed",
+        "run_id": "run-1",
+        "state_epoch": 1
+      }
+    ],
+    "flaky_case_epoch": [
+      {
+        "case_id": "module/test_demo.py::test_case",
+        "created_at": "<dynamic>",
+        "current_epoch": 1,
+        "environment": "overseas",
+        "environment_rule_version": "flaky-environment.v1",
+        "epoch_scope_key": "epoch-scope-v1-183c1f6c96733314cd54b976e68955aaebe740a8567fcd2574dc3955f4a01ef0",
+        "execution_profile": "serial",
+        "execution_profile_rule_version": "flaky-execution-profile.v1",
+        "identity_rule_version": "flaky-identity.v1",
+        "updated_at": "<dynamic>"
+      }
+    ],
+    "flaky_governance": [],
+    "flaky_import_run": [
+      {
+        "artifact_ref": "local:run-1:C:/Users/sm/AppData/Local/Temp/claude-agent-tmp/pytest-of-sm/pytest-228/test_old_and_new_flaky_store_d0/quality-run-1",
+        "branch": null,
+        "build_number": null,
+        "case_results_sha256": "9c5eb3e5fa95ac4fdcd8c4410f4cf3db1df5070c522f6f43f2cb31af9f0b46c5",
+        "commit_sha": null,
+        "eligible_count": 1,
+        "environment": "overseas",
+        "environment_rule_version": "flaky-environment.v1",
+        "excluded_count": 0,
+        "execution_profile_rule_version": "flaky-execution-profile.v1",
+        "failures_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "fingerprint_version": "p0-fingerprint.v1",
+        "identity_rule_version": "flaky-identity.v1",
+        "imported_at": "<dynamic>",
+        "importer_version": "p1-flaky-import.v1",
+        "integrity_issues_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "job_name": null,
+        "manifest_sha256": "3f0f9409a528d2f2e7126e78eb5163e6bea583daa4c1c89c2aa861952bbf85dd",
+        "observation_rule_version": "flaky-observation.v1",
+        "p0_integrity_status": "complete",
+        "p0_merge_version": "p0-merge.v1",
+        "p0_schema_version": "quality.v1",
+        "run_end_time": "2026-08-01T01:00:02+00:00",
+        "run_id": "run-1",
+        "run_record_sha256": "4b59b061095e8b3f7589d9579a10d20eb552af8f20c79b9653a73c4b13b6b4bd",
+        "run_start_time": "2026-08-01T01:00:00+00:00",
+        "run_status": "finished",
+        "source_digest": "1b6f55e97322a6106b85cc6d927ac4351ca098ab2c82debba1ce714ca30fa238",
+        "source_kind": "local"
+      },
+      {
+        "artifact_ref": "local:run-2:C:/Users/sm/AppData/Local/Temp/claude-agent-tmp/pytest-of-sm/pytest-228/test_old_and_new_flaky_store_d0/quality-run-2",
+        "branch": null,
+        "build_number": null,
+        "case_results_sha256": "ae450842e8b00160c1068bf3bd1533552192b19896d929663aa04aa9e9defbc6",
+        "commit_sha": null,
+        "eligible_count": 1,
+        "environment": "overseas",
+        "environment_rule_version": "flaky-environment.v1",
+        "excluded_count": 0,
+        "execution_profile_rule_version": "flaky-execution-profile.v1",
+        "failures_sha256": "662ee013c257e03eb35af66311c5006998ec4189918b068a212ab46bceb26eca",
+        "fingerprint_version": "p0-fingerprint.v1",
+        "identity_rule_version": "flaky-identity.v1",
+        "imported_at": "<dynamic>",
+        "importer_version": "p1-flaky-import.v1",
+        "integrity_issues_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "job_name": null,
+        "manifest_sha256": "ebdc553ab3b74c6667f396d5071238d881229f72a49226bf37a8dc73632f909c",
+        "observation_rule_version": "flaky-observation.v1",
+        "p0_integrity_status": "complete",
+        "p0_merge_version": "p0-merge.v1",
+        "p0_schema_version": "quality.v1",
+        "run_end_time": "2026-08-01T01:00:02+00:00",
+        "run_id": "run-2",
+        "run_record_sha256": "303478dc53710073a8e1cf77324bc69a417e5197d5435b18a54c3ddc4632b7eb",
+        "run_start_time": "2026-08-01T01:00:00+00:00",
+        "run_status": "finished",
+        "source_digest": "504f6f4d4e449379f5166c629193fd68a25cf4795d5cd9e9a89cdec269d010de",
+        "source_kind": "local"
+      }
+    ],
+    "flaky_override": [],
+    "flaky_state": [
+      {
+        "case_id": "module/test_demo.py::test_case",
+        "created_at": "<dynamic>",
+        "current_state": "SUSPECTED",
+        "detected_state": "SUSPECTED",
+        "distinct_failure_fingerprint_count": 1,
+        "environment": "overseas",
+        "epoch_scope_key": "epoch-scope-v1-183c1f6c96733314cd54b976e68955aaebe740a8567fcd2574dc3955f4a01ef0",
+        "evaluation_anchor_observation_id": null,
+        "evidence_window_size": 20,
+        "execution_profile": "serial",
+        "fail_count": 1,
+        "flaky_key": "flaky-v1-25da3bac80d80149101032c64c20615e1c5f6cebd3377305c4f773c5347455d8",
+        "last_transition_id": "transition-v1-51236f8611ea2301cc33adc45e0a32671177722ddbca21a27c295fce266230dd",
+        "latest_observation_id": "observation-v1-5d276dd8a29957ae5a4a396829d431d27db403fb72b77d90388bebc2612bd893",
+        "latest_observed_at": "2026-08-01T01:00:00.003000+00:00",
+        "latest_run_id": "run-2",
+        "outcome_switch_count": 1,
+        "param_hash": "param-hash",
+        "pass_count": 1,
+        "projection_status": "CURRENT",
+        "projection_version": "flaky-projection.v1",
+        "rule_version": "flaky-state.v1",
+        "sample_size": 2,
+        "signature_switch_count": 1,
+        "stable_failure_id": null,
+        "stable_outcome": null,
+        "state_epoch": 1,
+        "total_observation_count": 2,
+        "trailing_same_signature_count": 1,
+        "updated_at": "<dynamic>"
+      }
+    ],
+    "flaky_transition": [
+      {
+        "actor": null,
+        "created_at": "<dynamic>",
+        "evidence_observation_ids_json": "[\"observation-v1-7e66d5a95478c3bafa0951d4f3e407e094904fe83c643e8541daf96938981e23\",\"observation-v1-5d276dd8a29957ae5a4a396829d431d27db403fb72b77d90388bebc2612bd893\"]",
+        "evidence_run_ids_json": "[\"run-1\",\"run-2\"]",
+        "flaky_key": "flaky-v1-25da3bac80d80149101032c64c20615e1c5f6cebd3377305c4f773c5347455d8",
+        "from_state": "OBSERVING",
+        "projection_version": "flaky-projection.v1",
+        "reason_code": "outcome_changed",
+        "rule_version": "flaky-state.v1",
+        "sample_size": 2,
+        "to_state": "SUSPECTED",
+        "transition_id": "transition-v1-51236f8611ea2301cc33adc45e0a32671177722ddbca21a27c295fce266230dd",
+        "trigger_observation_id": "observation-v1-5d276dd8a29957ae5a4a396829d431d27db403fb72b77d90388bebc2612bd893",
+        "trigger_type": "observation"
+      },
+      {
+        "actor": null,
+        "created_at": "<dynamic>",
+        "evidence_observation_ids_json": "[\"observation-v1-7e66d5a95478c3bafa0951d4f3e407e094904fe83c643e8541daf96938981e23\"]",
+        "evidence_run_ids_json": "[\"run-1\"]",
+        "flaky_key": "flaky-v1-25da3bac80d80149101032c64c20615e1c5f6cebd3377305c4f773c5347455d8",
+        "from_state": null,
+        "projection_version": "flaky-projection.v1",
+        "reason_code": "first_observation",
+        "rule_version": "flaky-state.v1",
+        "sample_size": 1,
+        "to_state": "OBSERVING",
+        "transition_id": "transition-v1-ce95e68a0a2cc0b8bd7cac57b437292f3411c067e8f56e82c61039a5e2d03774",
+        "trigger_observation_id": "observation-v1-7e66d5a95478c3bafa0951d4f3e407e094904fe83c643e8541daf96938981e23",
+        "trigger_type": "bootstrap"
+      }
+    ],
+    "schema_migration": [
+      {
+        "applied_at": "<dynamic>",
+        "checksum": "4892ff20bb9d8fdca6b784314fbb9487fafa85de74a5dd44e5bd213ee8c74b69",
+        "name": "0002_flaky_state_machine.sql",
+        "version": 2
+      },
+      {
+        "applied_at": "<dynamic>",
+        "checksum": "6193bd75d139e8cfddaac171db85facdf6b102416f65401a490a18c92699cbe6",
+        "name": "0001_observation_store.sql",
+        "version": 1
+      }
+    ]
+  },
+  "objects": [
+    {
+      "name": "idx_case_observation_case_lookup",
+      "sql": "CREATE INDEX idx_case_observation_case_lookup\nON case_observation(case_id, environment, execution_profile, state_epoch)",
+      "tbl_name": "case_observation",
+      "type": "index"
+    },
+    {
+      "name": "idx_case_observation_flaky_time",
+      "sql": "CREATE INDEX idx_case_observation_flaky_time\nON case_observation(flaky_key, observed_at, run_id)",
+      "tbl_name": "case_observation",
+      "type": "index"
+    },
+    {
+      "name": "idx_flaky_governance_one_open",
+      "sql": "CREATE UNIQUE INDEX idx_flaky_governance_one_open\nON flaky_governance(flaky_key)\nWHERE status IN ('ACTIVE', 'RECOVERING')",
+      "tbl_name": "flaky_governance",
+      "type": "index"
+    },
+    {
+      "name": "idx_flaky_governance_status_expiry",
+      "sql": "CREATE INDEX idx_flaky_governance_status_expiry\nON flaky_governance(status, expires_at)",
+      "tbl_name": "flaky_governance",
+      "type": "index"
+    },
+    {
+      "name": "idx_flaky_override_key_time",
+      "sql": "CREATE INDEX idx_flaky_override_key_time\nON flaky_override(flaky_key, created_at)",
+      "tbl_name": "flaky_override",
+      "type": "index"
+    },
+    {
+      "name": "idx_flaky_override_scope_time",
+      "sql": "CREATE INDEX idx_flaky_override_scope_time\nON flaky_override(epoch_scope_key, created_at)",
+      "tbl_name": "flaky_override",
+      "type": "index"
+    },
+    {
+      "name": "idx_flaky_state_case_lookup",
+      "sql": "CREATE INDEX idx_flaky_state_case_lookup\nON flaky_state(case_id, environment, execution_profile, state_epoch)",
+      "tbl_name": "flaky_state",
+      "type": "index"
+    },
+    {
+      "name": "idx_flaky_state_status_updated",
+      "sql": "CREATE INDEX idx_flaky_state_status_updated\nON flaky_state(current_state, updated_at)",
+      "tbl_name": "flaky_state",
+      "type": "index"
+    },
+    {
+      "name": "idx_flaky_transition_key_time",
+      "sql": "CREATE INDEX idx_flaky_transition_key_time\nON flaky_transition(flaky_key, created_at, transition_id)",
+      "tbl_name": "flaky_transition",
+      "type": "index"
+    },
+    {
+      "name": "idx_flaky_transition_target_time",
+      "sql": "CREATE INDEX idx_flaky_transition_target_time\nON flaky_transition(to_state, created_at)",
+      "tbl_name": "flaky_transition",
+      "type": "index"
+    },
+    {
+      "name": "case_observation",
+      "sql": "CREATE TABLE case_observation (\n    observation_id TEXT PRIMARY KEY,\n    run_id TEXT NOT NULL,\n    invocation_id TEXT NOT NULL,\n    flaky_key TEXT NOT NULL,\n    epoch_scope_key TEXT NOT NULL,\n    case_id TEXT NOT NULL,\n    param_hash TEXT NOT NULL,\n    environment TEXT NOT NULL,\n    execution_profile TEXT NOT NULL,\n    state_epoch INTEGER NOT NULL CHECK (state_epoch >= 1),\n    decisive_phase TEXT NOT NULL,\n    raw_status TEXT NOT NULL,\n    final_status TEXT NOT NULL,\n    observation_outcome TEXT NOT NULL CHECK (observation_outcome IN ('pass', 'fail')),\n    failure_id TEXT,\n    failure_category TEXT,\n    observed_at TEXT NOT NULL,\n    identity_rule_version TEXT NOT NULL,\n    environment_rule_version TEXT NOT NULL,\n    execution_profile_rule_version TEXT NOT NULL,\n    observation_rule_version TEXT NOT NULL,\n    fingerprint_version TEXT NOT NULL,\n    FOREIGN KEY (run_id) REFERENCES flaky_import_run(run_id),\n    FOREIGN KEY (epoch_scope_key) REFERENCES flaky_case_epoch(epoch_scope_key),\n    UNIQUE (run_id, flaky_key),\n    CHECK (\n        (observation_outcome = 'pass' AND failure_id IS NULL)\n        OR\n        (observation_outcome = 'fail' AND failure_id IS NOT NULL)\n    )\n)",
+      "tbl_name": "case_observation",
+      "type": "table"
+    },
+    {
+      "name": "flaky_case_epoch",
+      "sql": "CREATE TABLE flaky_case_epoch (\n    epoch_scope_key TEXT PRIMARY KEY,\n    case_id TEXT NOT NULL,\n    environment TEXT NOT NULL,\n    execution_profile TEXT NOT NULL,\n    current_epoch INTEGER NOT NULL CHECK (current_epoch >= 1),\n    identity_rule_version TEXT NOT NULL,\n    environment_rule_version TEXT NOT NULL,\n    execution_profile_rule_version TEXT NOT NULL,\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL,\n    UNIQUE (case_id, environment, execution_profile)\n)",
+      "tbl_name": "flaky_case_epoch",
+      "type": "table"
+    },
+    {
+      "name": "flaky_governance",
+      "sql": "CREATE TABLE flaky_governance (\n    governance_id TEXT PRIMARY KEY,\n    flaky_key TEXT NOT NULL,\n    status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'RECOVERING', 'CLOSED')),\n    owner TEXT NOT NULL,\n    reason TEXT NOT NULL,\n    created_by TEXT NOT NULL,\n    created_at TEXT NOT NULL,\n    expires_at TEXT NOT NULL,\n    recovery_started_by TEXT,\n    recovery_started_at TEXT,\n    recovery_reason TEXT,\n    recovery_anchor_observation_id TEXT,\n    closed_at TEXT,\n    resolution TEXT CHECK (resolution IN ('recovered', 'regressed', 'cancelled')),\n    FOREIGN KEY (flaky_key) REFERENCES flaky_state(flaky_key),\n    FOREIGN KEY (recovery_anchor_observation_id)\n        REFERENCES case_observation(observation_id),\n    CHECK (expires_at > created_at),\n    CHECK (\n        status != 'RECOVERING'\n        OR (\n            recovery_started_by IS NOT NULL\n            AND recovery_started_at IS NOT NULL\n            AND recovery_reason IS NOT NULL\n        )\n    ),\n    CHECK (\n        status != 'CLOSED'\n        OR (closed_at IS NOT NULL AND resolution IS NOT NULL)\n    )\n)",
+      "tbl_name": "flaky_governance",
+      "type": "table"
+    },
+    {
+      "name": "flaky_import_run",
+      "sql": "CREATE TABLE flaky_import_run (\n    run_id TEXT PRIMARY KEY,\n    source_digest TEXT NOT NULL UNIQUE,\n    source_kind TEXT NOT NULL,\n    artifact_ref TEXT NOT NULL,\n    job_name TEXT,\n    build_number TEXT,\n    branch TEXT,\n    commit_sha TEXT,\n    environment TEXT NOT NULL,\n    run_status TEXT NOT NULL,\n    p0_integrity_status TEXT NOT NULL,\n    run_start_time TEXT NOT NULL,\n    run_end_time TEXT NOT NULL,\n    p0_schema_version TEXT NOT NULL,\n    p0_merge_version TEXT NOT NULL,\n    fingerprint_version TEXT NOT NULL,\n    run_record_sha256 TEXT NOT NULL,\n    manifest_sha256 TEXT NOT NULL,\n    case_results_sha256 TEXT NOT NULL,\n    failures_sha256 TEXT NOT NULL,\n    integrity_issues_sha256 TEXT NOT NULL,\n    importer_version TEXT NOT NULL,\n    identity_rule_version TEXT NOT NULL,\n    environment_rule_version TEXT NOT NULL,\n    execution_profile_rule_version TEXT NOT NULL,\n    observation_rule_version TEXT NOT NULL,\n    eligible_count INTEGER NOT NULL CHECK (eligible_count >= 0),\n    excluded_count INTEGER NOT NULL CHECK (excluded_count >= 0),\n    imported_at TEXT NOT NULL\n)",
+      "tbl_name": "flaky_import_run",
+      "type": "table"
+    },
+    {
+      "name": "flaky_override",
+      "sql": "CREATE TABLE flaky_override (\n    override_id TEXT PRIMARY KEY,\n    epoch_scope_key TEXT NOT NULL,\n    flaky_key TEXT,\n    action TEXT NOT NULL CHECK (\n        action IN (\n            'reset_epoch', 'confirm_flaky',\n            'mark_not_flaky', 'cancel_quarantine'\n        )\n    ),\n    previous_epoch INTEGER,\n    new_epoch INTEGER,\n    from_state TEXT,\n    to_state TEXT,\n    trigger_observation_id TEXT,\n    actor TEXT NOT NULL,\n    reason TEXT NOT NULL,\n    created_at TEXT NOT NULL,\n    FOREIGN KEY (epoch_scope_key) REFERENCES flaky_case_epoch(epoch_scope_key),\n    FOREIGN KEY (flaky_key) REFERENCES flaky_state(flaky_key),\n    FOREIGN KEY (trigger_observation_id)\n        REFERENCES case_observation(observation_id),\n    CHECK (\n        (\n            action = 'reset_epoch'\n            AND previous_epoch >= 1\n            AND new_epoch = previous_epoch + 1\n            AND flaky_key IS NULL\n            AND from_state IS NULL\n            AND to_state IS NULL\n        )\n        OR\n        (\n            action != 'reset_epoch'\n            AND previous_epoch IS NULL\n            AND new_epoch IS NULL\n            AND flaky_key IS NOT NULL\n            AND from_state IS NOT NULL\n            AND to_state IS NOT NULL\n        )\n    )\n)",
+      "tbl_name": "flaky_override",
+      "type": "table"
+    },
+    {
+      "name": "flaky_state",
+      "sql": "CREATE TABLE flaky_state (\n    flaky_key TEXT PRIMARY KEY,\n    epoch_scope_key TEXT NOT NULL,\n    case_id TEXT NOT NULL,\n    param_hash TEXT NOT NULL,\n    environment TEXT NOT NULL,\n    execution_profile TEXT NOT NULL,\n    state_epoch INTEGER NOT NULL CHECK (state_epoch >= 1),\n    current_state TEXT NOT NULL CHECK (\n        current_state IN (\n            'OBSERVING', 'STABLE', 'SUSPECTED',\n            'CONFIRMED', 'QUARANTINED', 'RECOVERING'\n        )\n    ),\n    detected_state TEXT NOT NULL CHECK (\n        detected_state IN ('OBSERVING', 'STABLE', 'SUSPECTED', 'CONFIRMED')\n    ),\n    stable_outcome TEXT CHECK (stable_outcome IN ('pass', 'fail')),\n    stable_failure_id TEXT,\n    total_observation_count INTEGER NOT NULL CHECK (total_observation_count >= 1),\n    sample_size INTEGER NOT NULL CHECK (sample_size >= 1),\n    evidence_window_size INTEGER NOT NULL CHECK (evidence_window_size >= sample_size),\n    pass_count INTEGER NOT NULL CHECK (pass_count >= 0),\n    fail_count INTEGER NOT NULL CHECK (fail_count >= 0),\n    outcome_switch_count INTEGER NOT NULL CHECK (outcome_switch_count >= 0),\n    signature_switch_count INTEGER NOT NULL CHECK (signature_switch_count >= 0),\n    distinct_failure_fingerprint_count INTEGER NOT NULL CHECK (\n        distinct_failure_fingerprint_count >= 0\n    ),\n    trailing_same_signature_count INTEGER NOT NULL CHECK (\n        trailing_same_signature_count >= 1\n    ),\n    evaluation_anchor_observation_id TEXT,\n    latest_observation_id TEXT NOT NULL,\n    latest_run_id TEXT NOT NULL,\n    latest_observed_at TEXT NOT NULL,\n    last_transition_id TEXT,\n    rule_version TEXT NOT NULL,\n    projection_version TEXT NOT NULL,\n    projection_status TEXT NOT NULL CHECK (\n        projection_status IN ('CURRENT', 'STALE')\n    ),\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL,\n    FOREIGN KEY (epoch_scope_key) REFERENCES flaky_case_epoch(epoch_scope_key),\n    FOREIGN KEY (latest_observation_id) REFERENCES case_observation(observation_id),\n    FOREIGN KEY (evaluation_anchor_observation_id) REFERENCES case_observation(observation_id),\n    UNIQUE (case_id, param_hash, environment, execution_profile, state_epoch),\n    CHECK (\n        (stable_outcome = 'pass' AND stable_failure_id IS NULL)\n        OR stable_outcome = 'fail'\n        OR stable_outcome IS NULL\n    )\n)",
+      "tbl_name": "flaky_state",
+      "type": "table"
+    },
+    {
+      "name": "flaky_transition",
+      "sql": "CREATE TABLE flaky_transition (\n    transition_id TEXT PRIMARY KEY,\n    flaky_key TEXT NOT NULL,\n    from_state TEXT,\n    to_state TEXT NOT NULL,\n    trigger_type TEXT NOT NULL CHECK (\n        trigger_type IN ('observation', 'manual', 'bootstrap', 'reprojection')\n    ),\n    reason_code TEXT NOT NULL,\n    rule_version TEXT NOT NULL,\n    projection_version TEXT NOT NULL,\n    sample_size INTEGER NOT NULL CHECK (sample_size >= 1),\n    trigger_observation_id TEXT,\n    evidence_observation_ids_json TEXT NOT NULL,\n    evidence_run_ids_json TEXT NOT NULL,\n    actor TEXT,\n    created_at TEXT NOT NULL,\n    FOREIGN KEY (flaky_key) REFERENCES flaky_state(flaky_key),\n    FOREIGN KEY (trigger_observation_id) REFERENCES case_observation(observation_id)\n)",
+      "tbl_name": "flaky_transition",
+      "type": "table"
+    },
+    {
+      "name": "schema_migration",
+      "sql": "CREATE TABLE schema_migration (\n    version INTEGER PRIMARY KEY,\n    name TEXT NOT NULL,\n    checksum TEXT NOT NULL,\n    applied_at TEXT NOT NULL\n)",
+      "tbl_name": "schema_migration",
+      "type": "table"
+    }
+  ]
+}
