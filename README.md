@@ -7,6 +7,7 @@
 ## 当前状态
 
 - 基础层已实现请求中间件、配置校验与脱敏、契约断言、显式重试、轮询状态机、测试上下文、轻量 Mock 与故障模拟。
+- 框架重构已完成：`common` 不再静态依赖 `quality`，质量观察通过中性 Runtime Hooks 注入；指标、观察报告、Flaky Store 和运行编排均已按变化原因拆入独立目录。
 - 协议与业务层已覆盖 OpenAI Chat Completions、Responses、Anthropic Messages，以及图片、视频和真实 Smoke 链路。
 - P0 已实现质量结果归并、完整性校验、失败分类、请求指标、中文影子门禁报告和机器可读产物。
 - P1 已实现逻辑调用语义、HTTP/SSE/异步耗时、Token/媒体用量覆盖、Flaky 最小历史存储、状态机与治理命令。
@@ -35,6 +36,8 @@ common/
   request_middleware.py    # Redaction、Logging、MediaResource 中间件
   retry.py                 # RetryPolicy 与重试判定/退避计算
   polling.py               # PollingPolicy、PollingState 与轮询异常
+  context_executor.py      # 在线程池提交边界传播 ContextVar
+  runtime_hooks/           # 中性运行时观察协议、Noop 实现与生命周期
   test_context.py          # 用例级变量传递与清理回调
   __init__.py              # 延迟导出通用对象
 
@@ -59,10 +62,11 @@ quality/
   classifier.py            # 失败分类与稳定指纹
   report.py                # P0 摘要、影子门禁及中文 Markdown
   semantic_*.py            # 逻辑调用、请求组、轮询与流式语义
-  metrics.py               # P1 单次运行指标聚合
-  observation_report.py    # P1 中文观察与 Flaky 报告
-  flaky*.py                # Flaky 历史、状态机、投影与治理
-  migrations/flaky/        # Flaky SQLite 迁移脚本
+  runtime_adapter.py       # Runtime Hooks 到 P0/P1 采集器的适配层
+  metrics/                 # 来源校验、调用/请求粒度聚合与指标写入
+  observation_report/      # P1 来源加载、报告构建、中文渲染与写入
+  flaky_store/             # SQLite 仓储、迁移、投影、治理及事务门面
+  flaky*.py                # Flaky 模型、规则、历史导入与配置
 
 tests/
   mock_helpers.py          # 离线响应、故障、流式响应和睡眠记录工具
@@ -73,7 +77,15 @@ dev/                       # 各阶段设计方案
 code_history/              # 各阶段独立变更历史
 config.py                  # Settings 与环境配置加载
 master_service.py          # pytest nodeid 收集服务
-run_master.py              # 框架执行入口
+run_master.py              # 稳定兼容入口，用户与 Jenkins 命令保持不变
+run_orchestration/
+  cli.py                   # CLI 参数解析和 pytest 参数透传
+  runner.py                # 测试执行状态机与异常收口
+  pytest_execution.py      # pytest、xdist、JUnit 参数和退出码
+  artifacts.py             # Allure/JUnit 产物生命周期
+  environment.py           # Quality 配置、run_id 和阶段环境变量
+  quality_*_stage.py       # P0、语义、指标、Flaky、观察报告阶段
+  quality_pipeline.py      # 质量阶段顺序编排
 Jenkinsfile                # Jenkins 单 Job 参数化流水线
 JENKINS_MIGRATION_TEMPLATE.md # Jenkins 环境迁移与复建模板
 pytest.ini                 # pytest 与 Allure 默认配置
@@ -94,6 +106,44 @@ node_modules/
 __pycache__/
 data/
 ```
+
+## 重构后的架构边界
+
+本轮重构保持测试写法、命令、Schema、产物路径和质量规则不变，主要缩短代码变化的传播路径：
+
+```text
+module 业务用例
+-> common 请求、重试、轮询和中性 Runtime Hooks
+-> pytest 插件按配置注入 quality.runtime_adapter
+-> quality 采集和聚合 P0/P1 事实
+
+run_master.py 稳定入口
+-> run_orchestration 负责执行与质量阶段编排
+-> master_service 负责 nodeid 收集与并串行分池
+```
+
+依赖方向必须保持：
+
+```text
+quality -> common.runtime_hooks
+common -X-> quality
+```
+
+未启用 Quality 时，Runtime Hooks 使用 Noop 实现，不加载质量采集器，也不创建质量产物；启用后由 `quality.pytest_plugin` 在当前 pytest worker 中绑定 `QualityRuntimeHooks`。观察器异常采用 fail-open，不覆盖业务响应和原始异常。
+
+修改能力时按以下边界落位：
+
+| 变化类型 | 修改位置 |
+| --- | --- |
+| HTTP、Retry、Polling、SSE 执行语义 | `common/` |
+| 通用观察事件和生命周期 | `common/runtime_hooks/` |
+| 观察事件映射到 P0/P1 模型 | `quality/runtime_adapter.py` |
+| P1 指标来源、校验和分粒度聚合 | `quality/metrics/` |
+| P1 报告加载、构建、渲染和写入 | `quality/observation_report/` |
+| Flaky SQLite、迁移、投影和治理 | `quality/flaky_store/` |
+| pytest 调度、产物和质量阶段顺序 | `run_orchestration/` |
+
+业务线程池不会自动继承 ContextVar。用例内部使用 `ThreadPoolExecutor` 时必须通过 `common.submit_with_context()` 提交任务，保证 run、case、operation 和 Runtime Hooks 归属不丢失。
 
 ## 安装依赖
 
@@ -195,6 +245,7 @@ RequestMiddleware.on_exception(context, error)
 
 默认中间件包括：
 
+- `RuntimeObservationMiddleware`：通过中性 Runtime Hooks 观察请求开始、成功和异常；Quality 关闭时为空操作。
 - `RedactionMiddleware`：对请求参数建立脱敏副本。
 - `LoggingMiddleware`：输出请求、响应、异常、重试记录和轮询迁移日志。
 - `MediaResourceMiddleware`：在 POST 前收集 `input.media.url` 前置资源下载任务。
@@ -431,7 +482,14 @@ class TestImageGenerations:
 .\.venv\Scripts\python.exe master_service.py
 ```
 
-`run_master.py` 是当前框架执行入口。它先调用 `master_service.collect_test_case_items()` 收集 nodeid 和 marker，再按执行参数组织 pytest 调用。
+`run_master.py` 是稳定兼容入口，只重导出 `run()`、`main()` 和路径常量；用户、Jenkins 和已有脚本不需要改变命令。实际流程由 `run_orchestration/` 承担：先通过 `master_service.collect_test_case_items()` 收集 nodeid 和 marker，再组织 pytest、并串行池、JUnit/Allure 和质量阶段。
+
+关键职责保持单一所有者：
+
+- 只有 `pytest_execution.py` 调用 `pytest.main()`。
+- 只有 `artifacts.py` 保存和恢复 Allure 文件。
+- `environment.py` 负责 Quality 阶段环境变量设置与恢复。
+- `quality_pipeline.py` 只决定质量阶段顺序，不承载聚合算法和报告渲染。
 
 执行全部业务用例：
 
@@ -475,6 +533,8 @@ pytestmark = pytest.mark.serial
 .\.venv\Scripts\python.exe run_master.py module/smoke --collect-only -q
 ```
 
+`--collect-only` 在加载 Quality 配置前短路，不生成 run_id、不写质量产物，也不调用真实接口。
+
 直接执行框架单测：
 
 ```powershell
@@ -483,7 +543,7 @@ pytestmark = pytest.mark.serial
 
 ## 质量工程 P0/P1
 
-质量能力由 `run_master.py` 在测试结束时统一收口，测试代码仍按原方式编写，不需要直接调用聚合器：
+质量能力由 `run_orchestration.quality_pipeline` 在测试结束时统一收口，根 `run_master.py` 仅保留兼容入口。测试代码仍按原方式编写，不需要直接调用聚合器：
 
 ```text
 pytest Case/请求事实分片
@@ -494,6 +554,8 @@ pytest Case/请求事实分片
 -> Flaky 历史导入和状态评估
 -> P1 单次观察报告
 ```
+
+P0 merge 失败时后续质量阶段提前结束，避免基于不可信输入继续生成结论；P0 报告、语义、指标、Flaky 和观察报告的其他阶段分别 fail-open，不改变 pytest 的原始退出结果。
 
 ### P0：可信结果与影子门禁
 
@@ -785,4 +847,6 @@ CI 变更前仍建议先执行：
 .\.venv\Scripts\python.exe -m pytest tests -q
 .\.venv\Scripts\python.exe run_master.py module/smoke --collect-only -q
 ```
+
+当前重构后的离线验收基线为 `596 passed`；Smoke collect-only 收集 `41` 项，只验证收集和分池，不执行真实接口。
 
