@@ -7,6 +7,11 @@ from typing import Any
 
 import pytest
 
+from common.runtime_hooks import (
+    RuntimeHooks,
+    bind_runtime_hooks,
+    reset_runtime_hooks,
+)
 from quality.collector import (
     QualityCollector,
     configure_collector,
@@ -38,6 +43,7 @@ from quality.semantic_collector import (
     get_semantic_collector,
     reset_semantic_collector,
 )
+from quality.runtime_adapter import QualityRuntimeHooks
 
 
 _STATE_ATTR = "_quality_plugin_state"
@@ -52,6 +58,8 @@ class _PluginState:
     collector: QualityCollector | None = None
     semantic_collector: SemanticCollector | None = None
     run_token: Any = None
+    runtime_hooks: RuntimeHooks | None = None
+    runtime_hooks_token: Any = None
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -105,7 +113,13 @@ def pytest_configure(config: pytest.Config) -> None:
                     "quality semantic collector initialization failed: "
                     f"{type(error).__name__}: {error}",
                 )
+        state.runtime_hooks = QualityRuntimeHooks()
+        state.runtime_hooks_token = bind_runtime_hooks(state.runtime_hooks)
     except Exception as error:
+        if state.runtime_hooks_token is not None:
+            reset_runtime_hooks(state.runtime_hooks_token)
+            state.runtime_hooks_token = None
+        state.runtime_hooks = None
         if state.run_token is not None:
             reset_run_context(state.run_token)
             state.run_token = None
@@ -261,14 +275,20 @@ def pytest_unconfigure(config: pytest.Config) -> None:
     try:
         if state.semantic_collector is not None:
             state.semantic_collector.finalize_pending()
-        if state.run_token is not None:
-            reset_run_context(state.run_token)
     finally:
-        if state.semantic_collector is not None:
-            reset_semantic_collector()
-        if state.collector is not None:
-            reset_collector()
-        delattr(config, _STATE_ATTR)
+        try:
+            if state.runtime_hooks_token is not None:
+                reset_runtime_hooks(state.runtime_hooks_token)
+                state.runtime_hooks_token = None
+            state.runtime_hooks = None
+        finally:
+            if state.run_token is not None:
+                reset_run_context(state.run_token)
+            if state.semantic_collector is not None:
+                reset_semantic_collector()
+            if state.collector is not None:
+                reset_collector()
+            delattr(config, _STATE_ATTR)
 
 
 def _resolve_runtime_config(config: pytest.Config) -> QualityRuntimeConfig:

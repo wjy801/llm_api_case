@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from common.runtime_hooks import bind_runtime_hooks, reset_runtime_hooks
 from quality.collector import configure_collector, reset_collector
 from quality.aggregator import MANIFEST_VERSION, MERGE_VERSION
 from quality.classifier import FINGERPRINT_VERSION
@@ -38,6 +39,7 @@ from quality.semantic_collector import (
     configure_semantic_collector,
     reset_semantic_collector,
 )
+from quality.runtime_adapter import QualityRuntimeHooks
 from quality.storage import write_json_atomic, write_jsonl_atomic
 
 
@@ -62,20 +64,24 @@ def semantic_runtime(tmp_path):
     case_token = set_case_context(case_context)
     p0 = configure_collector(run_context)
     semantic = configure_semantic_collector(run_context)
-    yield SimpleNamespace(
-        output_dir=output_dir,
-        run_context=run_context,
-        case_context=case_context,
-        p0=p0,
-        semantic=semantic,
-    )
-    semantic.finalize_pending()
-    reset_semantic_collector()
-    reset_collector()
-    reset_case_context(case_token)
-    reset_run_context(run_token)
-    clear_case_context()
-    clear_run_context()
+    hooks_token = bind_runtime_hooks(QualityRuntimeHooks())
+    try:
+        yield SimpleNamespace(
+            output_dir=output_dir,
+            run_context=run_context,
+            case_context=case_context,
+            p0=p0,
+            semantic=semantic,
+        )
+    finally:
+        semantic.finalize_pending()
+        reset_runtime_hooks(hooks_token)
+        reset_semantic_collector()
+        reset_collector()
+        reset_case_context(case_token)
+        reset_run_context(run_token)
+        clear_case_context()
+        clear_run_context()
 
 
 @pytest.fixture

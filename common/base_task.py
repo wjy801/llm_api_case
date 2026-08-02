@@ -12,8 +12,12 @@ from config import USE_CHINA_ENVIRONMENT
 from common.base_decorators import allure_step
 from common.base_request import BaseRequest
 from common.polling import DEFAULT_MEDIA_POLLING_POLICY, PollingPolicy
-from quality.semantic_context import model_id_from_kwargs, operation_scope
-from quality.semantic_models import OperationKind, TrafficRole
+from common.runtime_hooks import (
+    RuntimeOperationKind,
+    RuntimeTrafficRole,
+    model_id_from_kwargs,
+    operation_scope,
+)
 
 
 if TYPE_CHECKING:
@@ -73,9 +77,9 @@ class BaseTask:
             接口原始响应，响应体通常直接包含生成结果，例如 `data[0].url` 或 `data[0].b64_json`。
         """
         with operation_scope(
-            OperationKind.HTTP,
+            RuntimeOperationKind.HTTP,
             name="image_generation",
-            role=TrafficRole.WORKLOAD,
+            role=RuntimeTrafficRole.WORKLOAD,
             model_id=model_id_from_kwargs({"json": payload}),
         ):
             return request_client.post(self.image_generations_path, json=payload)
@@ -96,9 +100,9 @@ class BaseTask:
             接口原始响应，响应体通常包含 `choices`、`usage` 等对话补全结果字段。
         """
         with operation_scope(
-            OperationKind.HTTP,
+            RuntimeOperationKind.HTTP,
             name="chat_completion",
-            role=TrafficRole.WORKLOAD,
+            role=RuntimeTrafficRole.WORKLOAD,
             model_id=model_id_from_kwargs({"json": payload}),
         ):
             return request_client.post(self.chat_completions_path, json=payload)
@@ -119,9 +123,9 @@ class BaseTask:
             创建任务接口的原始响应，后续复合流程会从该响应中提取 `task_id`。
         """
         with operation_scope(
-            OperationKind.HTTP,
+            RuntimeOperationKind.HTTP,
             name="media_generation_create",
-            role=TrafficRole.WORKLOAD,
+            role=RuntimeTrafficRole.WORKLOAD,
             model_id=model_id_from_kwargs({"json": payload}),
         ):
             return request_client.post(self.media_generations_path, json=payload)
@@ -151,9 +155,9 @@ class BaseTask:
             满足成功条件的最终轮询响应。
         """
         with operation_scope(
-            OperationKind.POLLING,
+            RuntimeOperationKind.POLLING,
             name="media_generation_polling",
-            role=TrafficRole.WORKLOAD,
+            role=RuntimeTrafficRole.WORKLOAD,
         ):
             return request_client.poll_get(
                 self.media_task_path_template.format(task_id=task_id),
@@ -187,9 +191,9 @@ class BaseTask:
             满足成功条件的最终轮询响应。
         """
         with operation_scope(
-            OperationKind.ASYNC_TASK,
+            RuntimeOperationKind.ASYNC_TASK,
             name="media_generation",
-            role=TrafficRole.WORKLOAD,
+            role=RuntimeTrafficRole.WORKLOAD,
             model_id=model_id_from_kwargs({"json": payload}),
         ):
             create_response = self.create_media_generation(request_client, payload)
@@ -340,7 +344,7 @@ class BaseTask:
                 poll_timeout=poll_timeout,
                 polling_policy=USAGE_RECORD_SETTLEMENT_POLLING_POLICY,
                 _quality_operation_name="usage_record_settlement",
-                _quality_traffic_role=TrafficRole.CONTROL,
+                _quality_traffic_role=RuntimeTrafficRole.CONTROL,
             )
         finally:
             request_client.reset_headers()
@@ -372,9 +376,9 @@ class BaseTask:
         )
         try:
             with operation_scope(
-                OperationKind.HTTP,
+                RuntimeOperationKind.HTTP,
                 name="account_balance",
-                role=TrafficRole.CONTROL,
+                role=RuntimeTrafficRole.CONTROL,
             ):
                 return request_client.get(self.account_balance_path, data="")
         finally:
@@ -401,9 +405,9 @@ class BaseTask:
         request_client.update_headers({"Authorization": f"Bearer {control_api_key}"})
         try:
             with operation_scope(
-                OperationKind.HTTP,
+                RuntimeOperationKind.HTTP,
                 name="usage_records",
-                role=TrafficRole.CONTROL,
+                role=RuntimeTrafficRole.CONTROL,
             ):
                 usage_response = request_client.get(
                     self.usage_records_path,
