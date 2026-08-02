@@ -729,18 +729,21 @@ polling_responses
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-当前重构后的离线回归基线为 `596 passed`；`module/smoke` collect-only 收集 `41` 项。
+当前重构后的离线回归基线为 `605 passed`；`module/smoke` collect-only 收集 `41` 项。
 
 真实接口会产生调用费用；在未授权时只执行 collect-only 和离线框架测试。
 
 ## 20. 构建后报告使用
 
-真实 Smoke 完成后按顺序查看：
+每轮 Jenkins 构建按顺序查看：
 
-1. `reports/quality/gate-report.md`：P0 数据完整性、用例结果、失败分类、5xx 和超时。
-2. `reports/quality/p1-observation.md`：逻辑调用耗时、usage 覆盖和 Flaky 状态。
-3. Allure：具体用例步骤、请求、响应和附件。
-4. `flaky-evaluation.json`/CLI：需要人工治理时再查看完整状态。
+1. `reports/pipeline-summary.md`：本轮参数、阶段状态、用例结果和直接观测结论。
+2. `reports/quality/gate-report.md`：真实 Smoke 的 P0 数据完整性、失败分类、5xx 和超时。
+3. `reports/quality/p1-observation.md`：真实 Smoke 的逻辑调用、usage 覆盖和 Flaky 详情。
+4. Allure：具体用例步骤、请求、响应和附件。
+5. `flaky-evaluation.json`/CLI：需要人工治理时再查看完整状态。
+
+`pipeline-summary.md` 适用于 framework-only、collect-only、Real Smoke 及其组合。未选择的阶段显示“未执行”，不能解释为失败或数据缺失。其生成由 `GENERATE_PIPELINE_SUMMARY` 控制，Jenkins 参数/进程环境优先于 `.env`，默认开启。
 
 注意：
 

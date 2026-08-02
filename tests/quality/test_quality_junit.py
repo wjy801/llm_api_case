@@ -31,6 +31,7 @@ def test_parse_junit_file_extracts_quality_identity_and_failure_evidence(tmp_pat
     assert evidence.error_type == "AssertionError"
     assert evidence.assert_location == "module/test_demo.py:12"
     assert "secret" not in (evidence.message or "")
+    assert evidence.duration_seconds == 0.1
 
 
 def test_parse_junit_file_marks_missing_identity_as_none(tmp_path):

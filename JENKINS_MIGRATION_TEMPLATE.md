@@ -252,6 +252,7 @@ Lightweight checkout 在流水线执行前发生于 Controller。此阶段失败
 | `RUN_FRAMEWORK_TESTS` | Boolean | `true` | 执行 `tests/` 框架测试 |
 | `RUN_COLLECT_ONLY` | Boolean | `true` | 只收集 Smoke，不调用真实接口 |
 | `RUN_REAL_SMOKE` | Boolean | `false` | 执行真实 Smoke |
+| `GENERATE_PIPELINE_SUMMARY` | Boolean | `true` | 为每轮构建生成 Pipeline 执行摘要 |
 | `ALWAYS_SEND_REPORT_EMAIL` | Boolean | `false` | 成功构建也发送邮件 |
 | `USE_CHINA_ENVIRONMENT` | Choice | `TRUE` | 国内或海外环境 |
 | `SMOKE_TARGET` | String | `module/smoke` | 目录、文件或 nodeid |
@@ -266,6 +267,7 @@ Lightweight checkout 在流水线执行前发生于 Controller。此阶段失败
 RUN_FRAMEWORK_TESTS=true
 RUN_COLLECT_ONLY=false
 RUN_REAL_SMOKE=true
+GENERATE_PIPELINE_SUMMARY=true
 ALWAYS_SEND_REPORT_EMAIL=true
 USE_CHINA_ENVIRONMENT=TRUE
 SMOKE_TARGET=module/smoke
@@ -416,10 +418,10 @@ SUCCESS 且上一轮为 FAILURE/UNSTABLE -> FIXED 邮件
 构建状态、分支、提交、耗时
 JUnit 汇总和最多 5 个失败用例
 Smoke 收集数量和执行参数
-Allure / JUnit / P0 / P1 / 构建产物链接
+Pipeline 执行摘要 / Allure / JUnit / P0 / P1 / 构建产物链接
 ```
 
-邮件不包含“构建详情”和“控制台日志”链接。P0/P1 文件不存在时，对应链接自动隐藏。
+邮件不包含“构建详情”和“控制台日志”链接。Pipeline 摘要、P0/P1 文件不存在时，对应链接自动隐藏。
 
 ## 11. P0/P1/Flaky 产物
 
@@ -427,6 +429,7 @@ Allure / JUnit / P0 / P1 / 构建产物链接
 
 | 文件 | 作用 |
 | --- | --- |
+| `reports/pipeline-summary.md` | 每轮 Pipeline 参数、阶段与执行效果的默认人工入口 |
 | `reports/quality/gate-report.md` | 中文 P0 影子门禁报告 |
 | `reports/quality/gate-report.json` | 机器可读门禁规则与证据 |
 | `reports/quality/summary.json` | P0 完整汇总 |
@@ -701,6 +704,7 @@ numToKeep=-1
 [ ] SMTP 授权码未进入 Jenkinsfile
 [ ] Flaky SQLite 位于 workspace 外部
 [ ] P0/P1 JSON 和 Markdown 均已归档
+[ ] GENERATE_PIPELINE_SUMMARY 默认开启，pipeline-summary.md 已归档
 [ ] 邮件没有构建详情和控制台日志链接
 [ ] 构建产物保留 4 天，构建记录继续保留
 [ ] 定时真实 Smoke 的费用影响已确认
