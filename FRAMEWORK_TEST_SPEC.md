@@ -738,12 +738,12 @@ polling_responses
 每轮 Jenkins 构建按顺序查看：
 
 1. `reports/pipeline-summary.md`：本轮参数、阶段状态、用例结果和直接观测结论。
-2. `reports/quality/gate-report.md`：真实 Smoke 的 P0 数据完整性、失败分类、5xx 和超时。
-3. `reports/quality/p1-observation.md`：真实 Smoke 的逻辑调用、usage 覆盖和 Flaky 详情。
+2. `reports/quality/gate-report.md`：接口测试的 P0 数据完整性、失败分类、5xx 和超时。
+3. `reports/quality/p1-observation.md`：接口测试的逻辑调用、usage 覆盖和 Flaky 详情。
 4. Allure：具体用例步骤、请求、响应和附件。
 5. `flaky-evaluation.json`/CLI：需要人工治理时再查看完整状态。
 
-`pipeline-summary.md` 适用于 framework-only、collect-only、Real Smoke 及其组合。未选择的阶段显示“未执行”，不能解释为失败或数据缺失。其生成由 `GENERATE_PIPELINE_SUMMARY` 控制，Jenkins 参数/进程环境优先于 `.env`，默认开启。
+`pipeline-summary.md` 适用于框架测试、用例收集、接口测试及其组合。报告不暴露 Smoke 专属参数名，未选择的阶段显示“未执行”，不能解释为失败或数据缺失。其生成由 `GENERATE_PIPELINE_SUMMARY` 控制，Jenkins 参数/进程环境优先于 `.env`，默认开启。
 
 注意：
 
