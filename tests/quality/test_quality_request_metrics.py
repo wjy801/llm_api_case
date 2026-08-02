@@ -9,6 +9,7 @@ from common.base_request import BaseRequest
 from common.polling import PollingPolicy
 from common.request_context import RequestContext
 from common.request_middleware import QualityMetricsMiddleware
+from common.runtime_hooks import bind_runtime_hooks, reset_runtime_hooks
 from common.retry import RetryPolicy
 from quality.collector import QualityCollector, configure_collector, reset_collector
 from quality.request_metrics import record_exception, record_response, start_request_capture
@@ -22,6 +23,7 @@ from quality.runtime_context import (
     set_case_context,
     set_run_context,
 )
+from quality.runtime_adapter import QualityRuntimeHooks
 from quality.storage import read_jsonl
 
 
@@ -49,12 +51,16 @@ def quality_runtime(tmp_path):
             param_hash="hash",
         )
     )
-    yield collector
-    reset_case_context(case_token)
-    reset_run_context(run_token)
-    reset_collector()
-    clear_case_context()
-    clear_run_context()
+    hooks_token = bind_runtime_hooks(QualityRuntimeHooks())
+    try:
+        yield collector
+    finally:
+        reset_runtime_hooks(hooks_token)
+        reset_case_context(case_token)
+        reset_run_context(run_token)
+        reset_collector()
+        clear_case_context()
+        clear_run_context()
 
 
 def _response(status=200, body=None, headers=None, url="https://example.com/v1/items/12345"):
@@ -209,7 +215,7 @@ def test_middleware_capture_failure_is_fail_open(quality_runtime, monkeypatch):
     context = _context()
     response = _response()
     monkeypatch.setattr(
-        "common.request_middleware.record_response",
+        "quality.request_metrics.record_response",
         lambda context, response: (_ for _ in ()).throw(RuntimeError("token=secret")),
     )
 

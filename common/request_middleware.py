@@ -5,8 +5,11 @@ from typing import Protocol, cast
 import requests
 
 from common.request_context import RequestContext
-from quality.collector import get_collector
-from quality.request_metrics import record_exception, record_response, start_request_capture
+from common.runtime_hooks import (
+    observe_request_failed,
+    observe_request_started,
+    observe_request_succeeded,
+)
 from util import ApiCallLogger, start_media_downloads
 from util.redaction import redact_request_kwargs
 
@@ -78,38 +81,25 @@ class MediaResourceMiddleware:
         return None
 
 
-class QualityMetricsMiddleware:
+class RuntimeObservationMiddleware:
     def before_request(self, context: RequestContext) -> None:
-        self._safe_call(context, start_request_capture, context)
+        observe_request_started(context)
 
     def after_response(self, context: RequestContext, response: requests.Response) -> None:
-        self._safe_call(context, record_response, context, response)
+        observe_request_succeeded(context, response)
 
     def on_exception(self, context: RequestContext, error: BaseException) -> None:
-        self._safe_call(context, record_exception, context, error)
+        observe_request_failed(context, error)
 
-    @staticmethod
-    def _safe_call(context: RequestContext, function, *args) -> None:
-        try:
-            function(*args)
-        except Exception as error:
-            collector = get_collector()
-            if collector is None:
-                return
-            collector.capture_integrity(
-                source="request_metrics",
-                code="request_capture_failed",
-                message=f"{type(error).__name__}: {error}",
-                related_id=context.attributes.get("quality_request_event_id"),
-            )
+
+QualityMetricsMiddleware = RuntimeObservationMiddleware
 
 
 def default_request_middlewares() -> list[RequestMiddleware]:
     middlewares: list[RequestMiddleware] = [
+        RuntimeObservationMiddleware(),
         MediaResourceMiddleware(),
         RedactionMiddleware(),
         LoggingMiddleware(),
     ]
-    if get_collector() is not None:
-        middlewares.insert(0, QualityMetricsMiddleware())
     return middlewares
