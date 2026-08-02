@@ -50,12 +50,15 @@ def test_email_summary_is_compact_and_excludes_quality_stage_details():
     assert "失败用例（最多 5 项）" in content
     assert "测试报告未生成，构建可能在测试阶段前失败。" in content
     assert "请查看控制台日志" not in email_content
-    assert "详细质量数据请在构建产物中查看。" in content
+    assert "详细执行与质量数据请在构建产物中查看。" in content
     assert "${junit.tests} 总计 / ${junit.passed} 通过 / ${failedCount} 失败 / ${junit.skipped} 跳过" in content
     assert "${smoke.total} 项（并发 ${smoke.parallel} / 串行 ${smoke.serial}）" in content
     assert "buildExecutionSummary()" in email_content
     assert ">构建详情</a>" not in email_content
     assert ">控制台日志</a>" not in email_content
+    assert "fileExists('reports/pipeline-summary.md')" in email_content
+    assert "artifact/reports/pipeline-summary.md" in email_content
+    assert ">流水线执行摘要</a>" in email_content
     assert "fileExists('reports/quality/gate-report.md')" in email_content
     assert "artifact/reports/quality/gate-report.md" in email_content
     assert ">P0 质量门禁报告</a>" in email_content
@@ -67,3 +70,19 @@ def test_email_summary_is_compact_and_excludes_quality_stage_details():
     assert 'subject: "【${statusText}】${env.JOB_NAME} #${env.BUILD_NUMBER}｜${resultText}"' in content
     assert "body: buildResultSummaryHtml(status, junit, smoke)" in content
     assert "'dev2'" not in content
+
+
+def test_pipeline_summary_is_parameterized_generated_before_archive_and_has_fallback():
+    content = JENKINSFILE.read_text(encoding="utf-8")
+
+    assert "booleanParam(name: 'GENERATE_PIPELINE_SUMMARY', defaultValue: true" in content
+    assert "GENERATE_PIPELINE_SUMMARY=true" in content
+    assert "\\$env:GENERATE_PIPELINE_SUMMARY = '${params.GENERATE_PIPELINE_SUMMARY}'" in content
+    assert "initializePipelineStageStatus()" in content
+    assert "updatePipelineStageStatus('framework_tests', 'PASSED')" in content
+    assert "updatePipelineStageStatus('smoke_collect', 'PASSED')" in content
+    assert "updatePipelineStageStatus('real_smoke', 'PASSED')" in content
+    assert "void generatePipelineSummary()" in content
+    assert "void writeFallbackPipelineSummary()" in content
+    assert "Pipeline summary generation is disabled by GENERATE_PIPELINE_SUMMARY." in content
+    assert content.index("generatePipelineSummary()") < content.index("archiveArtifacts artifacts:")

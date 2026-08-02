@@ -25,6 +25,9 @@ _OPAQUE_SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9_]{24,}$")
 _TASK_ID_SEGMENT_PATTERN = re.compile(
     r"(?i)^(?:task|request|req)[-_][A-Za-z0-9_-]+$"
 )
+_DYNAMIC_HEX_SUFFIX_PATTERN = re.compile(
+    r"(?i)^[A-Za-z][A-Za-z0-9_-]*[-_][0-9a-f]{16,}$"
+)
 _ISO_TIMESTAMP_PATTERN = re.compile(
     r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b"
 )
@@ -232,6 +235,8 @@ def _template_path_segment(segment: str) -> str:
         return "{hash}"
     if _TASK_ID_SEGMENT_PATTERN.fullmatch(segment):
         return "{id}"
+    if _DYNAMIC_HEX_SUFFIX_PATTERN.fullmatch(segment):
+        return "{hash}"
     if (
         _OPAQUE_SEGMENT_PATTERN.fullmatch(segment)
         and any(character.isalpha() for character in segment)

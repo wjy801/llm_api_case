@@ -11,14 +11,15 @@
 - 协议与业务层已覆盖 OpenAI Chat Completions、Responses、Anthropic Messages，以及图片、视频和真实 Smoke 链路。
 - P0 已实现质量结果归并、完整性校验、失败分类、请求指标、中文影子门禁报告和机器可读产物。
 - P1 已实现逻辑调用语义、HTTP/SSE/异步耗时、Token/媒体用量覆盖、Flaky 最小历史存储、状态机与治理命令。
-- Jenkins 已支持参数化执行、并发优先与串行收尾、JUnit/Allure、P0/P1 中文报告、邮件直达链接和构建产物自动清理。
+- Jenkins 已支持参数化执行、并发优先与串行收尾、每轮 Pipeline 执行摘要、JUnit/Allure、P0/P1 中文报告、邮件直达链接和构建产物自动清理。
 - 当前门禁仍为影子模式；P1 不引入估算成本和性能基线，缺失数据不会按零计算，也不会伪造结论。
 
 推荐的日常使用顺序：
 
 ```text
 Jenkins 构建结果
--> P0 gate-report.md：确认本轮数据是否完整、是否存在失败或基础稳定性风险
+-> pipeline-summary.md：确认本轮参数、阶段、用例、请求、重试和 Flaky 变化
+-> P0 gate-report.md：查看真实 Smoke 数据完整性、失败分类和影子门禁
 -> P1 p1-observation.md：查看耗时、用量覆盖和 Flaky 状态变化
 -> Allure：定位具体用例步骤、请求响应和附件
 -> Flaky CLI：对已确认的问题执行纠正、隔离或恢复治理
@@ -78,6 +79,7 @@ code_history/              # 各阶段独立变更历史
 config.py                  # Settings 与环境配置加载
 master_service.py          # pytest nodeid 收集服务
 run_master.py              # 稳定兼容入口，用户与 Jenkins 命令保持不变
+pipeline_reporting/        # Jenkins 全场景执行摘要、阶段状态与兜底输入
 run_orchestration/
   cli.py                   # CLI 参数解析和 pytest 参数透传
   runner.py                # 测试执行状态机与异常收口
@@ -185,6 +187,7 @@ API_TIMEOUT=600
 GENERATE_ALLURE_REPORT=TRUE
 GENERATE_HISTORY_REPORT=FALSE
 HISTORY_REPORT_KEEP_LIMIT=30
+GENERATE_PIPELINE_SUMMARY=TRUE
 ```
 
 账单、余额及用量查询需要对应环境的 `*_CONTROL_API_KEY`。特殊账号 Key 继续按 `.env.example` 配置，不写入代码或 Jenkinsfile。
@@ -694,7 +697,7 @@ Checkout
 - `Framework Unit Tests`：执行 `tests/` 下的框架测试并发布 `reports/unit-tests.xml`。
 - `Collect Smoke Cases`：只收集真实业务用例，不调用真实接口；收集结果以 UTF-8 写入 `reports/smoke-collect.txt`。
 - `Real Smoke`：按 `SMOKE_TARGET` 执行真实业务用例，支持并发优先、串行收尾，并在结束时生成 P0/P1/Flaky 产物。
-- `post`：统一发布 JUnit/Allure、归档 `allure-results/**` 和 `reports/**`，并按构建状态发送邮件。
+- `post`：按开关生成本轮 `pipeline-summary.md`，再统一发布 JUnit/Allure、归档产物并发送邮件；Python 生成器不可用时写入最小兜底摘要。
 
 ### 构建参数
 
@@ -703,12 +706,15 @@ Checkout
 | `RUN_FRAMEWORK_TESTS` | `true` | 执行 `tests/` 框架测试 |
 | `RUN_COLLECT_ONLY` | `true` | 收集 `module/smoke` 用例，不真实调用接口 |
 | `RUN_REAL_SMOKE` | `false` | 是否执行真实业务 Smoke |
+| `GENERATE_PIPELINE_SUMMARY` | `true` | 是否为本轮构建生成 `reports/pipeline-summary.md` |
 | `ALWAYS_SEND_REPORT_EMAIL` | `false` | 成功构建也发送报告邮件；失败和不稳定始终发送 |
 | `USE_CHINA_ENVIRONMENT` | `TRUE` | 选择国内或默认环境配置 |
 | `SMOKE_TARGET` | `module/smoke` | 真实 Smoke 的目标目录、文件或 nodeid |
 | `TEST_PARALLEL_WORKERS` | `off` | `off/auto/2/4/8`，控制 pytest-xdist worker 数量 |
 
 默认参数只执行框架测试和 Smoke 收集，不执行真实接口，避免因外部服务、账号余额和调用成本造成非预期影响。
+
+`GENERATE_PIPELINE_SUMMARY` 默认开启，也可在 `.env` 中使用同名变量。本轮 Jenkins 参数/进程环境优先于 `.env`；关闭时不生成主摘要、兜底摘要和邮件摘要链接，但不影响 JUnit、Allure、P0/P1 与 Flaky 产物。
 
 `Jenkinsfile` 还配置了每日 `00:00` 的参数化真实 Smoke。真实接口会产生模型调用和账单数据；不需要定时执行时，应在 Jenkins Job 的 Build Triggers 中停用对应触发器。
 
@@ -720,6 +726,7 @@ Checkout
 RUN_FRAMEWORK_TESTS=true
 RUN_COLLECT_ONLY=true
 RUN_REAL_SMOKE=false
+GENERATE_PIPELINE_SUMMARY=true
 TEST_PARALLEL_WORKERS=off
 ```
 
@@ -729,6 +736,7 @@ TEST_PARALLEL_WORKERS=off
 RUN_FRAMEWORK_TESTS=true
 RUN_COLLECT_ONLY=true
 RUN_REAL_SMOKE=true
+GENERATE_PIPELINE_SUMMARY=true
 SMOKE_TARGET=module/smoke
 TEST_PARALLEL_WORKERS=2
 ```
@@ -764,6 +772,7 @@ SMOKE_TARGET=module/smoke/test_response_body_validation.py
 
 流水线当前发布：
 
+- `reports/pipeline-summary.md`：本轮 Jenkins 参数、阶段和执行效果的默认人工入口。
 - JUnit 测试结果。
 - Allure 报告入口。
 - `allure-results/**` 原始结果。
@@ -776,7 +785,9 @@ SMOKE_TARGET=module/smoke/test_response_body_validation.py
 
 Jenkins 只保留最近 4 天的归档产物；构建编号、结果、参数和控制台历史不按天数或数量删除。Flaky SQLite 位于 Job 外部持久路径，不受产物清理影响。
 
-查看一次真实 Smoke 时，推荐在对应构建的 `Artifacts -> reports -> quality` 中先打开：
+查看任意一轮流水线时，先打开 `Artifacts -> reports -> pipeline-summary.md`。它会区分阶段通过、失败、未执行、被阻断和产物缺失；只有真实 Smoke 启用时才展示请求成功率、重试挽救率、接口耗时 Top 和 Flaky 状态迁移。
+
+需要继续下钻真实 Smoke 时，再进入 `Artifacts -> reports -> quality`：
 
 1. `gate-report.md`：确认数据完整性、门禁结论和失败分类。
 2. `p1-observation.md`：查看耗时、usage 覆盖、Flaky 迁移和待关注事项。
@@ -798,6 +809,7 @@ SUCCESS 且上一轮为 FAILURE/UNSTABLE -> FIXED 邮件
 
 邮件报告入口包括：
 
+- 流水线执行摘要（开关开启且文件生成时，位于首位）。
 - Allure 报告。
 - JUnit 报告（存在 JUnit 结果时）。
 - P0 质量门禁报告（存在 `gate-report.md` 时）。
@@ -848,5 +860,5 @@ CI 变更前仍建议先执行：
 .\.venv\Scripts\python.exe run_master.py module/smoke --collect-only -q
 ```
 
-当前重构后的离线验收基线为 `596 passed`；Smoke collect-only 收集 `41` 项，只验证收集和分池，不执行真实接口。
+当前重构后的离线验收基线为 `605 passed`；Smoke collect-only 收集 `41` 项，只验证收集和分池，不执行真实接口。
 
