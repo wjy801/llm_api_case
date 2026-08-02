@@ -18,22 +18,29 @@
 test_*.py
 -> 模块 Task 组织业务动作
 -> 模块 Request 发起 HTTP/SSE/轮询请求
--> BaseRequest 中间件记录脱敏日志、cURL、重试和轮询
+-> BaseRequest 中间件记录脱敏日志，并通过 Runtime Hooks 发出中性观察事件
+-> Quality 开启时由 quality.runtime_adapter 映射为 P0/P1 事实；关闭时使用 Noop
 -> pytest 产生用例结果和 Allure/JUnit
--> run_master.py 归并 P0 Case/请求/失败事实
+-> run_master.py 入口委托 run_orchestration 归并 P0 Case/请求/失败事实
 -> P1 聚合逻辑调用、耗时、usage 和 Flaky 状态
 ```
 
 新用例不需要直接调用 P0/P1 聚合器。只要通过标准入口执行并遵循本文质量语义规范，框架会自动采集。
 
+`run_master.py` 继续作为用户和 Jenkins 的稳定入口；内部调度、环境恢复与各质量阶段分别位于 `run_orchestration/`，用例目录和执行命令不变。
+
 ## 3. 分层职责
 
 | 层级 | 目录/文件 | 职责 | 禁止事项 |
 | --- | --- | --- | --- |
-| 公共请求层 | `common/base_request.py` | HTTP、重试、轮询、中间件、质量请求语义 | 放业务路径、模型 ID、真实 payload |
+| 公共请求层 | `common/base_request.py` | HTTP、重试、轮询、中间件和中性运行时观察 | 导入质量模型，放业务路径、模型 ID、真实 payload |
+| 运行时观察层 | `common/runtime_hooks/` | 中性事件、Noop、ContextVar 绑定和生命周期 | 导入 `quality`，实现报告或聚合算法 |
 | 公共业务层 | `common/base_task.py` | 跨模块通用的模型创建、轮询、账单/usage 骨架 | 放单一模块专用逻辑 |
 | 公共断言层 | `common/base_assertions.py` | 状态码、JSONPath、JSON Schema | 放具体业务字段规则 |
 | 工具层 | `util/` | 脱敏、日志、cURL、配置校验、媒体附件 | 持有业务状态 |
+| 质量适配层 | `quality/runtime_adapter.py` | 将 Runtime Hooks 映射到现有 P0/P1 采集器 | 被业务用例直接调用 |
+| 质量聚合层 | `quality/metrics/`、`quality/observation_report/`、`quality/flaky_store/` | 指标、观察报告和 Flaky 状态存储 | 被业务用例直接调用或复制算法 |
+| 执行编排层 | `run_master.py`、`run_orchestration/` | 稳定入口、pytest 调度、产物和质量阶段顺序 | 在业务用例中导入内部 stage |
 | 模块请求层 | `module/<模块>/request.py` | 模块路径、请求参数、质量角色 | 写业务流程和复杂断言 |
 | 模块任务层 | `module/<模块>/task.py` | payload builder、业务动作组合 | 重复实现 BaseTask 已有能力 |
 | 模块断言层 | `module/<模块>/assertions.py` | 模块专用断言和字段解析 | 发请求、修改共享状态 |
@@ -41,6 +48,17 @@ test_*.py
 | 框架单测 | `tests/` | 离线验证框架、质量模块和 Jenkinsfile | 默认执行真实付费接口 |
 
 不同业务模块的 `task.py` 不互相引用。真正跨模块的能力下沉到 `common/` 或 `util/`，并增加 `tests/` 离线回归。
+
+依赖方向必须保持：
+
+```text
+module -> common
+quality -> common.runtime_hooks
+run_master -> run_orchestration
+common -X-> quality
+```
+
+业务用例只能使用稳定公共入口。不得从 `quality.metrics.*`、`quality.observation_report.*`、`quality.flaky_store.*` 或 `run_orchestration.*` 导入内部 builder、repository、stage 和 writer；这些模块只服务框架实现与离线测试。
 
 ## 4. 新模块标准目录
 
@@ -347,6 +365,7 @@ response = self.request.post("/v1/items", json=payload)
 
 框架默认中间件负责：
 
+- 通过 `RuntimeObservationMiddleware` 观察请求开始、成功和异常；Quality 关闭时自动为空操作。
 - 请求/响应/异常日志。
 - cURL 生成。
 - Authorization、Key、Token 等敏感信息脱敏。
@@ -542,7 +561,7 @@ with ThreadPoolExecutor(max_workers=3) as executor:
     ]
 ```
 
-直接 `executor.submit()` 不会自动复制质量 ContextVar，可能造成 P0/P1 请求无法归属到当前用例。每个线程应创建并关闭自己的 Request Client，不要并发共享同一个 `requests.Session`。
+直接 `executor.submit()` 不会自动复制 pytest run/case、operation 和 Runtime Hooks ContextVar，可能造成 P0/P1 请求无法归属到当前用例。每个线程应创建并关闭自己的 Request Client，不要并发共享同一个 `requests.Session`。
 
 ## 14. P1 质量语义规范
 
@@ -560,15 +579,19 @@ _quality_traffic_role="workload"  # 或 control
 当一个 Task 方法代表一个创建+轮询或多请求业务动作时，使用逻辑调用作用域：
 
 ```python
-from quality.semantic_context import model_id_from_kwargs, operation_scope
-from quality.semantic_models import OperationKind, TrafficRole
+from common.runtime_hooks import (
+    RuntimeOperationKind,
+    RuntimeTrafficRole,
+    model_id_from_kwargs,
+    operation_scope,
+)
 
 
 def create_and_poll_example(self, request_client, payload):
     with operation_scope(
-        OperationKind.ASYNC_TASK,
+        RuntimeOperationKind.ASYNC_TASK,
         name="example_generation",
-        role=TrafficRole.WORKLOAD,
+        role=RuntimeTrafficRole.WORKLOAD,
         model_id=model_id_from_kwargs({"json": payload}),
     ):
         create_response = self.create_media_generation(request_client, payload)
@@ -576,7 +599,7 @@ def create_and_poll_example(self, request_client, payload):
         return self.poll_media_generation_result(request_client, task_id)
 ```
 
-优先复用已有 BaseTask 作用域，只有公共能力无法表达时才手动创建。
+优先复用已有 BaseTask 作用域，只有公共能力无法表达时才手动创建。业务模块不得重新导入 `quality.semantic_context` 或 `quality.semantic_models`；逻辑调用生命周期必须停留在中性的 `common.runtime_hooks` 边界。
 
 ### 14.3 稳定标识要求
 
@@ -659,6 +682,13 @@ polling_responses
 
 框架单测不调用真实付费接口。需要测试文件内容、Jenkinsfile 或报告结构时使用结构测试和临时目录。
 
+重构后的框架改动还必须按职责补充以下保护：
+
+- 修改 `common/runtime_hooks/`：验证 Noop、Hook 故障 fail-open、线程 ContextVar 和 `common` 独立导入。
+- 修改 `quality/metrics/`、`quality/observation_report/`、`quality/flaky_store/`：验证公开契约、依赖 DAG、产物等价或数据库事务边界。
+- 修改 `run_orchestration/`：验证根入口兼容、collect-only 无副作用、并串行顺序、退出码、环境恢复和质量阶段顺序。
+- 新增架构边界测试时必须确保文件进入 Git，不能只在本地未跟踪状态下通过。
+
 ## 19. 本地执行与验收
 
 ### 19.1 收集检查
@@ -676,6 +706,8 @@ polling_responses
 并发池/串行池划分正确
 没有 PytestCollectionWarning
 没有导入错误
+没有生成 Quality run_id 或质量产物
+没有调用 pytest.main 或真实接口
 ```
 
 ### 19.2 执行指定模块
@@ -696,6 +728,8 @@ polling_responses
 .\.venv\Scripts\python.exe -m pytest tests/quality -q
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
+
+当前重构后的离线回归基线为 `596 passed`；`module/smoke` collect-only 收集 `41` 项。
 
 真实接口会产生调用费用；在未授权时只执行 collect-only 和离线框架测试。
 
@@ -730,6 +764,8 @@ polling_responses
 [ ] 优先复用 BaseTask，没有复制公共创建/轮询/账单逻辑
 [ ] 模块 Request 设置稳定 operation name 和 workload/control 角色
 [ ] 复合业务动作具有正确逻辑调用作用域
+[ ] 业务模块没有导入 quality 或 run_orchestration 内部实现
+[ ] 手动逻辑调用作用域使用 common.runtime_hooks 中性 API
 [ ] 线程池使用 submit_with_context
 [ ] 共享状态、账单和延迟结算用例标记 serial
 [ ] POST 重试具备幂等键或明确 allow_post
