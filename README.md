@@ -860,5 +860,5 @@ CI 变更前仍建议先执行：
 .\.venv\Scripts\python.exe run_master.py module/smoke --collect-only -q
 ```
 
-当前重构后的离线验收基线为 `605 passed`；Smoke collect-only 收集 `41` 项，只验证收集和分池，不执行真实接口。
+当前重构后的离线验收基线为 `606 passed`；Smoke collect-only 收集 `41` 项，只验证收集和分池，不执行真实接口。
 

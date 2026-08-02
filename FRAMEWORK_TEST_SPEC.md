@@ -729,7 +729,7 @@ polling_responses
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-当前重构后的离线回归基线为 `605 passed`；`module/smoke` collect-only 收集 `41` 项。
+当前重构后的离线回归基线为 `606 passed`；`module/smoke` collect-only 收集 `41` 项。
 
 真实接口会产生调用费用；在未授权时只执行 collect-only 和离线框架测试。
 
