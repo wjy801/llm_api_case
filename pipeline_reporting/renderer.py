@@ -20,6 +20,14 @@ _STAGE_LABELS = {
 
 def render_pipeline_summary(report: PipelineReport) -> str:
     context = report.context
+    parameter_rows = [
+        ("框架测试", _enabled_state(context.framework_tests_enabled)),
+        ("用例收集", _enabled_state(context.smoke_collect_enabled)),
+        ("接口测试", _enabled_state(context.real_smoke_enabled)),
+    ]
+    if context.real_smoke_enabled:
+        parameter_rows.append(("测试目标", context.smoke_target))
+    parameter_rows.append(("并发配置", context.parallel_workers))
     lines = [
         "# Jenkins 流水线执行摘要",
         "",
@@ -38,14 +46,8 @@ def render_pipeline_summary(report: PipelineReport) -> str:
         "## 执行参数",
         "",
         _table(
-            ("参数", "值"),
-            (
-                ("RUN_FRAMEWORK_TESTS", _bool(context.framework_tests_enabled)),
-                ("RUN_COLLECT_ONLY", _bool(context.smoke_collect_enabled)),
-                ("RUN_REAL_SMOKE", _bool(context.real_smoke_enabled)),
-                ("SMOKE_TARGET", context.smoke_target),
-                ("TEST_PARALLEL_WORKERS", context.parallel_workers),
-            ),
+            ("配置项", "本轮值"),
+            tuple(parameter_rows),
         ),
         "",
         "## 阶段结果",
@@ -62,7 +64,7 @@ def render_pipeline_summary(report: PipelineReport) -> str:
 
     lines.extend(_test_section("框架单测", report.unit_tests, context.framework_tests_enabled))
     lines.extend(_collect_section(report))
-    lines.extend(_test_section("真实 Smoke", report.smoke_tests, context.real_smoke_enabled))
+    lines.extend(_test_section("接口测试", report.smoke_tests, context.real_smoke_enabled))
     lines.extend(_case_details(report))
     if context.real_smoke_enabled:
         lines.extend(_request_section(report))
@@ -117,11 +119,11 @@ def _test_section(title: str, summary: TestSummary, enabled: bool) -> list[str]:
 
 def _collect_section(report: PipelineReport) -> list[str]:
     summary = report.smoke_collect
-    lines = ["## Smoke 收集", ""]
+    lines = ["## 用例收集", ""]
     if not report.context.smoke_collect_enabled:
         return [*lines, "本轮参数未启用。", ""]
     if not summary.available:
-        return [*lines, "本轮没有可用的 Smoke 收集清单。", ""]
+        return [*lines, "本轮没有可用的用例收集清单。", ""]
     parts = [f"共收集 {summary.total} 项"]
     if summary.parallel is not None and summary.serial is not None:
         parts.append(f"并发池 {summary.parallel} 项，串行池 {summary.serial} 项")
@@ -131,11 +133,11 @@ def _collect_section(report: PipelineReport) -> list[str]:
 def _case_details(report: PipelineReport) -> list[str]:
     failed = (
         *(('框架单测', item) for item in report.unit_tests.failed_cases),
-        *(('真实 Smoke', item) for item in report.smoke_tests.failed_cases),
+        *(('接口测试', item) for item in report.smoke_tests.failed_cases),
     )
     skipped = (
         *(('框架单测', item) for item in report.unit_tests.skipped_cases),
-        *(('真实 Smoke', item) for item in report.smoke_tests.skipped_cases),
+        *(('接口测试', item) for item in report.smoke_tests.skipped_cases),
     )
     lines = ["## 失败用例", ""]
     if failed:
@@ -311,8 +313,8 @@ def _first_line(value: str | None) -> str | None:
     return value.splitlines()[0].strip()[:240] or None
 
 
-def _bool(value: bool) -> str:
-    return "true" if value else "false"
+def _enabled_state(value: bool) -> str:
+    return "启用" if value else "未启用"
 
 
 def _short_commit(value: str) -> str:

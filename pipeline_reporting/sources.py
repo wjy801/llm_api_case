@@ -222,7 +222,7 @@ def load_collect_summary(
         text = source.read_text(encoding="utf-8-sig")
     except OSError as error:
         if warnings is not None:
-            warnings.append(f"Smoke 收集清单不可读：{type(error).__name__}")
+            warnings.append(f"用例收集清单不可读：{type(error).__name__}")
         return CollectSummary()
     total = _first_match(text, _COLLECT_TOTAL_PATTERNS)
     parallel = _first_match(text, (_COLLECT_PARALLEL_PATTERN,))
