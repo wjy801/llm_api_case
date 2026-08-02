@@ -6,6 +6,22 @@ import pytest
 
 import run_master
 from master_service import CollectedTestCase, collect_test_case_items, split_test_cases
+from quality.config import QualityRuntimeConfig
+from run_orchestration import environment as orchestration_environment
+from run_orchestration import pytest_execution, scheduling
+
+
+def _set_quality_enabled(monkeypatch) -> None:
+    monkeypatch.setattr(
+        orchestration_environment,
+        "resolve_parent_quality_config",
+        lambda: QualityRuntimeConfig(
+            enabled=True,
+            run_id=None,
+            execution_id=None,
+            output_dir=Path("reports/quality"),
+        ),
+    )
 
 
 def _without_generated_junit_arg(args: list[str]) -> list[str]:
@@ -64,8 +80,9 @@ def test_split_test_cases_separates_serial_pool():
 
 
 def test_run_without_numprocesses_runs_all_cases_once(monkeypatch):
+    _set_quality_enabled(monkeypatch)
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda test_path: [
             CollectedTestCase("test_a.py::test_parallel", frozenset()),
@@ -73,7 +90,7 @@ def test_run_without_numprocesses_runs_all_cases_once(monkeypatch):
         ],
     )
     calls: list[list[str]] = []
-    monkeypatch.setattr(run_master, "_run_pytest", lambda args: calls.append(args) or 0)
+    monkeypatch.setattr(pytest_execution, "run_pytest", lambda args: calls.append(args) or 0)
 
     exit_code = run_master.run("tests")
 
@@ -86,7 +103,7 @@ def test_run_without_numprocesses_runs_all_cases_once(monkeypatch):
 
 def test_run_with_numprocesses_runs_parallel_pool_before_serial_pool(monkeypatch):
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda test_path: [
             CollectedTestCase("test_a.py::test_parallel", frozenset()),
@@ -94,9 +111,9 @@ def test_run_with_numprocesses_runs_parallel_pool_before_serial_pool(monkeypatch
         ],
     )
     calls: list[list[str]] = []
-    monkeypatch.setattr(run_master, "_run_pytest", lambda args: calls.append(args) or 0)
-    monkeypatch.setattr(run_master, "_preserve_allure_results", lambda results_dir: None)
-    monkeypatch.setattr(run_master, "_restore_allure_results", lambda results_dir, preserved_results: None)
+    monkeypatch.setattr(pytest_execution, "run_pytest", lambda args: calls.append(args) or 0)
+    monkeypatch.setattr(pytest_execution.artifacts, "preserve_allure_results", lambda results_dir: None)
+    monkeypatch.setattr(pytest_execution.artifacts, "restore_allure_results", lambda results_dir, preserved_results: None)
 
     exit_code = run_master.run(
         "tests",
@@ -122,13 +139,14 @@ def test_run_with_numprocesses_runs_parallel_pool_before_serial_pool(monkeypatch
 
 
 def test_run_with_empty_serial_pool_skips_serial_stage(monkeypatch):
+    _set_quality_enabled(monkeypatch)
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda test_path: [CollectedTestCase("test_a.py::test_parallel", frozenset())],
     )
     calls: list[list[str]] = []
-    monkeypatch.setattr(run_master, "_run_pytest", lambda args: calls.append(args) or 0)
+    monkeypatch.setattr(pytest_execution, "run_pytest", lambda args: calls.append(args) or 0)
 
     exit_code = run_master.run("tests", numprocesses="auto")
 
@@ -140,15 +158,16 @@ def test_run_with_empty_serial_pool_skips_serial_stage(monkeypatch):
 
 
 def test_run_with_empty_parallel_pool_runs_serial_only(monkeypatch):
+    _set_quality_enabled(monkeypatch)
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda test_path: [CollectedTestCase("test_b.py::test_serial", frozenset({"serial"}))],
     )
     calls: list[list[str]] = []
-    monkeypatch.setattr(run_master, "_run_pytest", lambda args: calls.append(args) or 0)
-    monkeypatch.setattr(run_master, "_preserve_allure_results", lambda results_dir: None)
-    monkeypatch.setattr(run_master, "_restore_allure_results", lambda results_dir, preserved_results: None)
+    monkeypatch.setattr(pytest_execution, "run_pytest", lambda args: calls.append(args) or 0)
+    monkeypatch.setattr(pytest_execution.artifacts, "preserve_allure_results", lambda results_dir: None)
+    monkeypatch.setattr(pytest_execution.artifacts, "restore_allure_results", lambda results_dir, preserved_results: None)
 
     exit_code = run_master.run("tests", numprocesses="2")
 
@@ -159,7 +178,7 @@ def test_run_with_empty_parallel_pool_runs_serial_only(monkeypatch):
 
 def test_run_collect_only_prints_pool_counts_without_execution(monkeypatch, capsys):
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda test_path: [
             CollectedTestCase("test_a.py::test_parallel", frozenset()),
@@ -167,8 +186,8 @@ def test_run_collect_only_prints_pool_counts_without_execution(monkeypatch, caps
         ],
     )
     monkeypatch.setattr(
-        run_master,
-        "_run_pytest",
+        pytest_execution,
+        "run_pytest",
         lambda args: pytest.fail("collect-only should not execute pytest"),
     )
 
@@ -181,8 +200,9 @@ def test_run_collect_only_prints_pool_counts_without_execution(monkeypatch, caps
 
 
 def test_run_continues_serial_pool_after_parallel_failure(monkeypatch):
+    _set_quality_enabled(monkeypatch)
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda test_path: [
             CollectedTestCase("test_a.py::test_parallel", frozenset()),
@@ -195,9 +215,9 @@ def test_run_continues_serial_pool_after_parallel_failure(monkeypatch):
         calls.append(args)
         return 1 if "test_a.py::test_parallel" in args else 0
 
-    monkeypatch.setattr(run_master, "_run_pytest", fake_run_pytest)
-    monkeypatch.setattr(run_master, "_preserve_allure_results", lambda results_dir: None)
-    monkeypatch.setattr(run_master, "_restore_allure_results", lambda results_dir, preserved_results: None)
+    monkeypatch.setattr(pytest_execution, "run_pytest", fake_run_pytest)
+    monkeypatch.setattr(pytest_execution.artifacts, "preserve_allure_results", lambda results_dir: None)
+    monkeypatch.setattr(pytest_execution.artifacts, "restore_allure_results", lambda results_dir, preserved_results: None)
 
     exit_code = run_master.run("tests", numprocesses="2")
 
@@ -212,6 +232,29 @@ def test_run_continues_serial_pool_after_parallel_failure(monkeypatch):
     ]
 
 
+def test_run_with_quality_disabled_does_not_add_default_junit(monkeypatch):
+    monkeypatch.setattr(
+        orchestration_environment,
+        "resolve_parent_quality_config",
+        lambda: QualityRuntimeConfig(
+            enabled=False,
+            run_id=None,
+            execution_id=None,
+            output_dir=Path("reports/quality"),
+        ),
+    )
+    monkeypatch.setattr(
+        scheduling,
+        "collect_test_case_items",
+        lambda test_path: [CollectedTestCase("test_a.py::test_case", frozenset())],
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(pytest_execution, "run_pytest", lambda args: calls.append(args) or 0)
+
+    assert run_master.run("tests") == 0
+    assert calls == [["test_a.py::test_case"]]
+
+
 @pytest.mark.parametrize(
     ("args", "expected"),
     [
@@ -222,4 +265,4 @@ def test_run_continues_serial_pool_after_parallel_failure(monkeypatch):
 def test_replace_junitxml_suffix(args: list[str], expected: list[str]):
     suffix = "parallel" if "parallel" in expected[-1] else "serial"
 
-    assert run_master._replace_junitxml_suffix(args, suffix) == expected
+    assert pytest_execution.replace_junitxml_suffix(args, suffix) == expected

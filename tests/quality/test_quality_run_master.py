@@ -7,6 +7,17 @@ import pytest
 
 import run_master
 from master_service import CollectedTestCase
+from quality.models import IntegrityStatus, RunStatus
+from run_orchestration import (
+    environment as orchestration_environment,
+    pytest_execution,
+    quality_metrics_stage,
+    quality_observation_stage,
+    quality_p0_stage,
+    quality_run_record,
+    quality_semantic_stage,
+    scheduling,
+)
 
 
 QUALITY_ENV_NAMES = (
@@ -48,7 +59,7 @@ def _capture_pytest_environment(monkeypatch):
         )
         return 0
 
-    monkeypatch.setattr(run_master.pytest, "main", fake_main)
+    monkeypatch.setattr(pytest_execution.pytest, "main", fake_main)
     return calls
 
 
@@ -63,14 +74,22 @@ def _capture_quality_finalization(monkeypatch):
             "MergeResult",
             (),
             {
-                "integrity_status": run_master.IntegrityStatus.COMPLETE,
+                "integrity_status": IntegrityStatus.COMPLETE,
                 "integrity_issues": (),
             },
         )()
 
-    monkeypatch.setattr(run_master, "merge_quality_run", fake_merge)
-    monkeypatch.setattr(run_master, "write_json_atomic", lambda path, data: writes.append((path, data)) or path)
-    monkeypatch.setattr(run_master, "generate_quality_report", lambda request: reports.append(request))
+    monkeypatch.setattr(quality_p0_stage, "merge_quality_run", fake_merge)
+    monkeypatch.setattr(
+        quality_run_record,
+        "write_json_atomic",
+        lambda path, data: writes.append((path, data)) or path,
+    )
+    monkeypatch.setattr(
+        quality_p0_stage,
+        "generate_quality_report",
+        lambda request: reports.append(request),
+    )
     return merges, writes, reports
 
 
@@ -79,7 +98,7 @@ def test_disabled_quality_preserves_existing_environment(monkeypatch):
     monkeypatch.setenv("QUALITY_RUN_ID", "outside-run")
     monkeypatch.setenv("QUALITY_EXECUTION_ID", "outside-execution")
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
@@ -98,7 +117,7 @@ def test_serial_run_uses_semantic_execution_id_and_restores_environment(monkeypa
     monkeypatch.setenv("QUALITY_EXECUTION_ID", "outside-execution")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", "quality-output")
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
@@ -117,9 +136,9 @@ def test_serial_run_uses_semantic_execution_id_and_restores_environment(monkeypa
 
 def test_parallel_and_serial_stages_share_one_run_id(monkeypatch, tmp_path):
     monkeypatch.setenv("QUALITY_ENABLE", "1")
-    monkeypatch.setattr(run_master, "DEFAULT_ALLURE_RESULTS_DIR", tmp_path / "allure-results")
+    monkeypatch.setattr(pytest_execution, "DEFAULT_ALLURE_RESULTS_DIR", tmp_path / "allure-results")
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [
             _case("module/test_sample.py::test_parallel"),
@@ -128,7 +147,7 @@ def test_parallel_and_serial_stages_share_one_run_id(monkeypatch, tmp_path):
     )
     generated = []
     monkeypatch.setattr(
-        run_master,
+        orchestration_environment,
         "build_run_id",
         lambda **kwargs: generated.append(kwargs) or "generated-run",
     )
@@ -153,13 +172,13 @@ def test_jenkins_identity_is_used_only_when_job_and_build_are_present(monkeypatc
     monkeypatch.setenv("JOB_NAME", "api-case")
     monkeypatch.setenv("BUILD_NUMBER", "42")
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
     captured = []
     monkeypatch.setattr(
-        run_master,
+        orchestration_environment,
         "build_run_id",
         lambda **kwargs: captured.append(kwargs) or "jenkins-run",
     )
@@ -175,17 +194,17 @@ def test_jenkins_identity_is_used_only_when_job_and_build_are_present(monkeypatc
 def test_collect_only_does_not_generate_or_inject_quality_identity(monkeypatch):
     monkeypatch.setenv("QUALITY_ENABLE", "1")
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
     monkeypatch.setattr(
-        run_master,
+        orchestration_environment,
         "build_run_id",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("must not generate")),
     )
     monkeypatch.setattr(
-        run_master.pytest,
+        pytest_execution.pytest,
         "main",
         lambda args: (_ for _ in ()).throw(AssertionError("must not execute")),
     )
@@ -196,7 +215,7 @@ def test_collect_only_does_not_generate_or_inject_quality_identity(monkeypatch):
 def test_invalid_quality_enable_fails_open(monkeypatch, capsys):
     monkeypatch.setenv("QUALITY_ENABLE", "invalid")
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
@@ -214,7 +233,7 @@ def test_quality_enabled_adds_default_junit_path_and_finalizes(monkeypatch, tmp_
     monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(output_dir))
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
@@ -237,7 +256,7 @@ def test_quality_finalize_runs_and_original_exception_is_preserved(monkeypatch, 
     monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(output_dir))
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
@@ -246,13 +265,15 @@ def test_quality_finalize_runs_and_original_exception_is_preserved(monkeypatch, 
     def raise_keyboard_interrupt(args):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(run_master.pytest, "main", raise_keyboard_interrupt)
+    monkeypatch.setattr(
+        pytest_execution.pytest, "main", raise_keyboard_interrupt
+    )
 
     with pytest.raises(KeyboardInterrupt):
         run_master.run()
 
     assert merges
-    assert writes[-1][1].status is run_master.RunStatus.INTERRUPTED
+    assert writes[-1][1].status is RunStatus.INTERRUPTED
     assert reports
 
 
@@ -261,14 +282,14 @@ def test_quality_report_failure_is_fail_open(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
     _capture_pytest_environment(monkeypatch)
     _capture_quality_finalization(monkeypatch)
     monkeypatch.setattr(
-        run_master,
+        quality_p0_stage,
         "generate_quality_report",
         lambda request: (_ for _ in ()).throw(OSError("disk unavailable")),
     )
@@ -287,7 +308,7 @@ def test_quality_report_environment_is_applied(monkeypatch, tmp_path):
     monkeypatch.setenv("QUALITY_HTTP_5XX_WARN_RATE", "0.1")
     monkeypatch.setenv("QUALITY_TIMEOUT_WARN_RATE", "0.2")
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
@@ -308,7 +329,7 @@ def test_invalid_quality_report_environment_uses_defaults(monkeypatch, tmp_path,
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
     monkeypatch.setenv("QUALITY_MIN_REQUEST_SAMPLES", "invalid")
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
@@ -327,7 +348,7 @@ def test_semantic_merge_runs_after_p0_finalize_when_enabled(monkeypatch, tmp_pat
     monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
@@ -335,7 +356,7 @@ def test_semantic_merge_runs_after_p0_finalize_when_enabled(monkeypatch, tmp_pat
     _capture_quality_finalization(monkeypatch)
     semantic_merges = []
     monkeypatch.setattr(
-        run_master,
+        quality_semantic_stage,
         "merge_semantic_run",
         lambda request: semantic_merges.append(request),
     )
@@ -352,14 +373,14 @@ def test_semantic_merge_failure_is_fail_open(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
     _capture_pytest_environment(monkeypatch)
     _capture_quality_finalization(monkeypatch)
     monkeypatch.setattr(
-        run_master,
+        quality_semantic_stage,
         "merge_semantic_run",
         lambda request: (_ for _ in ()).throw(OSError("semantic disk unavailable")),
     )
@@ -375,7 +396,7 @@ def test_metrics_runs_after_semantic_when_enabled(monkeypatch, tmp_path):
     monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
@@ -383,12 +404,12 @@ def test_metrics_runs_after_semantic_when_enabled(monkeypatch, tmp_path):
     _capture_quality_finalization(monkeypatch)
     order = []
     monkeypatch.setattr(
-        run_master,
+        quality_semantic_stage,
         "merge_semantic_run",
         lambda request: order.append("semantic"),
     )
     monkeypatch.setattr(
-        run_master,
+        quality_metrics_stage,
         "aggregate_run_metrics",
         lambda request: (
             order.append("metrics")
@@ -412,15 +433,17 @@ def test_metrics_exception_is_fail_open(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
     _capture_pytest_environment(monkeypatch)
     _capture_quality_finalization(monkeypatch)
-    monkeypatch.setattr(run_master, "merge_semantic_run", lambda request: None)
     monkeypatch.setattr(
-        run_master,
+        quality_semantic_stage, "merge_semantic_run", lambda request: None
+    )
+    monkeypatch.setattr(
+        quality_metrics_stage,
         "aggregate_run_metrics",
         lambda request: (_ for _ in ()).throw(OSError("metrics disk unavailable")),
     )
@@ -439,7 +462,7 @@ def test_p1_observation_runs_after_metrics_with_explicit_expectations(
     monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
@@ -447,10 +470,12 @@ def test_p1_observation_runs_after_metrics_with_explicit_expectations(
     _capture_quality_finalization(monkeypatch)
     order = []
     monkeypatch.setattr(
-        run_master, "merge_semantic_run", lambda request: order.append("semantic")
+        quality_semantic_stage,
+        "merge_semantic_run",
+        lambda request: order.append("semantic"),
     )
     monkeypatch.setattr(
-        run_master,
+        quality_metrics_stage,
         "aggregate_run_metrics",
         lambda request: (
             order.append("metrics")
@@ -464,7 +489,7 @@ def test_p1_observation_runs_after_metrics_with_explicit_expectations(
     )
     requests = []
     monkeypatch.setattr(
-        run_master,
+        quality_observation_stage,
         "generate_p1_observation_report",
         lambda request: (
             order.append("p1")
@@ -489,14 +514,14 @@ def test_p1_observation_exception_is_fail_open(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
     monkeypatch.setattr(
-        run_master,
+        scheduling,
         "collect_test_case_items",
         lambda path: [_case("module/test_sample.py::test_ok")],
     )
     _capture_pytest_environment(monkeypatch)
     _capture_quality_finalization(monkeypatch)
     monkeypatch.setattr(
-        run_master,
+        quality_observation_stage,
         "generate_p1_observation_report",
         lambda request: (_ for _ in ()).throw(OSError("report disk unavailable")),
     )
