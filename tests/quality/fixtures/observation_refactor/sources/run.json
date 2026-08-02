@@ -1,0 +1,15 @@
+{
+  "branch": null,
+  "build_number": null,
+  "commit_sha": null,
+  "end_time": "2026-08-01T01:00:01Z",
+  "environment": "test",
+  "integrity_issues": [],
+  "integrity_status": "complete",
+  "job_name": null,
+  "run_id": "run-semantic",
+  "schema_version": "quality.v1",
+  "start_time": "2026-08-01T01:00:00Z",
+  "status": "finished",
+  "trigger": "local"
+}
