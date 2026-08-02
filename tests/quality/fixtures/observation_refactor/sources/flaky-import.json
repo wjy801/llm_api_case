@@ -1,0 +1,20 @@
+{
+  "artifact_ref": null,
+  "backup_created": false,
+  "database_schema_version": null,
+  "eligible_count": 0,
+  "environment": null,
+  "excluded_count": 0,
+  "excluded_reasons": {},
+  "inserted_count": 0,
+  "issues": [],
+  "migration_applied": false,
+  "p0_integrity_status": null,
+  "profile_distribution": {},
+  "quick_check": null,
+  "run_id": "run-semantic",
+  "schema_version": "quality.flaky-import.v1",
+  "source_digest": null,
+  "source_hashes": {},
+  "status": "NOOP"
+}
