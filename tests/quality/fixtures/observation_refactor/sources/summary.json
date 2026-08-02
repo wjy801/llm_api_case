@@ -1,0 +1,142 @@
+{
+  "case_status": {
+    "passed": 1
+  },
+  "created_at": "2026-08-02T02:08:37.272322+00:00",
+  "failure_categories": {
+    "CONFIGURATION": 0,
+    "ENVIRONMENT": 0,
+    "FRAMEWORK_DEFECT": 0,
+    "PRODUCT_DEFECT": 0,
+    "TEST_DEFECT": 0,
+    "TRANSIENT": 0,
+    "UNKNOWN": 0
+  },
+  "failures": {
+    "affected_case_count": 0,
+    "affected_invocation_count": 0,
+    "categories": {
+      "CONFIGURATION": {
+        "affected_case_count": 0,
+        "affected_invocation_count": 0,
+        "examples": [],
+        "fingerprint_count": 0,
+        "occurrence_count": 0
+      },
+      "ENVIRONMENT": {
+        "affected_case_count": 0,
+        "affected_invocation_count": 0,
+        "examples": [],
+        "fingerprint_count": 0,
+        "occurrence_count": 0
+      },
+      "FRAMEWORK_DEFECT": {
+        "affected_case_count": 0,
+        "affected_invocation_count": 0,
+        "examples": [],
+        "fingerprint_count": 0,
+        "occurrence_count": 0
+      },
+      "PRODUCT_DEFECT": {
+        "affected_case_count": 0,
+        "affected_invocation_count": 0,
+        "examples": [],
+        "fingerprint_count": 0,
+        "occurrence_count": 0
+      },
+      "TEST_DEFECT": {
+        "affected_case_count": 0,
+        "affected_invocation_count": 0,
+        "examples": [],
+        "fingerprint_count": 0,
+        "occurrence_count": 0
+      },
+      "TRANSIENT": {
+        "affected_case_count": 0,
+        "affected_invocation_count": 0,
+        "examples": [],
+        "fingerprint_count": 0,
+        "occurrence_count": 0
+      },
+      "UNKNOWN": {
+        "affected_case_count": 0,
+        "affected_invocation_count": 0,
+        "examples": [],
+        "fingerprint_count": 0,
+        "occurrence_count": 0
+      }
+    },
+    "confidence": {
+      "high": 0,
+      "low": 0,
+      "medium": 0
+    },
+    "fingerprint_count": 0,
+    "occurrence_count": 0,
+    "owner_domains": {
+      "configuration": 0,
+      "environment": 0,
+      "framework": 0,
+      "product": 0,
+      "test": 0,
+      "unknown": 0
+    }
+  },
+  "integrity": {
+    "issue_count": 0,
+    "issues": [],
+    "report_warnings": []
+  },
+  "interfaces": [
+    {
+      "avg_duration_ms": 0.1458998303860426,
+      "failure_count": 0,
+      "http_5xx_count": 0,
+      "interface_id": "GET /v1/items http",
+      "max_duration_ms": 0.1458998303860426,
+      "method": "GET",
+      "request_count": 1,
+      "success_count": 1,
+      "timeout_count": 0,
+      "url_template": "/v1/items"
+    }
+  ],
+  "report_version": "p0-report.v1",
+  "request": {
+    "failure_count": 0,
+    "http_5xx_count": 0,
+    "success_count": 1,
+    "timeout_count": 0
+  },
+  "run_id": "run-semantic",
+  "schema_version": "quality.v1",
+  "source_manifest": {
+    "classifier_rule_version": "p0-classifier.v1",
+    "fingerprint_version": "p0-fingerprint.v1",
+    "integrity_status": "complete",
+    "manifest_version": "quality.merge.v1",
+    "merge_version": "p0-merge.v1",
+    "path": "merged/manifest.json",
+    "run_id": "run-semantic",
+    "schema_version": "quality.v1",
+    "status": "complete"
+  },
+  "summary": {
+    "case_error": 0,
+    "case_failed": 0,
+    "case_passed": 1,
+    "case_skipped": 0,
+    "case_total": 1,
+    "final_pass_rate": 1.0,
+    "http_5xx_count": 0,
+    "integrity_status": "complete",
+    "raw_pass_rate": 1.0,
+    "request_success_rate": 1.0,
+    "request_total": 1,
+    "retry_passed": 0,
+    "run_id": "run-semantic",
+    "schema_version": "quality.v1",
+    "timeout_count": 0,
+    "unknown_failure_count": 0
+  }
+}

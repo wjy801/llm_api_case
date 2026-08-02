@@ -1,0 +1,76 @@
+{
+  "aggregation_version": "p1-run-metrics.v1",
+  "created_at": "2026-08-02T02:08:37.346027+00:00",
+  "issues": [],
+  "manifest_version": "quality.run-metrics-manifest.v1",
+  "metrics_status": "aggregated",
+  "output_counts": {
+    "case_invocations": 1,
+    "issues": 0,
+    "operation_buckets": 1,
+    "request_event_buckets": 1,
+    "request_group_buckets": 1,
+    "workload_operations": 1,
+    "workload_request_events": 1,
+    "workload_request_groups": 1
+  },
+  "output_hashes": {
+    "run_metrics": "9c9e675100c583e66cf808e22f7e90d8f707b9de22b06fec4f55ee4cf5fec127"
+  },
+  "run_id": "run-semantic",
+  "schema_version": "quality.run-metrics.v1",
+  "source_evidence": {
+    "p0_manifest": {
+      "manifest_version": "quality.merge.v1",
+      "merge_version": "p0-merge.v1",
+      "path": "merged/manifest.json",
+      "schema_version": "quality.v1",
+      "sha256": "9d590001e01e7d3b8dcc8f41b3a5e5de54ab98784a915b29a0933ffe9155e185"
+    },
+    "p0_request_metrics": {
+      "manifest_version": null,
+      "merge_version": null,
+      "path": "merged/request-metrics.jsonl",
+      "schema_version": "quality.v1",
+      "sha256": "338e7968f7bddb13343a583153c44c2c9f24d1f66ab326ad22654c5823cc9450"
+    },
+    "semantic_manifest": {
+      "manifest_version": "quality.semantic-manifest.v1",
+      "merge_version": "p1-semantic-merge.v1",
+      "path": "semantic/merged/manifest.json",
+      "schema_version": "quality.semantic.v1",
+      "sha256": "51d12647a410021beae7fd61be557c2b7a21052b37228dc9bbf645aac5a16009"
+    },
+    "semantic_outputs": {
+      "integrity-issues": {
+        "manifest_version": null,
+        "merge_version": null,
+        "path": "semantic/merged/integrity-issues.jsonl",
+        "schema_version": "quality.semantic.v1",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "operations": {
+        "manifest_version": null,
+        "merge_version": null,
+        "path": "semantic/merged/operations.jsonl",
+        "schema_version": "quality.semantic.v1",
+        "sha256": "a9951cc22bbca6352964da03862db31111ca3ddf265b16e13209bd985abefe47"
+      },
+      "polling-sessions": {
+        "manifest_version": null,
+        "merge_version": null,
+        "path": "semantic/merged/polling-sessions.jsonl",
+        "schema_version": "quality.semantic.v1",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "request-groups": {
+        "manifest_version": null,
+        "merge_version": null,
+        "path": "semantic/merged/request-groups.jsonl",
+        "schema_version": "quality.semantic.v1",
+        "sha256": "8600f50e6dd85ad4fce63428a7b7ffaf4f617b70bf333c7665bb831f270700d5"
+      }
+    }
+  },
+  "write_status": "complete"
+}
