@@ -128,6 +128,15 @@ def test_interface_id_preserves_semantic_hyphenated_model_name():
     assert interface_id == "GET /v1/models/claude-3-5-sonnet-20241022 http"
 
 
+def test_interface_id_templates_semantic_prefix_with_long_dynamic_hex_suffix():
+    interface_id = build_interface_id(
+        "GET",
+        "/v1/media/tasks/not-exist-a3aa746cefb144c980fea17e2728e3d3",
+    )
+
+    assert interface_id == "GET /v1/media/tasks/{hash} http"
+
+
 def test_failure_normalization_removes_dynamic_and_sensitive_values():
     first_message = (
         "2026-07-30T08:00:00Z AssertionError at 0xABCDEF: "

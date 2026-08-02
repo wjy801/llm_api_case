@@ -15,7 +15,7 @@ pipeline {
 
     triggers {
         parameterizedCron('''
-            0 0 * * * % RUN_FRAMEWORK_TESTS=true;RUN_COLLECT_ONLY=false;RUN_REAL_SMOKE=true;ALWAYS_SEND_REPORT_EMAIL=true;USE_CHINA_ENVIRONMENT=TRUE;SMOKE_TARGET=module/smoke;TEST_PARALLEL_WORKERS=off
+            0 0 * * * % RUN_FRAMEWORK_TESTS=true;RUN_COLLECT_ONLY=false;RUN_REAL_SMOKE=true;GENERATE_PIPELINE_SUMMARY=true;ALWAYS_SEND_REPORT_EMAIL=true;USE_CHINA_ENVIRONMENT=TRUE;SMOKE_TARGET=module/smoke;TEST_PARALLEL_WORKERS=off
         ''')
     }
 
@@ -23,6 +23,7 @@ pipeline {
         booleanParam(name: 'RUN_FRAMEWORK_TESTS', defaultValue: true, description: 'Run framework tests under tests directory.')
         booleanParam(name: 'RUN_COLLECT_ONLY', defaultValue: true, description: 'Collect smoke cases without real execution.')
         booleanParam(name: 'RUN_REAL_SMOKE', defaultValue: false, description: 'Run real smoke cases. Keep disabled by default.')
+        booleanParam(name: 'GENERATE_PIPELINE_SUMMARY', defaultValue: true, description: 'Generate reports/pipeline-summary.md for this build.')
         booleanParam(name: 'ALWAYS_SEND_REPORT_EMAIL', defaultValue: false, description: 'Send report email for every build result.')
         choice(name: 'USE_CHINA_ENVIRONMENT', choices: ['TRUE', 'FALSE'], description: 'TRUE uses China environment, FALSE uses default environment.')
         string(name: 'SMOKE_TARGET', defaultValue: 'module/smoke', description: 'Smoke test target path.', trim: true)
@@ -89,12 +90,18 @@ pipeline {
                 }
                 New-Item -ItemType Directory -Force -Path $reportsPath | Out-Null
                 ''')
+                script {
+                    initializePipelineStageStatus()
+                }
             }
         }
 
         stage('Framework Unit Tests') {
             when { expression { return params.RUN_FRAMEWORK_TESTS } }
             steps {
+                script {
+                    updatePipelineStageStatus('framework_tests', 'NO_DATA')
+                }
                 ciPowerShell('''
                 $env:GENERATE_ALLURE_REPORT = 'FALSE'
                 $env:GENERATE_HISTORY_REPORT = 'FALSE'
@@ -109,6 +116,18 @@ pipeline {
                 ''')
             }
             post {
+                success {
+                    script { updatePipelineStageStatus('framework_tests', 'PASSED') }
+                }
+                failure {
+                    script { updatePipelineStageStatus('framework_tests', 'FAILED') }
+                }
+                unstable {
+                    script { updatePipelineStageStatus('framework_tests', 'FAILED') }
+                }
+                aborted {
+                    script { updatePipelineStageStatus('framework_tests', 'FAILED') }
+                }
                 always {
                     junit allowEmptyResults: false, testResults: 'reports/unit-tests.xml'
                 }
@@ -118,6 +137,9 @@ pipeline {
         stage('Collect Smoke Cases') {
             when { expression { return params.RUN_COLLECT_ONLY } }
             steps {
+                script {
+                    updatePipelineStageStatus('smoke_collect', 'NO_DATA')
+                }
                 ciPowerShell('''
                 $collectOutput = ./.venv/Scripts/python.exe run_master.py module/smoke --collect-only -q 2>&1
                 $collectExitCode = $LASTEXITCODE
@@ -128,11 +150,28 @@ pipeline {
                 }
                 ''')
             }
+            post {
+                success {
+                    script { updatePipelineStageStatus('smoke_collect', 'PASSED') }
+                }
+                failure {
+                    script { updatePipelineStageStatus('smoke_collect', 'FAILED') }
+                }
+                unstable {
+                    script { updatePipelineStageStatus('smoke_collect', 'FAILED') }
+                }
+                aborted {
+                    script { updatePipelineStageStatus('smoke_collect', 'FAILED') }
+                }
+            }
         }
 
         stage('Real Smoke') {
             when { expression { return params.RUN_REAL_SMOKE } }
             steps {
+                script {
+                    updatePipelineStageStatus('real_smoke', 'NO_DATA')
+                }
                 ciPowerShell('''
                 $target = $env:SMOKE_TARGET
                 $env:QUALITY_ENABLE = '1'
@@ -178,6 +217,18 @@ pipeline {
                 ''')
             }
             post {
+                success {
+                    script { updatePipelineStageStatus('real_smoke', 'PASSED') }
+                }
+                failure {
+                    script { updatePipelineStageStatus('real_smoke', 'FAILED') }
+                }
+                unstable {
+                    script { updatePipelineStageStatus('real_smoke', 'FAILED') }
+                }
+                aborted {
+                    script { updatePipelineStageStatus('real_smoke', 'FAILED') }
+                }
                 always {
                     junit allowEmptyResults: true, testResults: 'reports/smoke-tests*.xml'
                 }
@@ -187,6 +238,9 @@ pipeline {
 
     post {
         always {
+            script {
+                generatePipelineSummary()
+            }
             allure includeProperties: false, jdk: '', results: [[path: 'allure-results']]
             archiveArtifacts artifacts: 'allure-results/**, reports/**', allowEmptyArchive: true
         }
@@ -223,8 +277,104 @@ void ciPowerShell(String body) {
     \$env:PYTHONUTF8 = '1'
     \$env:USE_CHINA_ENVIRONMENT = '${params.USE_CHINA_ENVIRONMENT}'
     \$env:TEST_PARALLEL_WORKERS = '${params.TEST_PARALLEL_WORKERS ?: 'off'}'
+    \$env:GENERATE_PIPELINE_SUMMARY = '${params.GENERATE_PIPELINE_SUMMARY}'
     ${body}
     """)
+}
+
+boolean pipelineSummaryEnabled() {
+    if (params.GENERATE_PIPELINE_SUMMARY == null) {
+        return true
+    }
+    return String.valueOf(params.GENERATE_PIPELINE_SUMMARY).equalsIgnoreCase('true')
+}
+
+void initializePipelineStageStatus() {
+    if (!pipelineSummaryEnabled()) {
+        echo 'Pipeline summary generation is disabled; stage status initialization skipped.'
+        return
+    }
+    try {
+        ciPowerShell("""
+        ./.venv/Scripts/python.exe -m pipeline_reporting initialize-stages `
+          --framework-tests ${params.RUN_FRAMEWORK_TESTS} `
+          --smoke-collect ${params.RUN_COLLECT_ONLY} `
+          --real-smoke ${params.RUN_REAL_SMOKE}
+        """)
+    } catch (error) {
+        echo "Pipeline stage status initialization failed open: ${error.getMessage()}"
+    }
+}
+
+void updatePipelineStageStatus(String stageName, String status) {
+    if (!pipelineSummaryEnabled()) {
+        return
+    }
+    try {
+        ciPowerShell("""
+        ./.venv/Scripts/python.exe -m pipeline_reporting set-stage `
+          --name '${stageName}' `
+          --status '${status}'
+        """)
+    } catch (error) {
+        echo "Pipeline stage status update failed open: ${stageName}=${status}: ${error.getMessage()}"
+    }
+}
+
+void generatePipelineSummary() {
+    if (!pipelineSummaryEnabled()) {
+        echo 'Pipeline summary generation is disabled by GENERATE_PIPELINE_SUMMARY.'
+        return
+    }
+    try {
+        if (!fileExists('.venv/Scripts/python.exe') || !fileExists('pipeline_reporting/__main__.py')) {
+            throw new IllegalStateException('Python report generator is unavailable in the workspace.')
+        }
+        withEnv([
+            "PIPELINE_BUILD_RESULT=${currentBuild.currentResult ?: currentBuild.result ?: 'SUCCESS'}",
+            "PIPELINE_DURATION_MS=${currentBuild.duration ?: 0}",
+        ]) {
+            ciPowerShell('''
+            ./.venv/Scripts/python.exe -m pipeline_reporting generate `
+              --workspace . `
+              --output reports/pipeline-summary.md `
+              --dotenv .env
+            ''')
+        }
+        if (!fileExists('reports/pipeline-summary.md')) {
+            throw new IllegalStateException('Pipeline summary generator completed without output.')
+        }
+    } catch (error) {
+        echo "Pipeline summary generation failed open: ${error.getMessage()}"
+        writeFallbackPipelineSummary()
+    }
+}
+
+void writeFallbackPipelineSummary() {
+    if (!pipelineSummaryEnabled()) {
+        return
+    }
+    try {
+        powershell(script: "New-Item -ItemType Directory -Force -Path reports | Out-Null")
+        def result = currentBuild.currentResult ?: currentBuild.result ?: 'UNKNOWN'
+        writeFile(
+            file: 'reports/pipeline-summary.md',
+            encoding: 'UTF-8',
+            text: """# Jenkins 流水线执行摘要
+
+## 本次结论
+
+- 构建：`${env.JOB_NAME ?: '-'} #${env.BUILD_NUMBER ?: '-'}`
+- Jenkins 结果：`${result}`
+- 报告状态：详细摘要生成失败
+- 建议：查看本轮 Jenkins 阶段日志，定位环境准备或报告生成问题。
+
+本兜底报告不包含推测的用例数量，也不会改变原始构建结果。
+"""
+        )
+    } catch (fallbackError) {
+        echo "Fallback pipeline summary generation also failed: ${fallbackError.getMessage()}"
+    }
 }
 
 Map readJunitSummary() {
@@ -307,9 +457,11 @@ String buildResultSummaryHtml(String status, Map junit, Map smoke) {
         </div>
         """
     }
-    def reportLinks = [
-        "<a href=\"${htmlEscape(buildUrl)}allure/\">Allure 报告</a>",
-    ]
+    def reportLinks = []
+    if (fileExists('reports/pipeline-summary.md')) {
+        reportLinks << "<a href=\"${htmlEscape(buildUrl)}artifact/reports/pipeline-summary.md\">流水线执行摘要</a>"
+    }
+    reportLinks << "<a href=\"${htmlEscape(buildUrl)}allure/\">Allure 报告</a>"
     if (junit.available) {
         reportLinks << "<a href=\"${htmlEscape(buildUrl)}testReport/\">JUnit 报告</a>"
     }
@@ -344,7 +496,7 @@ String buildResultSummaryHtml(String status, Map junit, Map smoke) {
       <p style="margin-top: 16px;">
         ${reportLinks.join(' | ')}
       </p>
-      <p style="margin-top: 8px; color: #888; font-size: 12px;">详细质量数据请在构建产物中查看。</p>
+      <p style="margin-top: 8px; color: #888; font-size: 12px;">详细执行与质量数据请在构建产物中查看。</p>
     </div>
     """
 }

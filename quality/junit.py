@@ -28,6 +28,7 @@ class JUnitCaseEvidence:
     error_type: str | None
     message: str | None
     assert_location: str | None
+    duration_seconds: float
 
 
 def parse_junit_file(path: str | Path) -> list[JUnitCaseEvidence]:
@@ -55,6 +56,7 @@ def _parse_testcase(junit_path: Path, testcase: ET.Element) -> JUnitCaseEvidence
         error_type=_error_type(evidence_element, message),
         message=message,
         assert_location=_assert_location(evidence_element),
+        duration_seconds=_duration_seconds(testcase),
     )
 
 
@@ -143,3 +145,10 @@ def _assert_location(element: ET.Element | None) -> str | None:
 
 def _strip_namespace(tag: str) -> str:
     return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+
+def _duration_seconds(testcase: ET.Element) -> float:
+    try:
+        return max(float(testcase.attrib.get("time") or 0.0), 0.0)
+    except (TypeError, ValueError):
+        return 0.0
