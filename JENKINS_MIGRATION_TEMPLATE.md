@@ -417,7 +417,7 @@ SUCCESS 且上一轮为 FAILURE/UNSTABLE -> FIXED 邮件
 ```text
 构建状态、分支、提交、耗时
 JUnit 汇总和最多 5 个失败用例
-Smoke 收集数量和执行参数
+用例收集数量和执行参数
 Pipeline 执行摘要 / Allure / JUnit / P0 / P1 / 构建产物链接
 ```
 

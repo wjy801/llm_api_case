@@ -785,9 +785,9 @@ SMOKE_TARGET=module/smoke/test_response_body_validation.py
 
 Jenkins 只保留最近 4 天的归档产物；构建编号、结果、参数和控制台历史不按天数或数量删除。Flaky SQLite 位于 Job 外部持久路径，不受产物清理影响。
 
-查看任意一轮流水线时，先打开 `Artifacts -> reports -> pipeline-summary.md`。它会区分阶段通过、失败、未执行、被阻断和产物缺失；只有真实 Smoke 启用时才展示请求成功率、重试挽救率、接口耗时 Top 和 Flaky 状态迁移。
+查看任意一轮流水线时，先打开 `Artifacts -> reports -> pipeline-summary.md`。报告统一使用“框架测试、用例收集、接口测试”等通用字段，区分阶段通过、失败、未执行、被阻断和产物缺失；只有接口测试启用时才展示请求成功率、重试挽救率、接口耗时 Top 和 Flaky 状态迁移。
 
-需要继续下钻真实 Smoke 时，再进入 `Artifacts -> reports -> quality`：
+需要继续下钻接口测试时，再进入 `Artifacts -> reports -> quality`：
 
 1. `gate-report.md`：确认数据完整性、门禁结论和失败分类。
 2. `p1-observation.md`：查看耗时、usage 覆盖、Flaky 迁移和待关注事项。
@@ -805,7 +805,7 @@ SUCCESS 且上一轮为 FAILURE/UNSTABLE -> FIXED 邮件
 其他连续 SUCCESS -> 不发送
 ```
 
-邮件正文包含构建状态、分支、提交、JUnit 汇总、Smoke 收集数量、执行参数和报告入口，不附带完整 Console 日志、`.env`、API Key、请求体或响应体。
+邮件正文包含构建状态、分支、提交、JUnit 汇总、用例收集数量、执行参数和报告入口，不附带完整 Console 日志、`.env`、API Key、请求体或响应体。
 
 邮件报告入口包括：
 

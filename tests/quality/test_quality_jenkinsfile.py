@@ -53,6 +53,10 @@ def test_email_summary_is_compact_and_excludes_quality_stage_details():
     assert "详细执行与质量数据请在构建产物中查看。" in content
     assert "${junit.tests} 总计 / ${junit.passed} 通过 / ${failedCount} 失败 / ${junit.skipped} 跳过" in content
     assert "${smoke.total} 项（并发 ${smoke.parallel} / 串行 ${smoke.serial}）" in content
+    assert '>用例收集</td>' in email_content
+    assert "parts << '用例收集'" in email_content
+    assert 'parts << "接口测试（${params.SMOKE_TARGET}）"' in email_content
+    assert '>Smoke</td>' not in email_content
     assert "buildExecutionSummary()" in email_content
     assert ">构建详情</a>" not in email_content
     assert ">控制台日志</a>" not in email_content
