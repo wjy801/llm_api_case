@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+import quality.metrics as metrics
+
+
+EXPECTED_FILES = {
+    "__init__.py",
+    "builder.py",
+    "case.py",
+    "contracts.py",
+    "operation.py",
+    "primitives.py",
+    "request_event.py",
+    "request_group.py",
+    "service.py",
+    "sources.py",
+    "validation.py",
+    "writer.py",
+}
+
+ALLOWED_INTERNAL_IMPORTS = {
+    "__init__": {"contracts", "primitives", "service"},
+    "builder": {
+        "case",
+        "contracts",
+        "operation",
+        "request_event",
+        "request_group",
+    },
+    "case": {"operation", "primitives"},
+    "contracts": set(),
+    "operation": {"primitives", "request_event"},
+    "primitives": set(),
+    "request_event": {"primitives"},
+    "request_group": {"operation", "primitives", "request_event"},
+    "service": {"builder", "contracts", "sources", "writer"},
+    "sources": {"contracts", "validation"},
+    "validation": {"contracts", "request_event"},
+    "writer": set(),
+}
+
+
+def _package_dir() -> Path:
+    return Path(metrics.__file__).resolve().parent
+
+
+def _internal_imports(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return {
+        node.module.split(".", maxsplit=1)[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.level > 0
+        and node.module is not None
+    }
+
+
+def test_metrics_directory_uses_only_the_planned_files():
+    package_dir = _package_dir()
+    actual = {path.name for path in package_dir.glob("*.py")}
+
+    assert actual == EXPECTED_FILES
+    assert not {"utils.py", "helpers.py", "common.py"} & actual
+
+
+def test_metrics_internal_imports_follow_the_dependency_dag():
+    package_dir = _package_dir()
+
+    for module, allowed in ALLOWED_INTERNAL_IMPORTS.items():
+        assert _internal_imports(package_dir / f"{module}.py") <= allowed
+
+
+def test_metrics_grain_modules_do_not_depend_on_io_orchestration():
+    package_dir = _package_dir()
+    forbidden = {"builder", "service", "sources", "validation", "writer"}
+
+    for module in ("case", "operation", "request_event", "request_group"):
+        assert not (_internal_imports(package_dir / f"{module}.py") & forbidden)
+
+
+def test_writer_and_sources_do_not_import_each_other():
+    package_dir = _package_dir()
+
+    assert "sources" not in _internal_imports(package_dir / "writer.py")
+    assert "writer" not in _internal_imports(package_dir / "sources.py")
