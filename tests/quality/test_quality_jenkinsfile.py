@@ -86,3 +86,15 @@ def test_pipeline_summary_is_parameterized_generated_before_archive_and_has_fall
     assert "void writeFallbackPipelineSummary()" in content
     assert "Pipeline summary generation is disabled by GENERATE_PIPELINE_SUMMARY." in content
     assert content.index("generatePipelineSummary()") < content.index("archiveArtifacts artifacts:")
+
+
+def test_jenkins_build_parameters_have_chinese_descriptions():
+    content = JENKINSFILE.read_text(encoding="utf-8")
+    parameter_block = content[content.index("parameters {") : content.index("environment {")]
+
+    assert parameter_block.count("description:") == 8
+    assert "执行 tests 目录下的离线框架测试。" in parameter_block
+    assert "仅收集 Smoke 用例并统计分池，不调用真实接口。" in parameter_block
+    assert "执行真实 Smoke；会产生外部调用和费用，默认关闭。" in parameter_block
+    assert "为本轮构建生成 reports/pipeline-summary.md 执行摘要。" in parameter_block
+    assert "TRUE 使用中国环境，FALSE 使用海外环境。" in parameter_block
