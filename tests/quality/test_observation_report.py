@@ -294,8 +294,8 @@ def test_report_write_failure_leaves_non_complete_manifest(
 ):
     _build_all_sources(semantic_runtime)
     monkeypatch.setattr(
-        observation_report_module,
-        "_write_text_atomic",
+        observation_report_module.writer,
+        "write_text_atomic",
         lambda path, content: (_ for _ in ()).throw(OSError("disk unavailable")),
     )
 
