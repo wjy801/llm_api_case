@@ -4,13 +4,17 @@ from collections.abc import Iterator
 
 import requests
 
-from quality.semantic_context import finish_stream, observe_stream_line, stream_operation_id
-from quality.semantic_models import StreamOutcome
+from common.runtime_hooks import (
+    RuntimeStreamOutcome,
+    finish_stream,
+    get_stream_lease,
+    observe_stream_line,
+)
 
 
 def iter_sse_lines(response: requests.Response) -> Iterator[str]:
     """Iterate decoded SSE lines while emitting fail-open lifecycle facts."""
-    operation_id = stream_operation_id(response)
+    stream_lease = get_stream_lease(response)
     completed = False
     exhausted = False
     try:
@@ -22,7 +26,7 @@ def iter_sse_lines(response: requests.Response) -> Iterator[str]:
                 if isinstance(raw_line, bytes)
                 else str(raw_line)
             )
-            observe_stream_line(operation_id, line)
+            observe_stream_line(stream_lease, line)
             if line.strip() == "data: [DONE]":
                 completed = True
             yield line
@@ -30,15 +34,15 @@ def iter_sse_lines(response: requests.Response) -> Iterator[str]:
     except GeneratorExit:
         raise
     except (KeyboardInterrupt, SystemExit):
-        finish_stream(operation_id, StreamOutcome.INTERRUPTED)
+        finish_stream(stream_lease, RuntimeStreamOutcome.INTERRUPTED)
         raise
     except BaseException:
-        finish_stream(operation_id, StreamOutcome.ERROR)
+        finish_stream(stream_lease, RuntimeStreamOutcome.ERROR)
         raise
     finally:
         if completed:
-            finish_stream(operation_id, StreamOutcome.COMPLETE)
+            finish_stream(stream_lease, RuntimeStreamOutcome.COMPLETE)
         elif exhausted:
-            finish_stream(operation_id, StreamOutcome.INTERRUPTED)
+            finish_stream(stream_lease, RuntimeStreamOutcome.INTERRUPTED)
         else:
-            finish_stream(operation_id, StreamOutcome.INTERRUPTED)
+            finish_stream(stream_lease, RuntimeStreamOutcome.INTERRUPTED)
