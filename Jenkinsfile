@@ -20,14 +20,14 @@ pipeline {
     }
 
     parameters {
-        booleanParam(name: 'RUN_FRAMEWORK_TESTS', defaultValue: true, description: 'Run framework tests under tests directory.')
-        booleanParam(name: 'RUN_COLLECT_ONLY', defaultValue: true, description: 'Collect smoke cases without real execution.')
-        booleanParam(name: 'RUN_REAL_SMOKE', defaultValue: false, description: 'Run real smoke cases. Keep disabled by default.')
-        booleanParam(name: 'GENERATE_PIPELINE_SUMMARY', defaultValue: true, description: 'Generate reports/pipeline-summary.md for this build.')
-        booleanParam(name: 'ALWAYS_SEND_REPORT_EMAIL', defaultValue: false, description: 'Send report email for every build result.')
-        choice(name: 'USE_CHINA_ENVIRONMENT', choices: ['TRUE', 'FALSE'], description: 'TRUE uses China environment, FALSE uses default environment.')
-        string(name: 'SMOKE_TARGET', defaultValue: 'module/smoke', description: 'Smoke test target path.', trim: true)
-        choice(name: 'TEST_PARALLEL_WORKERS', choices: ['off', 'auto', '2', '4', '8'], description: 'off disables pytest-xdist; auto/2/4/8 enables parallel test execution.')
+        booleanParam(name: 'RUN_FRAMEWORK_TESTS', defaultValue: true, description: '执行 tests 目录下的离线框架测试。')
+        booleanParam(name: 'RUN_COLLECT_ONLY', defaultValue: true, description: '仅收集 Smoke 用例并统计分池，不调用真实接口。')
+        booleanParam(name: 'RUN_REAL_SMOKE', defaultValue: false, description: '执行真实 Smoke；会产生外部调用和费用，默认关闭。')
+        booleanParam(name: 'GENERATE_PIPELINE_SUMMARY', defaultValue: true, description: '为本轮构建生成 reports/pipeline-summary.md 执行摘要。')
+        booleanParam(name: 'ALWAYS_SEND_REPORT_EMAIL', defaultValue: false, description: '成功构建也发送报告邮件；失败或不稳定构建始终发送。')
+        choice(name: 'USE_CHINA_ENVIRONMENT', choices: ['TRUE', 'FALSE'], description: 'TRUE 使用中国环境，FALSE 使用海外环境。')
+        string(name: 'SMOKE_TARGET', defaultValue: 'module/smoke', description: '真实 Smoke 的目标目录、文件或 pytest nodeid。', trim: true)
+        choice(name: 'TEST_PARALLEL_WORKERS', choices: ['off', 'auto', '2', '4', '8'], description: 'off 关闭并发；auto/2/4/8 启用 pytest-xdist 并设置 worker 数量。')
     }
 
     environment {
