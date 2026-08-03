@@ -109,7 +109,7 @@ data/
 
 ## 重构后的架构边界
 
-本轮重构保持测试写法、命令、Schema、产物路径和质量规则不变，主要缩短代码变化的传播路径：
+本轮重构保持测试写法、执行命令、保留机器产物的 Schema 和质量规则稳定；已删除旧的独立人工质量报告及其专用路径，人工查看统一收敛到 `reports/pipeline-summary.md`。代码结构调整的重点是缩短变化传播路径：
 
 ```text
 module 业务用例
@@ -571,6 +571,7 @@ pytest Case/请求事实分片
 | 文件 | 用途 |
 | --- | --- |
 | `reports/quality/run.json` | 本次运行身份、时间、状态及完整性 |
+| `reports/quality/merged/manifest.json` | 归并版本、输入分片、输出计数与哈希校验 |
 | `reports/quality/merged/*.jsonl` | 归并后的 Case、请求、失败和完整性事实 |
 
 以上文件是机器数据；人工查看统一进入 `reports/pipeline-summary.md`。
@@ -593,6 +594,7 @@ Metrics 解决“真实调用慢在哪里、重试是否挽救、资源数据是
 | 文件 | 用途 |
 | --- | --- |
 | `reports/quality/metrics/run-metrics.json` | 完整单次运行指标 |
+| `reports/quality/metrics/manifest.json` | Metrics 输入来源、完整性和指标文件索引 |
 | `reports/quality/semantic/merged/*.jsonl` | 逻辑调用、请求组和轮询会话事实 |
 
 Pipeline Summary 只展示最直接的请求成功率、重试挽救率、接口耗时 Top 和 Flaky 状态迁移；完整 JSON/JSONL 保留指标键、状态码、问题代码和版本号，用于机器消费和问题追踪。
@@ -610,6 +612,8 @@ OBSERVING（观察中）
 ```
 
 默认规则要求至少 3 个一致样本才能判定稳定；确认 Flaky 需要至少 4 个样本、至少 2 次通过、2 次失败和 2 次结果切换。单次失败不会直接判定 Flaky。
+
+启用 Flaky 历史与状态机后，每轮接口测试会保留 `reports/quality/flaky-import.json` 和 `reports/quality/flaky-evaluation.json`，分别记录可信样本导入结果与本轮状态迁移；SQLite 历史库继续位于 Job 外部持久路径。
 
 常用命令：
 
