@@ -1,0 +1,14 @@
+{
+  "manifest_version": "quality.run-metrics-manifest.v1",
+  "schema_version": "quality.run-metrics.v1",
+  "aggregation_version": "p1-run-metrics.v1",
+  "run_id": "pipeline-cleanup-baseline",
+  "write_status": "complete",
+  "metrics_status": "aggregated",
+  "created_at": "2026-08-03T00:02:01Z",
+  "output_hashes": {
+    "run_metrics": "cd2a81fa83369e56dccd848cc7d5228e85c6d42a831f0e98c270643b66e51351"
+  },
+  "output_counts": {},
+  "issues": []
+}

@@ -24,19 +24,14 @@ def test_quality_pipeline_preserves_the_stage_order(monkeypatch, tmp_path):
         integrity_issues=(),
     )
     monkeypatch.setattr(
-        quality_pipeline.quality_p0_stage,
-        "merge_p0",
-        lambda *args, **kwargs: events.append("p0-merge") or merge_result,
+        quality_pipeline.quality_fact_merge_stage,
+        "merge_quality_facts",
+        lambda *args, **kwargs: events.append("fact-merge") or merge_result,
     )
     monkeypatch.setattr(
         quality_pipeline.quality_run_record,
         "write_final_run_record",
         lambda *args, **kwargs: events.append("run-record"),
-    )
-    monkeypatch.setattr(
-        quality_pipeline.quality_p0_stage,
-        "generate_p0_report",
-        lambda *args, **kwargs: events.append("p0-report"),
     )
     monkeypatch.setattr(
         quality_pipeline.quality_semantic_stage,
@@ -64,12 +59,6 @@ def test_quality_pipeline_preserves_the_stage_order(monkeypatch, tmp_path):
         "run_flaky_state_stage",
         state_stage,
     )
-    monkeypatch.setattr(
-        quality_pipeline.quality_observation_stage,
-        "run_observation_stage",
-        lambda *args, **kwargs: events.append("observation"),
-    )
-
     quality_pipeline.finalize_quality_run(
         _config(tmp_path),
         start_time=datetime(2026, 8, 1, tzinfo=UTC),
@@ -80,23 +69,21 @@ def test_quality_pipeline_preserves_the_stage_order(monkeypatch, tmp_path):
     )
 
     assert events == [
-        "p0-merge",
+        "fact-merge",
         "run-record",
-        "p0-report",
         "semantic",
         "metrics",
         "flaky-import",
         "flaky-state",
-        "observation",
     ]
 
 
-def test_quality_pipeline_stops_after_p0_merge_failure(monkeypatch, tmp_path):
+def test_quality_pipeline_stops_after_fact_merge_failure(monkeypatch, tmp_path):
     events = []
     monkeypatch.setattr(
-        quality_pipeline.quality_p0_stage,
-        "merge_p0",
-        lambda *args, **kwargs: events.append("p0-merge") or None,
+        quality_pipeline.quality_fact_merge_stage,
+        "merge_quality_facts",
+        lambda *args, **kwargs: events.append("fact-merge") or None,
     )
     monkeypatch.setattr(
         quality_pipeline.quality_run_record,
@@ -113,4 +100,4 @@ def test_quality_pipeline_stops_after_p0_merge_failure(monkeypatch, tmp_path):
         status=RunStatus.PARTIAL,
     )
 
-    assert events == ["p0-merge"]
+    assert events == ["fact-merge"]

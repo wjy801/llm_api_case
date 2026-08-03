@@ -53,9 +53,10 @@ def generate_pipeline_summary(
     if not config.enabled:
         target.unlink(missing_ok=True)
         return None
+    context = context_from_environment(environment)
     report = build_pipeline_report(
-        context_from_environment(environment),
-        load_pipeline_sources(root),
+        context,
+        load_pipeline_sources(root, include_quality=context.real_smoke_enabled),
     )
     _write_text_atomic(target, render_pipeline_summary(report))
     return report

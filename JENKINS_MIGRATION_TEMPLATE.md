@@ -9,7 +9,7 @@ GitHub dev3
 -> Docker Jenkins Controller
 -> Windows WebSocket Agent
 -> 框架测试 / Smoke 收集 / 真实 Smoke
--> P0/P1/Flaky 质量产物
+-> Pipeline Summary 与质量机器产物
 -> JUnit / Allure / 邮件
 ```
 
@@ -325,7 +325,7 @@ API_TIMEOUT
 
 Smoke 特殊账号按 `.env.example` 的名称配置，不要改成 Jenkins 全局明文参数。
 
-### 9.2 P0/P1 配置
+### 9.2 质量事实与 Metrics 配置
 
 真实 Smoke 阶段由 Jenkinsfile自动设置：
 
@@ -333,15 +333,13 @@ Smoke 特殊账号按 `.env.example` 的名称配置，不要改成 Jenkins 全�
 QUALITY_ENABLE=1
 QUALITY_SEMANTIC_ENABLE=1
 QUALITY_METRICS_ENABLE=1
-QUALITY_P1_REPORT_ENABLE=1
+QUALITY_FLAKY_HISTORY_ENABLE=0 或 1
+QUALITY_FLAKY_STATE_ENABLE=0 或 1
+QUALITY_FLAKY_DB_PATH=<从 .env 加载的 Job 独占绝对路径>
 QUALITY_OUTPUT_DIR=reports/quality
-QUALITY_SHADOW_GATE=1
-QUALITY_MIN_REQUEST_SAMPLES=20
-QUALITY_HTTP_5XX_WARN_RATE=0.02
-QUALITY_TIMEOUT_WARN_RATE=0.05
 ```
 
-这些配置不需要写入 Jenkins 全局环境。
+这些配置不需要写入 Jenkins 全局环境。Flaky 开关只在数据库路径有效时启用。
 
 ### 9.3 Flaky SQLite
 
@@ -418,28 +416,27 @@ SUCCESS 且上一轮为 FAILURE/UNSTABLE -> FIXED 邮件
 构建状态、分支、提交、耗时
 JUnit 汇总和最多 5 个失败用例
 用例收集数量和执行参数
-Pipeline 执行摘要 / Allure / JUnit / P0 / P1 / 构建产物链接
+Pipeline 执行摘要 / Allure / JUnit / 构建产物链接
 ```
 
-邮件不包含“构建详情”和“控制台日志”链接。Pipeline 摘要、P0/P1 文件不存在时，对应链接自动隐藏。
+邮件不包含“构建详情”和“控制台日志”链接。Pipeline Summary 关闭或未生成时，摘要链接自动隐藏。
 
-## 11. P0/P1/Flaky 产物
+## 11. Pipeline Summary 与质量机器产物
 
 真实 Smoke 完成后，至少检查：
 
 | 文件 | 作用 |
 | --- | --- |
-| `reports/pipeline-summary.md` | 每轮 Pipeline 参数、阶段与执行效果的默认人工入口 |
-| `reports/quality/gate-report.md` | 中文 P0 影子门禁报告 |
-| `reports/quality/gate-report.json` | 机器可读门禁规则与证据 |
-| `reports/quality/summary.json` | P0 完整汇总 |
-| `reports/quality/metrics/run-metrics.json` | P1 单次运行指标 |
-| `reports/quality/p1-observation.md` | 中文 P1 与 Flaky 报告 |
-| `reports/quality/p1-observation.json` | P1 机器数据 |
+| `reports/pipeline-summary.md` | 每轮 Pipeline 参数、阶段与执行效果的唯一人工质量入口 |
+| `reports/quality/run.json` | 运行身份、时间、状态与完整性机器事实 |
+| `reports/quality/merged/manifest.json` | 事实归并清单、哈希和计数 |
+| `reports/quality/merged/request-metrics.jsonl` | 请求级机器事实 |
+| `reports/quality/semantic/merged/**` | 逻辑调用、请求组与轮询机器事实 |
+| `reports/quality/metrics/run-metrics.json` | 单次运行 Metrics |
 | `reports/quality/flaky-import.json` | Flaky 历史导入结果 |
 | `reports/quality/flaky-evaluation.json` | Flaky 状态评估结果 |
 
-P0 仍为影子门禁，不覆盖 pytest/Jenkins 结果。P1 不估算成本，不建立性能基线，缺失 usage 不按零计算。
+`reports/quality/**` 是机器审计数据，不新增独立人工链接。Pipeline Summary 不覆盖 pytest/Jenkins 结果；Metrics 不估算成本、不建立性能基线，缺失 usage 不按零计算。
 
 ## 12. 最小 Job `config.xml` 模板
 
@@ -577,7 +574,7 @@ SMOKE_TARGET=module/smoke/test_response_body_validation.py
 TEST_PARALLEL_WORKERS=off
 ```
 
-预期生成 P0/P1 报告；未配置 Flaky 数据库时，报告会明确显示对应数据源不可用或禁用，不应伪造状态。
+预期生成 Pipeline Summary 和质量机器数据；未配置 Flaky 数据库时，摘要明确显示 Flaky 未启用，不伪造状态。
 
 ### 14.3 完整真实 Smoke
 
@@ -594,10 +591,10 @@ TEST_PARALLEL_WORKERS=off 或 auto
 
 ```text
 并发池和 serial 池均生成 JUnit
-P0 数据完整性为 complete，或明确列出完整性问题
-P1 报告包含逻辑调用、耗时和 usage 覆盖
+Pipeline Summary 包含请求成功率、重试挽救率、耗时 Top 和 Flaky 状态迁移
+事实与 Metrics 清单为 complete/aggregated，或明确列出对应完整性问题
 Flaky import/state quick_check 正常
-邮件包含 P0/P1 直达链接
+邮件只包含 Pipeline Summary、Allure、JUnit 和构建产物入口
 Jenkins Job 显示 4 天产物保留策略
 ```
 
@@ -643,12 +640,13 @@ http.version 应为 HTTP/1.1
 确认 .env 没有被提交到仓库
 ```
 
-### 15.4 P0/P1 报告不存在
+### 15.4 Pipeline Summary 或质量机器数据不存在
 
 ```text
 确认 RUN_REAL_SMOKE=true
+确认 GENERATE_PIPELINE_SUMMARY=true
 检查 reports/quality/run.json
-检查 Console 中 Quality merge/report/metrics 日志
+检查 Console 中 Quality merge/semantic/metrics/flaky 日志
 检查 archiveArtifacts 是否归档 reports/**
 ```
 
@@ -658,7 +656,7 @@ http.version 应为 HTTP/1.1
 检查 QUALITY_FLAKY_DB_PATH 是否为绝对路径
 检查父目录是否存在且可写
 确认本轮 RunStatus 为 FINISHED
-确认 P0 integrity 允许导入
+确认事实归并 integrity 允许导入
 执行 quality.cli flaky-db-check
 ```
 
@@ -703,8 +701,8 @@ numToKeep=-1
 [ ] .env 和特殊账号 Key 未进入仓库
 [ ] SMTP 授权码未进入 Jenkinsfile
 [ ] Flaky SQLite 位于 workspace 外部
-[ ] P0/P1 JSON 和 Markdown 均已归档
-[ ] GENERATE_PIPELINE_SUMMARY 默认开启，pipeline-summary.md 已归档
+[ ] 质量 facts、Metrics 和 Flaky 机器数据均已归档
+[ ] GENERATE_PIPELINE_SUMMARY 默认开启，pipeline-summary.md 是唯一人工质量报告
 [ ] 邮件没有构建详情和控制台日志链接
 [ ] 构建产物保留 4 天，构建记录继续保留
 [ ] 定时真实 Smoke 的费用影响已确认

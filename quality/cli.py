@@ -3,26 +3,13 @@ from __future__ import annotations
 import argparse
 from datetime import UTC, datetime
 import json
-import os
 from pathlib import Path
 import sys
 
 from quality.aggregator import QualityMergeRequest, merge_quality_run
-from quality.config import (
-    QUALITY_HTTP_5XX_WARN_RATE_ENV,
-    QUALITY_MIN_REQUEST_SAMPLES_ENV,
-    QUALITY_SHADOW_GATE_ENV,
-    QUALITY_TIMEOUT_WARN_RATE_ENV,
-    load_quality_report_config,
-)
 from quality.models import IntegrityStatus
 from quality.metrics import RunMetricsAggregationRequest, aggregate_run_metrics
 from quality.metrics_models import RunMetricsStatus
-from quality.observation_models import SourceExpectation
-from quality.observation_report import (
-    P1ObservationRequest,
-    generate_p1_observation_report,
-)
 from quality.flaky_importer import (
     cancel_flaky_quarantine,
     check_flaky_database,
@@ -47,12 +34,13 @@ from quality.flaky_models import (
     FlakyQuarantineRequest,
     GovernanceStatus,
 )
-from quality.report import QualityReportRequest, generate_quality_report
 from quality.semantic_aggregator import SemanticMergeRequest, merge_semantic_run
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Quality fact merge and report tools.")
+    parser = argparse.ArgumentParser(
+        description="Quality fact, Metrics, Semantic, and Flaky tools."
+    )
     subparsers = parser.add_subparsers(dest="command")
     merge_parser = subparsers.add_parser("merge", help="merge one quality run")
     merge_parser.add_argument("--run-id", required=True)
@@ -68,29 +56,13 @@ def main(argv: list[str] | None = None) -> int:
     semantic_merge_parser.add_argument("--output-dir", default="reports/quality")
     metrics_parser = subparsers.add_parser(
         "metrics-aggregate",
-        help="aggregate trusted P0 and semantic facts for one run",
+        help="aggregate trusted quality and semantic facts for one run",
     )
     metrics_parser.add_argument("--run-id", required=True)
     metrics_parser.add_argument("--output-dir", default="reports/quality")
-    p1_report_parser = subparsers.add_parser(
-        "p1-report",
-        help="generate one P1 observation and Flaky report",
-    )
-    p1_report_parser.add_argument("--run-id", required=True)
-    p1_report_parser.add_argument("--output-dir", default="reports/quality")
-    p1_report_parser.add_argument(
-        "--metrics-source",
-        choices=[item.value for item in SourceExpectation],
-        default=SourceExpectation.REQUIRED.value,
-    )
-    p1_report_parser.add_argument(
-        "--flaky-source",
-        choices=[item.value for item in SourceExpectation],
-        default=SourceExpectation.REQUIRED.value,
-    )
     flaky_import_parser = subparsers.add_parser(
         "flaky-import",
-        help="import trusted P0 Case observations into Flaky history",
+        help="import trusted Case observations into Flaky history",
     )
     flaky_import_parser.add_argument("--run-id", required=True)
     flaky_import_parser.add_argument("--output-dir", default="reports/quality")
@@ -179,18 +151,6 @@ def main(argv: list[str] | None = None) -> int:
         "--status", choices=[item.value for item in GovernanceStatus]
     )
     flaky_governance_parser.add_argument("--overdue", action="store_true")
-    report_parser = subparsers.add_parser("report", help="generate a quality report")
-    report_parser.add_argument("--run-id", required=True)
-    report_parser.add_argument("--output-dir", default="reports/quality")
-    report_parser.add_argument("--min-request-samples", type=int)
-    report_parser.add_argument("--http-5xx-warn-rate", type=float)
-    report_parser.add_argument("--timeout-warn-rate", type=float)
-    report_parser.add_argument(
-        "--no-shadow-gate",
-        action="store_false",
-        dest="shadow_gate",
-        default=None,
-    )
     try:
         parsed = parser.parse_args(argv)
     except SystemExit as error:
@@ -199,12 +159,8 @@ def main(argv: list[str] | None = None) -> int:
     if parsed.command is None:
         parser.print_help()
         return 2
-    if parsed.command == "report":
-        return _report(parsed)
     if parsed.command == "metrics-aggregate":
         return _metrics_aggregate(parsed)
-    if parsed.command == "p1-report":
-        return _p1_report(parsed)
     if parsed.command == "flaky-import":
         return _flaky_import(parsed)
     if parsed.command == "flaky-history":
@@ -301,39 +257,6 @@ def _metrics_aggregate(parsed: argparse.Namespace) -> int:
         "manifest=metrics/manifest.json"
     )
     return 2 if result.status is RunMetricsStatus.FAILED else 0
-
-
-def _p1_report(parsed: argparse.Namespace) -> int:
-    try:
-        metrics_expectation = SourceExpectation(parsed.metrics_source)
-        flaky_expectation = SourceExpectation(parsed.flaky_source)
-        result = generate_p1_observation_report(
-            P1ObservationRequest(
-                run_id=parsed.run_id,
-                output_dir=Path(parsed.output_dir),
-                metrics_expectation=metrics_expectation,
-                flaky_import_expectation=flaky_expectation,
-                flaky_evaluation_expectation=flaky_expectation,
-            )
-        )
-    except Exception as error:
-        print(
-            f"quality P1 observation report failed: {type(error).__name__}",
-            file=sys.stderr,
-        )
-        return 2
-    payload = {
-        "write_status": result.write_status,
-        "report_status": (
-            result.report_status.value if result.report_status is not None else None
-        ),
-        "issue_codes": list(result.issue_codes),
-        "manifest": "p1-observation-manifest.json",
-        "json": "p1-observation.json",
-        "markdown": "p1-observation.md",
-    }
-    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-    return 0 if result.write_status == "complete" else 2
 
 
 def _flaky_import(parsed: argparse.Namespace) -> int:
@@ -584,56 +507,6 @@ def _model_json(model) -> str:
         indent=2,
         sort_keys=True,
     )
-
-
-def _report(parsed: argparse.Namespace) -> int:
-    try:
-        environment = dict(os.environ)
-        cli_overrides = (
-            ("min_request_samples", QUALITY_MIN_REQUEST_SAMPLES_ENV),
-            ("http_5xx_warn_rate", QUALITY_HTTP_5XX_WARN_RATE_ENV),
-            ("timeout_warn_rate", QUALITY_TIMEOUT_WARN_RATE_ENV),
-            ("shadow_gate", QUALITY_SHADOW_GATE_ENV),
-        )
-        for attribute, environment_name in cli_overrides:
-            if getattr(parsed, attribute) is not None:
-                environment.pop(environment_name, None)
-        configured = load_quality_report_config(environment)
-        min_request_samples = (
-            configured.min_request_samples
-            if parsed.min_request_samples is None
-            else parsed.min_request_samples
-        )
-        http_5xx_warn_rate = (
-            configured.http_5xx_warn_rate
-            if parsed.http_5xx_warn_rate is None
-            else parsed.http_5xx_warn_rate
-        )
-        timeout_warn_rate = (
-            configured.timeout_warn_rate
-            if parsed.timeout_warn_rate is None
-            else parsed.timeout_warn_rate
-        )
-        shadow_gate = configured.shadow_gate if parsed.shadow_gate is None else parsed.shadow_gate
-        result = generate_quality_report(
-            QualityReportRequest(
-                run_id=parsed.run_id,
-                output_dir=Path(parsed.output_dir),
-                shadow_gate=shadow_gate,
-                min_request_samples=min_request_samples,
-                http_5xx_warn_rate=http_5xx_warn_rate,
-                timeout_warn_rate=timeout_warn_rate,
-            )
-        )
-    except Exception as error:
-        print(f"quality report failed: {type(error).__name__}: {error}", file=sys.stderr)
-        return 2
-    print(
-        "quality report completed: "
-        f"overall={result.overall.value}, integrity={result.integrity_status.value}, "
-        f"path={result.gate_report_md_path}"
-    )
-    return 0
 
 
 if __name__ == "__main__":

@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 SCHEMA_VERSION = "quality.v1"
 
-MetricValue: TypeAlias = int | float | str | bool | None
 ManualOverrideValue: TypeAlias = str | int | float | bool | None
 
 
@@ -82,17 +81,6 @@ class Confidence(str, Enum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
-
-
-class GateMode(str, Enum):
-    SHADOW = "shadow"
-
-
-class GateResult(str, Enum):
-    PASS = "PASS"
-    WARN = "WARN"
-    BLOCK = "BLOCK"
-    NO_DATA = "NO_DATA"
 
 
 class IssueSeverity(str, Enum):
@@ -349,62 +337,6 @@ class FailureRecord(VersionedQualityModel):
         if value is None:
             return None
         return {_require_non_empty(name): item for name, item in value.items()}
-
-
-class QualitySummary(VersionedQualityModel):
-    run_id: str
-    case_total: int = Field(ge=0)
-    case_passed: int = Field(ge=0)
-    case_failed: int = Field(ge=0)
-    case_error: int = Field(ge=0)
-    case_skipped: int = Field(ge=0)
-    raw_pass_rate: float = Field(ge=0, le=1)
-    final_pass_rate: float = Field(ge=0, le=1)
-    retry_passed: int = Field(ge=0)
-    request_total: int = Field(ge=0)
-    request_success_rate: float = Field(ge=0, le=1)
-    http_5xx_count: int = Field(ge=0)
-    timeout_count: int = Field(ge=0)
-    unknown_failure_count: int = Field(ge=0)
-    integrity_status: IntegrityStatus
-
-    @field_validator("run_id")
-    @classmethod
-    def _validate_run_id(cls, value: str) -> str:
-        return _require_non_empty(value)
-
-
-class GateRuleDecision(FrozenQualityModel):
-    rule_id: str
-    rule_version: str
-    target: str
-    actual: MetricValue
-    threshold: MetricValue
-    sample_size: int = Field(ge=0)
-    decision: GateResult
-    evidence: tuple[str, ...] = ()
-
-    @field_validator("rule_id", "rule_version", "target")
-    @classmethod
-    def _validate_required_text(cls, value: str) -> str:
-        return _require_non_empty(value)
-
-    @field_validator("evidence")
-    @classmethod
-    def _validate_evidence(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        return tuple(_require_non_empty(item) for item in value)
-
-
-class GateDecision(VersionedQualityModel):
-    run_id: str
-    mode: GateMode = GateMode.SHADOW
-    overall: GateResult
-    rules: tuple[GateRuleDecision, ...] = ()
-
-    @field_validator("run_id")
-    @classmethod
-    def _validate_run_id(cls, value: str) -> str:
-        return _require_non_empty(value)
 
 
 def _require_non_empty(value: str) -> str:

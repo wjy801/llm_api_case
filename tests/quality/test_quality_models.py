@@ -16,15 +16,11 @@ from quality.models import (
     FailureCategory,
     FailureFingerprintSource,
     FailureRecord,
-    GateDecision,
-    GateResult,
-    GateRuleDecision,
     IntegrityIssue,
     IntegrityStatus,
     IssueSeverity,
     OwnerDomain,
     Protocol,
-    QualitySummary,
     RequestCost,
     RequestMetric,
     RequestUsage,
@@ -114,43 +110,9 @@ def test_top_level_models_dump_stable_json_values():
         normalized_message="expected 200 got 500",
         fingerprint_source=failure_source,
     )
-    summary = QualitySummary(
-        run_id="run-1",
-        case_total=1,
-        case_passed=1,
-        case_failed=0,
-        case_error=0,
-        case_skipped=0,
-        raw_pass_rate=1,
-        final_pass_rate=1,
-        retry_passed=0,
-        request_total=1,
-        request_success_rate=1,
-        http_5xx_count=0,
-        timeout_count=0,
-        unknown_failure_count=0,
-        integrity_status=IntegrityStatus.COMPLETE,
-    )
-    gate = GateDecision(
-        run_id="run-1",
-        overall=GateResult.PASS,
-        rules=(
-            GateRuleDecision(
-                rule_id="p0.timeout.rate",
-                rule_version="1",
-                target="run",
-                actual=0,
-                threshold=0.05,
-                sample_size=1,
-                decision=GateResult.PASS,
-                evidence=("request-1",),
-            ),
-        ),
-    )
-
     dumped = [
         model.model_dump(mode="json")
-        for model in (issue, run, case, request, failure, summary, gate)
+        for model in (issue, run, case, request, failure)
     ]
 
     assert all(item["schema_version"] == SCHEMA_VERSION for item in dumped)
@@ -159,7 +121,6 @@ def test_top_level_models_dump_stable_json_values():
     assert dumped[3]["method"] == "POST"
     assert dumped[3]["protocol"] == "http"
     assert dumped[4]["category"] == "PRODUCT_DEFECT"
-    assert dumped[6]["overall"] == "PASS"
 
 
 def test_version_is_fixed_and_extra_fields_are_rejected():
@@ -240,7 +201,7 @@ def test_models_reject_naive_datetime_and_reversed_time_range():
         )
 
 
-def test_usage_cost_summary_and_gate_reject_negative_values():
+def test_usage_and_cost_reject_negative_values():
     with pytest.raises(ValidationError, match="input_tokens"):
         RequestUsage(input_tokens=-1)
 
@@ -249,33 +210,3 @@ def test_usage_cost_summary_and_gate_reject_negative_values():
 
     with pytest.raises(ValidationError, match="finite_number"):
         RequestCost(amount=float("nan"))
-
-    with pytest.raises(ValidationError, match="raw_pass_rate"):
-        QualitySummary(
-            run_id="run-1",
-            case_total=1,
-            case_passed=1,
-            case_failed=0,
-            case_error=0,
-            case_skipped=0,
-            raw_pass_rate=1.1,
-            final_pass_rate=1,
-            retry_passed=0,
-            request_total=0,
-            request_success_rate=0,
-            http_5xx_count=0,
-            timeout_count=0,
-            unknown_failure_count=0,
-            integrity_status=IntegrityStatus.COMPLETE,
-        )
-
-    with pytest.raises(ValidationError, match="sample_size"):
-        GateRuleDecision(
-            rule_id="rule",
-            rule_version="1",
-            target="run",
-            actual=0,
-            threshold=0,
-            sample_size=-1,
-            decision=GateResult.NO_DATA,
-        )

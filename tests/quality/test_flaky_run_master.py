@@ -9,8 +9,8 @@ from quality.flaky_models import (
 )
 from quality.models import IntegrityStatus, RunStatus
 from run_orchestration import (
+    quality_fact_merge_stage,
     quality_flaky_stage,
-    quality_p0_stage,
     quality_pipeline,
     quality_run_record,
     quality_semantic_stage,
@@ -31,9 +31,9 @@ def _config(tmp_path, **updates):
     return QualityRuntimeConfig(**values)
 
 
-def _stub_p0_finalize(monkeypatch, events):
+def _stub_fact_finalize(monkeypatch, events):
     monkeypatch.setattr(
-        quality_p0_stage,
+        quality_fact_merge_stage,
         "merge_quality_run",
         lambda request: type(
             "MergeResult",
@@ -49,11 +49,6 @@ def _stub_p0_finalize(monkeypatch, events):
         "write_json_atomic",
         lambda path, value: events.append("run-record"),
     )
-    monkeypatch.setattr(
-        quality_p0_stage,
-        "generate_quality_report",
-        lambda request: events.append("report"),
-    )
 
 
 def test_flaky_import_runs_after_semantic_merge_and_is_independent(
@@ -61,7 +56,7 @@ def test_flaky_import_runs_after_semantic_merge_and_is_independent(
     tmp_path,
 ):
     events = []
-    _stub_p0_finalize(monkeypatch, events)
+    _stub_fact_finalize(monkeypatch, events)
     monkeypatch.setattr(
         quality_semantic_stage,
         "merge_semantic_run",
@@ -87,12 +82,12 @@ def test_flaky_import_runs_after_semantic_merge_and_is_independent(
         status=RunStatus.FINISHED,
     )
 
-    assert events == ["run-record", "report", "semantic", "flaky"]
+    assert events == ["run-record", "semantic", "flaky"]
 
 
 def test_semantic_failure_does_not_block_flaky_import(monkeypatch, tmp_path):
     events = []
-    _stub_p0_finalize(monkeypatch, events)
+    _stub_fact_finalize(monkeypatch, events)
     monkeypatch.setattr(
         quality_semantic_stage,
         "merge_semantic_run",
@@ -119,7 +114,7 @@ def test_semantic_failure_does_not_block_flaky_import(monkeypatch, tmp_path):
 
 def test_flaky_import_exception_is_fail_open(monkeypatch, tmp_path, capsys):
     events = []
-    _stub_p0_finalize(monkeypatch, events)
+    _stub_fact_finalize(monkeypatch, events)
     monkeypatch.setattr(quality_semantic_stage, "merge_semantic_run", lambda request: None)
     monkeypatch.setattr(
         quality_flaky_stage,
@@ -144,7 +139,7 @@ def test_interrupted_run_writes_no_data_report_and_does_not_import(
     tmp_path,
 ):
     events = []
-    _stub_p0_finalize(monkeypatch, events)
+    _stub_fact_finalize(monkeypatch, events)
     monkeypatch.setattr(quality_semantic_stage, "merge_semantic_run", lambda request: None)
     monkeypatch.setattr(
         quality_flaky_stage,
@@ -175,7 +170,7 @@ def test_enabled_without_valid_path_is_no_data_not_fallback_database(
     tmp_path,
 ):
     events = []
-    _stub_p0_finalize(monkeypatch, events)
+    _stub_fact_finalize(monkeypatch, events)
     monkeypatch.setattr(quality_semantic_stage, "merge_semantic_run", lambda request: None)
     monkeypatch.setattr(
         quality_flaky_stage,
@@ -211,7 +206,7 @@ def test_flaky_state_evaluation_runs_after_committed_history_import(
     tmp_path,
 ):
     events = []
-    _stub_p0_finalize(monkeypatch, events)
+    _stub_fact_finalize(monkeypatch, events)
     monkeypatch.setattr(
         quality_semantic_stage,
         "merge_semantic_run",
@@ -247,12 +242,12 @@ def test_flaky_state_evaluation_runs_after_committed_history_import(
         status=RunStatus.FINISHED,
     )
 
-    assert events == ["run-record", "report", "semantic", "history", "state"]
+    assert events == ["run-record", "semantic", "history", "state"]
 
 
 def test_flaky_state_failure_is_fail_open(monkeypatch, tmp_path, capsys):
     events = []
-    _stub_p0_finalize(monkeypatch, events)
+    _stub_fact_finalize(monkeypatch, events)
     monkeypatch.setattr(quality_semantic_stage, "merge_semantic_run", lambda request: None)
     monkeypatch.setattr(
         quality_flaky_stage,

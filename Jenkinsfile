@@ -177,7 +177,6 @@ pipeline {
                 $env:QUALITY_ENABLE = '1'
                 $env:QUALITY_SEMANTIC_ENABLE = '1'
                 $env:QUALITY_METRICS_ENABLE = '1'
-                $env:QUALITY_P1_REPORT_ENABLE = '1'
                 $env:QUALITY_FLAKY_HISTORY_ENABLE = '0'
                 $env:QUALITY_FLAKY_STATE_ENABLE = '0'
                 $flakyEnvFiles = @('.env', 'D:/API_CASE/.env')
@@ -202,10 +201,6 @@ pipeline {
                     Write-Host 'Flaky history and state evaluation disabled because QUALITY_FLAKY_DB_PATH is not configured.'
                 }
                 $env:QUALITY_OUTPUT_DIR = 'reports/quality'
-                $env:QUALITY_SHADOW_GATE = '1'
-                $env:QUALITY_MIN_REQUEST_SAMPLES = '20'
-                $env:QUALITY_HTTP_5XX_WARN_RATE = '0.02'
-                $env:QUALITY_TIMEOUT_WARN_RATE = '0.05'
                 $parallelArgs = @()
                 if (![string]::IsNullOrWhiteSpace($env:TEST_PARALLEL_WORKERS) -and $env:TEST_PARALLEL_WORKERS -ne 'off' -and $env:TEST_PARALLEL_WORKERS -ne 'null') {
                     $parallelArgs = @('-n', $env:TEST_PARALLEL_WORKERS)
@@ -464,12 +459,6 @@ String buildResultSummaryHtml(String status, Map junit, Map smoke) {
     reportLinks << "<a href=\"${htmlEscape(buildUrl)}allure/\">Allure 报告</a>"
     if (junit.available) {
         reportLinks << "<a href=\"${htmlEscape(buildUrl)}testReport/\">JUnit 报告</a>"
-    }
-    if (fileExists('reports/quality/gate-report.md')) {
-        reportLinks << "<a href=\"${htmlEscape(buildUrl)}artifact/reports/quality/gate-report.md\">P0 质量门禁报告</a>"
-    }
-    if (fileExists('reports/quality/p1-observation.md')) {
-        reportLinks << "<a href=\"${htmlEscape(buildUrl)}artifact/reports/quality/p1-observation.md\">P1 观察报告</a>"
     }
     reportLinks << "<a href=\"${htmlEscape(buildUrl)}artifact/\">构建产物</a>"
 
