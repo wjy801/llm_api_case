@@ -1,0 +1,15 @@
+{
+  "schema_version": "quality.v1",
+  "run_id": "pipeline-cleanup-baseline",
+  "job_name": "llm-api-case",
+  "build_number": "88",
+  "branch": "origin/dev3",
+  "commit_sha": "baseline123456",
+  "trigger": "jenkins",
+  "environment": "china",
+  "start_time": "2026-08-03T00:00:00Z",
+  "end_time": "2026-08-03T00:02:00Z",
+  "status": "finished",
+  "integrity_status": "complete",
+  "integrity_issues": []
+}

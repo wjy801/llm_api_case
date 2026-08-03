@@ -7,10 +7,9 @@ from quality.config import QualityRuntimeConfig
 from quality.models import RunStatus
 
 from . import (
+    quality_fact_merge_stage,
     quality_flaky_stage,
     quality_metrics_stage,
-    quality_observation_stage,
-    quality_p0_stage,
     quality_run_record,
     quality_semantic_stage,
 )
@@ -27,7 +26,7 @@ def finalize_quality_run(
 ) -> None:
     if not quality_config.enabled or not quality_config.run_id:
         return
-    merge_result = quality_p0_stage.merge_p0(
+    merge_result = quality_fact_merge_stage.merge_quality_facts(
         quality_config,
         start_time=start_time,
         expected_execution_ids=expected_execution_ids,
@@ -45,7 +44,6 @@ def finalize_quality_run(
         integrity_status=merge_result.integrity_status,
         integrity_issues=merge_result.integrity_issues,
     )
-    quality_p0_stage.generate_p0_report(quality_config)
     quality_semantic_stage.run_semantic_stage(quality_config)
     quality_metrics_stage.run_metrics_stage(quality_config)
     flaky_import_result = quality_flaky_stage.run_flaky_history_stage(
@@ -54,4 +52,3 @@ def finalize_quality_run(
     quality_flaky_stage.run_flaky_state_stage(
         quality_config, flaky_import_result
     )
-    quality_observation_stage.run_observation_stage(quality_config)

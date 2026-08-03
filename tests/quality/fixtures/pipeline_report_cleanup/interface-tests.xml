@@ -1,0 +1,10 @@
+<testsuites>
+  <testsuite name="interface" tests="1" failures="0" errors="0" skipped="0" time="0.1">
+    <testcase classname="module.interface.test_demo" name="test_demo" time="0.1">
+      <properties>
+        <property name="quality_case_id" value="module/test_demo.py::test_demo" />
+        <property name="quality_invocation_id" value="inv-1" />
+      </properties>
+    </testcase>
+  </testsuite>
+</testsuites>

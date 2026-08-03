@@ -1,0 +1,8 @@
+{
+  "schema_version": "pipeline-stage-status.v1",
+  "stages": {
+    "framework_tests": "NOT_RUN",
+    "real_smoke": "PASSED",
+    "smoke_collect": "NOT_RUN"
+  }
+}

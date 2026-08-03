@@ -1,0 +1,33 @@
+{
+  "schema_version": "quality.flaky-evaluation.v1",
+  "run_id": "pipeline-cleanup-baseline",
+  "status": "EVALUATED",
+  "rule_version": "flaky-state.v1",
+  "projection_version": "flaky-projection.v1",
+  "evaluated_at": "2026-08-03T00:02:02Z",
+  "affected_count": 1,
+  "evaluated_count": 1,
+  "transitioned_count": 1,
+  "stale_count": 0,
+  "newly_suspected": [
+    {
+      "case_id": "module/test_demo.py::test_demo"
+    }
+  ],
+  "newly_confirmed": [],
+  "ongoing_confirmed": [],
+  "quarantined": [],
+  "recovering": [],
+  "recovered": [],
+  "overdue": [],
+  "transitions": [
+    {
+      "case_id": "module/test_demo.py::test_demo",
+      "from_state": "STABLE",
+      "to_state": "SUSPECTED"
+    }
+  ],
+  "database_schema_version": 2,
+  "quick_check": "ok",
+  "issues": []
+}
