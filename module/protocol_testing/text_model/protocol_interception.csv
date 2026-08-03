@@ -1,0 +1,15 @@
+case_id,protocol_path,body_protocol,model_id,expected
+openai_qwen_allow,openai_chat_completions,openai,qwen3.5-flash,allow
+openai_gemini_allow,openai_chat_completions,openai,gemini-3.1-pro-preview,allow
+openai_kimi_allow,openai_chat_completions,openai,kimi-k3,allow
+openai_glm_5_1_allow,openai_chat_completions,openai,GLM-5.1,allow
+openai_glm_5_2_allow,openai_chat_completions,openai,GLM-5.2,allow
+openai_deepseek_v4_pro_allow,openai_chat_completions,openai,DeepSeek-V4-pro,allow
+openai_deepseek_v4_flash_allow,openai_chat_completions,openai,DeepSeek-V4-Flash,allow
+anthropic_kimi_block,anthropic_messages,anthropic,kimi-k3,block
+anthropic_glm_5_1_block,anthropic_messages,anthropic,GLM-5.1,block
+anthropic_glm_5_2_block,anthropic_messages,anthropic,GLM-5.2,block
+anthropic_deepseek_v4_pro_block,anthropic_messages,anthropic,DeepSeek-V4-pro,block
+anthropic_deepseek_v4_flash_block,anthropic_messages,anthropic,DeepSeek-V4-Flash,block
+anthropic_qwen_block,anthropic_messages,anthropic,qwen3.5-flash,block
+anthropic_gemini_block,anthropic_messages,anthropic,gemini-3.1-pro-preview,block
