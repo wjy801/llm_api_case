@@ -6,8 +6,8 @@
 
 - pytest 可收集、可独立执行。
 - 通过 Request/Task/Assertions 分层复用框架能力。
-- 自动生成 Allure、JUnit、Pipeline Summary 和质量机器证据。
-- 能参与并发池、串行池和 Flaky 历史比较。
+- 按执行配置生成 Allure、JUnit、Pipeline Summary 和质量机器证据。
+- 在执行画像一致且 Flaky 能力启用时参与历史比较。
 - 不泄露 API Key、账号、请求和响应中的敏感信息。
 
 框架坚持代码式用例，不引入 YAML、Excel 或隐式 DSL。测试数据使用 Python 类型表达。
@@ -736,15 +736,18 @@ polling_responses
 
 ## 20. 构建后报告使用
 
-每轮 Jenkins 构建按顺序查看：
+每轮 Jenkins 构建按下列顺序查看；若流水线摘要关闭，则从 JUnit 开始：
 
 1. `reports/pipeline-summary.md`：本轮参数、阶段状态、用例结果和直接观测结论。
 2. JUnit：用例总数、通过、失败、错误和跳过。
 3. Allure：具体用例步骤、请求、响应和附件。
-4. `reports/quality/**`：仅在审计数据来源时查看 merged、metrics 和 Flaky 机器数据。
-5. `flaky-evaluation.json`/CLI：需要人工治理时查看完整状态。
+4. `reports/quality/run.json`、`reports/quality/merged/manifest.json` 和 `reports/quality/merged/*.jsonl`：核对运行身份、归并完整性及 Case/请求/失败事实。
+5. `reports/quality/semantic/merged/manifest.json`、`reports/quality/semantic/merged/*.jsonl`、`reports/quality/metrics/manifest.json` 和 `reports/quality/metrics/run-metrics.json`：核对逻辑调用语义、指标来源和完整数据。
+6. 启用 Flaky 历史与状态机后，使用 `reports/quality/flaky-import.json`、`reports/quality/flaky-evaluation.json` 和 CLI 核对样本导入、状态迁移及治理信息。
 
 `pipeline-summary.md` 适用于框架测试、用例收集、接口测试及其组合。报告不暴露 Smoke 专属参数名，未选择的阶段显示“未执行”，不能解释为失败或数据缺失。其生成由 `GENERATE_PIPELINE_SUMMARY` 控制，Jenkins 参数/进程环境优先于 `.env`，默认开启。
+
+`pipeline-summary.md` 是唯一人工质量报告。第 4～6 项均为机器证据，只用于来源审计和问题下钻；新用例或框架改动不得再创建并行的人工汇总报告，也不得把可选机器产物缺失解释为零值或测试失败。
 
 注意：
 
@@ -780,5 +783,6 @@ polling_responses
 [ ] 用例 nodeid 和参数 ID 稳定，适合 Flaky 历史比较
 [ ] collect-only 通过
 [ ] 相关离线框架测试通过
-[ ] pipeline-summary.md 无来源告警，或告警已明确定位到对应机器数据
+[ ] 启用 Pipeline Summary 时无来源告警，或告警已明确定位到对应机器数据
+[ ] 没有新增并行人工质量报告，也没有把可选机器产物缺失按零值处理
 ```
