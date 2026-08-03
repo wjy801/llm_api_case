@@ -17,6 +17,14 @@ PROTOCOL_MODEL_PARAMETERS = {
 }
 
 
+@pytest.fixture
+def text_model_id(request: pytest.FixtureRequest) -> str:
+    model_id = str(request.config.getoption("text_model_id", default=None) or "").strip()
+    if not model_id:
+        pytest.skip("请通过 --text-model-id 指定需要探测协议的文本模型 model_id")
+    return model_id
+
+
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     for parameter_name, (protocol, fallback_model_id, skip_reason_template) in PROTOCOL_MODEL_PARAMETERS.items():
         if parameter_name not in metafunc.fixturenames:

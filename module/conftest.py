@@ -37,6 +37,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=None,
         help="指定协议测试通用模型 CSV 文件路径，相对路径基于 module/protocol_testing。",
     )
+    group.addoption(
+        "--text-model-id",
+        action="store",
+        default=None,
+        help="指定用于快速探测 OpenAI 和 Anthropic 协议的文本模型 model_id。",
+    )
 
 
 @pytest.fixture(scope="function", autouse=True)

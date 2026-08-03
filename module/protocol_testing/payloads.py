@@ -3,6 +3,75 @@ from __future__ import annotations
 from typing import Any
 
 
+PROTOCOL_PROBE_PROMPT = "只回复“可以”"
+
+
+def build_text_v1_chat_completions_probe_payload(model_id: str) -> dict[str, Any]:
+    return {
+        "model": model_id,
+        "messages": [
+            {
+                "role": "user",
+                "content": PROTOCOL_PROBE_PROMPT,
+            }
+        ],
+        "stream": False,
+    }
+
+
+def build_text_v1_responses_probe_payload(model_id: str) -> dict[str, Any]:
+    return {
+        "model": model_id,
+        "input": PROTOCOL_PROBE_PROMPT,
+        "max_tokens": 1024,
+        "stream": False,
+    }
+
+
+def build_text_v1_completions_probe_payload(model_id: str) -> dict[str, Any]:
+    return {
+        "model": model_id,
+        "prompt": PROTOCOL_PROBE_PROMPT,
+        "max_tokens": 1024,
+        "stream": False,
+    }
+
+
+def build_text_anthropic_messages_probe_payload(model_id: str) -> dict[str, Any]:
+    return {
+        "model": model_id,
+        "max_tokens": 1024,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": PROTOCOL_PROBE_PROMPT,
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def build_text_anthropic_count_tokens_probe_payload(model_id: str) -> dict[str, Any]:
+    return {
+        "model": model_id,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": PROTOCOL_PROBE_PROMPT,
+                    }
+                ],
+            }
+        ],
+    }
+
+
 def build_text_v1_chat_completions_payload(model_id: str) -> dict[str, Any]:
     return {
         "model": model_id,

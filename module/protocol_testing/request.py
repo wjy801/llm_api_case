@@ -16,7 +16,9 @@ ANTHROPIC_VERSION = "2023-06-01"
 class ProtocolRequest(BaseRequest):
     chat_completions_path = "/v1/chat/completions"
     responses_path = "/v1/responses"
+    completions_path = "/v1/completions"
     messages_path = "/v1/messages"
+    messages_count_tokens_path = "/v1/messages/count_tokens"
     image_generations_path = "/v1/images/generations"
     image_edits_path = "/v1/images/edits"
     media_generations_path = "/v1/media/generations"
@@ -41,6 +43,18 @@ class ProtocolRequest(BaseRequest):
     ) -> requests.Response:
         return self.post(
             self.responses_path,
+            json=payload,
+            **self._build_optional_headers_kwargs(headers),
+        )
+
+    def create_completion(
+        self,
+        payload: dict[str, Any],
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> requests.Response:
+        return self.post(
+            self.completions_path,
             json=payload,
             **self._build_optional_headers_kwargs(headers),
         )
@@ -105,6 +119,20 @@ class ProtocolRequest(BaseRequest):
     ) -> requests.Response:
         return self._post_with_anthropic_headers(
             self.messages_path,
+            payload,
+            headers=headers,
+            anthropic_beta=anthropic_beta,
+        )
+
+    def count_message_tokens(
+        self,
+        payload: dict[str, Any],
+        *,
+        headers: dict[str, str] | None = None,
+        anthropic_beta: str | None = None,
+    ) -> requests.Response:
+        return self._post_with_anthropic_headers(
+            self.messages_count_tokens_path,
             payload,
             headers=headers,
             anthropic_beta=anthropic_beta,
