@@ -105,9 +105,9 @@ def _quality_stage(
         return StageResult("质量观测", StageStatus.NOT_RUN, "接口测试未启用")
     if real_smoke_status is StageStatus.BLOCKED:
         return StageResult("质量观测", StageStatus.BLOCKED, "接口测试未执行")
-    if sources.quality_available:
-        return StageResult("质量观测", StageStatus.PASSED, "P0 运行身份与汇总完整")
-    return StageResult("质量观测", StageStatus.NO_DATA, "本轮 Quality 核心产物不可用")
+    if sources.quality_facts_available:
+        return StageResult("质量观测", StageStatus.PASSED, "运行身份与归并事实完整")
+    return StageResult("质量观测", StageStatus.NO_DATA, "本轮质量事实核心产物不可用")
 
 
 def _conclusion(

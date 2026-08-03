@@ -71,7 +71,6 @@ def render_pipeline_summary(report: PipelineReport) -> str:
         lines.extend(_retry_section(report))
         lines.extend(_timing_section(report))
         lines.extend(_flaky_section(report))
-        lines.extend(_quality_links(report))
     lines.extend(
         [
             "## 建议动作",
@@ -278,18 +277,6 @@ def _flaky_section(report: PipelineReport) -> list[str]:
             ]
         )
     return lines
-
-
-def _quality_links(report: PipelineReport) -> list[str]:
-    if not any(stage.name == "质量观测" and stage.status is StageStatus.PASSED for stage in report.stages):
-        return []
-    return [
-        "## 详细证据",
-        "",
-        "- [P0 影子门禁](quality/gate-report.md)",
-        "- [P1 观察报告](quality/p1-observation.md)",
-        "",
-    ]
 
 
 def _table(headers: tuple[str, ...], rows: tuple[tuple[str, ...], ...]) -> str:

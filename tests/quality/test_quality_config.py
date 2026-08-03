@@ -3,15 +3,9 @@ from pathlib import Path
 import pytest
 
 from quality.config import (
-    DEFAULT_QUALITY_HTTP_5XX_WARN_RATE,
-    DEFAULT_QUALITY_MIN_REQUEST_SAMPLES,
     DEFAULT_QUALITY_OUTPUT_DIR,
-    DEFAULT_QUALITY_SHADOW_GATE,
-    DEFAULT_QUALITY_TIMEOUT_WARN_RATE,
-    QualityReportConfig,
     QualityRuntimeConfig,
     load_quality_config,
-    load_quality_report_config,
     parse_quality_enabled,
 )
 
@@ -132,27 +126,6 @@ def test_invalid_metrics_setting_fails_open_with_warning():
     assert "QUALITY_METRICS_ENABLE" in str(config.metrics_warning)
 
 
-def test_p1_report_requires_quality_and_defaults_off():
-    disabled = load_quality_config({"QUALITY_P1_REPORT_ENABLE": "1"})
-    enabled = load_quality_config(
-        {"QUALITY_ENABLE": "1", "QUALITY_P1_REPORT_ENABLE": "1"}
-    )
-
-    assert disabled.p1_report_enabled is False
-    assert "QUALITY_ENABLE=1" in str(disabled.p1_report_warning)
-    assert enabled.p1_report_enabled is True
-    assert enabled.p1_report_warning is None
-
-
-def test_invalid_p1_report_setting_fails_open_with_warning():
-    config = load_quality_config(
-        {"QUALITY_ENABLE": "1", "QUALITY_P1_REPORT_ENABLE": "sometimes"}
-    )
-
-    assert config.p1_report_enabled is False
-    assert "QUALITY_P1_REPORT_ENABLE" in str(config.p1_report_warning)
-
-
 def test_flaky_history_requires_quality_and_defaults_off(tmp_path):
     disabled = load_quality_config(
         {
@@ -242,44 +215,3 @@ def test_invalid_flaky_state_setting_does_not_disable_history(tmp_path):
     assert config.flaky_history_enabled is True
     assert config.flaky_state_enabled is False
     assert "QUALITY_FLAKY_STATE_ENABLE" in str(config.flaky_state_warning)
-
-
-def test_load_quality_report_config_uses_defaults():
-    assert load_quality_report_config({}) == QualityReportConfig(
-        shadow_gate=DEFAULT_QUALITY_SHADOW_GATE,
-        min_request_samples=DEFAULT_QUALITY_MIN_REQUEST_SAMPLES,
-        http_5xx_warn_rate=DEFAULT_QUALITY_HTTP_5XX_WARN_RATE,
-        timeout_warn_rate=DEFAULT_QUALITY_TIMEOUT_WARN_RATE,
-    )
-
-
-def test_load_quality_report_config_reads_environment():
-    config = load_quality_report_config(
-        {
-            "QUALITY_SHADOW_GATE": "0",
-            "QUALITY_MIN_REQUEST_SAMPLES": "8",
-            "QUALITY_HTTP_5XX_WARN_RATE": "0.1",
-            "QUALITY_TIMEOUT_WARN_RATE": "0.2",
-        }
-    )
-
-    assert config == QualityReportConfig(
-        shadow_gate=False,
-        min_request_samples=8,
-        http_5xx_warn_rate=0.1,
-        timeout_warn_rate=0.2,
-    )
-
-
-@pytest.mark.parametrize(
-    "values",
-    [
-        {"QUALITY_MIN_REQUEST_SAMPLES": "-1"},
-        {"QUALITY_HTTP_5XX_WARN_RATE": "1.1"},
-        {"QUALITY_TIMEOUT_WARN_RATE": "invalid"},
-        {"QUALITY_SHADOW_GATE": "invalid"},
-    ],
-)
-def test_load_quality_report_config_rejects_invalid_values(values):
-    with pytest.raises(ValueError):
-        load_quality_report_config(values)

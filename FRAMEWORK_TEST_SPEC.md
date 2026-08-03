@@ -6,7 +6,7 @@
 
 - pytest 可收集、可独立执行。
 - 通过 Request/Task/Assertions 分层复用框架能力。
-- 自动生成 Allure、JUnit、P0 和 P1 质量证据。
+- 自动生成 Allure、JUnit、Pipeline Summary 和质量机器证据。
 - 能参与并发池、串行池和 Flaky 历史比较。
 - 不泄露 API Key、账号、请求和响应中的敏感信息。
 
@@ -19,13 +19,14 @@ test_*.py
 -> 模块 Task 组织业务动作
 -> 模块 Request 发起 HTTP/SSE/轮询请求
 -> BaseRequest 中间件记录脱敏日志，并通过 Runtime Hooks 发出中性观察事件
--> Quality 开启时由 quality.runtime_adapter 映射为 P0/P1 事实；关闭时使用 Noop
+-> Quality 开启时由 quality.runtime_adapter 映射为质量事实；关闭时使用 Noop
 -> pytest 产生用例结果和 Allure/JUnit
--> run_master.py 入口委托 run_orchestration 归并 P0 Case/请求/失败事实
--> P1 聚合逻辑调用、耗时、usage 和 Flaky 状态
+-> run_master.py 入口委托 run_orchestration 归并 Case/请求/失败事实
+-> Semantic、Metrics 和 Flaky 聚合逻辑调用、耗时、usage 与状态变化
+-> pipeline-summary.md 提供唯一人工质量入口
 ```
 
-新用例不需要直接调用 P0/P1 聚合器。只要通过标准入口执行并遵循本文质量语义规范，框架会自动采集。
+新用例不需要直接调用质量聚合器。只要通过标准入口执行并遵循本文质量语义规范，框架会自动采集。
 
 `run_master.py` 继续作为用户和 Jenkins 的稳定入口；内部调度、环境恢复与各质量阶段分别位于 `run_orchestration/`，用例目录和执行命令不变。
 
@@ -38,8 +39,8 @@ test_*.py
 | 公共业务层 | `common/base_task.py` | 跨模块通用的模型创建、轮询、账单/usage 骨架 | 放单一模块专用逻辑 |
 | 公共断言层 | `common/base_assertions.py` | 状态码、JSONPath、JSON Schema | 放具体业务字段规则 |
 | 工具层 | `util/` | 脱敏、日志、cURL、配置校验、媒体附件 | 持有业务状态 |
-| 质量适配层 | `quality/runtime_adapter.py` | 将 Runtime Hooks 映射到现有 P0/P1 采集器 | 被业务用例直接调用 |
-| 质量聚合层 | `quality/metrics/`、`quality/observation_report/`、`quality/flaky_store/` | 指标、观察报告和 Flaky 状态存储 | 被业务用例直接调用或复制算法 |
+| 质量适配层 | `quality/runtime_adapter.py` | 将 Runtime Hooks 映射到质量采集器 | 被业务用例直接调用 |
+| 质量聚合层 | `quality/metrics/`、`quality/flaky_store/` | Metrics 聚合和 Flaky 状态存储 | 被业务用例直接调用或复制算法 |
 | 执行编排层 | `run_master.py`、`run_orchestration/` | 稳定入口、pytest 调度、产物和质量阶段顺序 | 在业务用例中导入内部 stage |
 | 模块请求层 | `module/<模块>/request.py` | 模块路径、请求参数、质量角色 | 写业务流程和复杂断言 |
 | 模块任务层 | `module/<模块>/task.py` | payload builder、业务动作组合 | 重复实现 BaseTask 已有能力 |
@@ -58,7 +59,7 @@ run_master -> run_orchestration
 common -X-> quality
 ```
 
-业务用例只能使用稳定公共入口。不得从 `quality.metrics.*`、`quality.observation_report.*`、`quality.flaky_store.*` 或 `run_orchestration.*` 导入内部 builder、repository、stage 和 writer；这些模块只服务框架实现与离线测试。
+业务用例只能使用稳定公共入口。不得从 `quality.metrics.*`、`quality.flaky_store.*` 或 `run_orchestration.*` 导入内部 builder、repository、stage 和 writer；这些模块只服务框架实现与离线测试。
 
 ## 4. 新模块标准目录
 
@@ -128,7 +129,7 @@ class ExampleModelRequest(BaseRequest):
 - 路径使用相对路径，环境域名由 `BaseRequest` 和 `config.py` 处理。
 - `_quality_operation_name` 使用稳定的业务名称，不能包含 request ID、时间戳或随机数。
 - 真实模型调用使用 `workload`；余额、usage、管理查询使用 `control`。
-- payload 中的 `model` 会被框架自动提取为 P1 的 `model_id`。
+- payload 中的 `model` 会被框架自动提取为 Metrics 的 `model_id`。
 - `_quality_*` 参数由框架消费，不会发送给 `requests`。
 - 临时修改 Header 时必须在 `finally` 中恢复，优先复用 BaseTask 的控制接口方法。
 
@@ -216,7 +217,7 @@ class ExampleModelTask(BaseTask):
 - Task 表达业务动作，测试方法只负责场景编排和断言。
 - payload builder 返回新字典，不能复用并修改模块级可变对象。
 - 能使用 `BaseTask.create_chat_completion()`、`create_image_generation()`、`create_and_poll_media_generation()` 时不要重复封装底层请求。
-- 一个 Task 方法内组合多次请求时，必须考虑逻辑调用语义，见“P1 质量语义规范”。
+- 一个 Task 方法内组合多次请求时，必须考虑逻辑调用语义，见“质量语义规范”。
 
 ### 5.5 `response_schemas.py`（推荐）
 
@@ -320,7 +321,7 @@ final_response = self.task.create_and_poll_media_generation(
 这些公共方法已经提供：
 
 - Allure 业务步骤。
-- P1 逻辑调用类型、名称、角色和 model ID。
+- Metrics 逻辑调用类型、名称、角色和 model ID。
 - 异步任务创建、task ID 提取和轮询组合。
 - 轮询成功、失败、未知和超时状态记录。
 
@@ -349,7 +350,7 @@ after_balance = self.task.query_account_balance_after_settlement_for_billing(
 - usage 必须通过模型响应的 request ID 查询，禁止按时间范围猜测归属。
 - 并发调用时分别保存每个 request ID，分别查询 usage 后求和。
 - 余额扣减与 usage 金额使用 `Decimal` 区间断言，当前容差为 `±0.01` 元。
-- P1 当前不计算估算成本，也不做账本价格对账。
+- Metrics 当前不计算估算成本，也不做账本价格对账。
 - 账单、余额和共享账号用例必须标记 `serial`。
 
 失败调用也应等待结算后再验证余额未变化，避免延迟扣费造成假通过。
@@ -398,7 +399,7 @@ self.assertions.assert_schema(response, schema)
 - 状态码、关键业务值和响应结构分层断言。
 - JSON Schema 失败能定位 JSONPath 和 Schema path。
 - 标准错误响应必须验证 `error.code`、`error.type` 等稳定契约。
-- 负向用例返回预期 4xx/业务失败时，用例可以通过；P1 中该逻辑调用仍会如实记为失败。
+- 负向用例返回预期 4xx/业务失败时，用例可以通过；Metrics 中该逻辑调用仍会如实记为失败。
 - 不要用宽泛 `assert response.json()` 代替明确断言。
 
 ## 9. 重试规范
@@ -561,9 +562,9 @@ with ThreadPoolExecutor(max_workers=3) as executor:
     ]
 ```
 
-直接 `executor.submit()` 不会自动复制 pytest run/case、operation 和 Runtime Hooks ContextVar，可能造成 P0/P1 请求无法归属到当前用例。每个线程应创建并关闭自己的 Request Client，不要并发共享同一个 `requests.Session`。
+直接 `executor.submit()` 不会自动复制 pytest run/case、operation 和 Runtime Hooks ContextVar，可能造成质量请求无法归属到当前用例。每个线程应创建并关闭自己的 Request Client，不要并发共享同一个 `requests.Session`。
 
-## 14. P1 质量语义规范
+## 14. 质量语义规范
 
 ### 14.1 单请求业务动作
 
@@ -685,7 +686,7 @@ polling_responses
 重构后的框架改动还必须按职责补充以下保护：
 
 - 修改 `common/runtime_hooks/`：验证 Noop、Hook 故障 fail-open、线程 ContextVar 和 `common` 独立导入。
-- 修改 `quality/metrics/`、`quality/observation_report/`、`quality/flaky_store/`：验证公开契约、依赖 DAG、产物等价或数据库事务边界。
+- 修改 `quality/metrics/`、`quality/flaky_store/`：验证公开契约、依赖 DAG、产物等价或数据库事务边界。
 - 修改 `run_orchestration/`：验证根入口兼容、collect-only 无副作用、并串行顺序、退出码、环境恢复和质量阶段顺序。
 - 新增架构边界测试时必须确保文件进入 Git，不能只在本地未跟踪状态下通过。
 
@@ -729,7 +730,7 @@ polling_responses
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-当前重构后的离线回归基线为 `606 passed`；`module/smoke` collect-only 收集 `41` 项。
+当前清理后的离线回归基线为 `571 passed`；`module/smoke` collect-only 收集 `41` 项（并发池 `15`、串行池 `26`）。
 
 真实接口会产生调用费用；在未授权时只执行 collect-only 和离线框架测试。
 
@@ -738,19 +739,19 @@ polling_responses
 每轮 Jenkins 构建按顺序查看：
 
 1. `reports/pipeline-summary.md`：本轮参数、阶段状态、用例结果和直接观测结论。
-2. `reports/quality/gate-report.md`：接口测试的 P0 数据完整性、失败分类、5xx 和超时。
-3. `reports/quality/p1-observation.md`：接口测试的逻辑调用、usage 覆盖和 Flaky 详情。
-4. Allure：具体用例步骤、请求、响应和附件。
-5. `flaky-evaluation.json`/CLI：需要人工治理时再查看完整状态。
+2. JUnit：用例总数、通过、失败、错误和跳过。
+3. Allure：具体用例步骤、请求、响应和附件。
+4. `reports/quality/**`：仅在审计数据来源时查看 merged、metrics 和 Flaky 机器数据。
+5. `flaky-evaluation.json`/CLI：需要人工治理时查看完整状态。
 
 `pipeline-summary.md` 适用于框架测试、用例收集、接口测试及其组合。报告不暴露 Smoke 专属参数名，未选择的阶段显示“未执行”，不能解释为失败或数据缺失。其生成由 `GENERATE_PIPELINE_SUMMARY` 控制，Jenkins 参数/进程环境优先于 `.env`，默认开启。
 
 注意：
 
-- P0 是影子门禁，不覆盖 pytest/Jenkins 结果。
 - 请求成功率不等于用例通过率；负向用例和轮询中间状态可能被记为失败请求。
 - 逻辑调用失败数不等于测试失败数。
-- P1 不估算成本，不建立性能基线，缺失值不按零计算。
+- Metrics 不估算成本，不建立性能基线，缺失值不按零计算。
+- Pipeline Summary 不覆盖 pytest/Jenkins 原始结果。
 
 ## 21. 新增用例提交检查清单
 
@@ -779,5 +780,5 @@ polling_responses
 [ ] 用例 nodeid 和参数 ID 稳定，适合 Flaky 历史比较
 [ ] collect-only 通过
 [ ] 相关离线框架测试通过
-[ ] P0/P1 报告没有完整性错误
+[ ] pipeline-summary.md 无来源告警，或告警已明确定位到对应机器数据
 ```

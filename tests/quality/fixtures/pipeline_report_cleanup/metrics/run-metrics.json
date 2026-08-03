@@ -1,0 +1,81 @@
+{
+  "schema_version": "quality.run-metrics.v1",
+  "aggregation_version": "p1-run-metrics.v1",
+  "run_id": "pipeline-cleanup-baseline",
+  "status": "aggregated",
+  "run_metrics": {
+    "request_groups": {
+      "retried_group_count": 2,
+      "http_retry_rescue_rate": {
+        "numerator": 1,
+        "sample_size": 2
+      }
+    }
+  },
+  "request_group_buckets": [
+    {
+      "dimension": {
+        "interface_id": "POST /v1/images/generations http",
+        "traffic_role": "workload",
+        "protocol": "http"
+      },
+      "stability": {
+        "group_count": 2
+      },
+      "timing": {
+        "total_duration_ms": {
+          "mean": 5000,
+          "maximum": 7000
+        }
+      }
+    },
+    {
+      "dimension": {
+        "interface_id": "POST /v1/chat/completions http",
+        "traffic_role": "workload",
+        "protocol": "http"
+      },
+      "stability": {
+        "group_count": 3
+      },
+      "timing": {
+        "total_duration_ms": {
+          "mean": 2000,
+          "maximum": 3000
+        }
+      }
+    },
+    {
+      "dimension": {
+        "interface_id": "GET /v1/account/balance http",
+        "traffic_role": "control",
+        "protocol": "http"
+      },
+      "stability": {
+        "group_count": 5
+      },
+      "timing": {
+        "total_duration_ms": {
+          "mean": 100,
+          "maximum": 200
+        }
+      }
+    },
+    {
+      "dimension": {
+        "interface_id": "GET /v1/tasks/{id} polling",
+        "traffic_role": "workload",
+        "protocol": "polling"
+      },
+      "stability": {
+        "group_count": 20
+      },
+      "timing": {
+        "total_duration_ms": {
+          "mean": 250,
+          "maximum": 500
+        }
+      }
+    }
+  ]
+}

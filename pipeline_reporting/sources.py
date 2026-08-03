@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -8,8 +9,19 @@ import tempfile
 import os
 from typing import Any, Iterable
 
+from quality.aggregator import MANIFEST_VERSION as QUALITY_MANIFEST_VERSION
+from quality.flaky_models import (
+    FLAKY_EVALUATION_SCHEMA_VERSION,
+    FlakyEvaluationStatus,
+)
 from quality.junit import JUnitCaseEvidence, parse_junit_file
-from quality.models import CaseStatus
+from quality.metrics_models import (
+    RUN_METRICS_AGGREGATION_VERSION,
+    RUN_METRICS_MANIFEST_VERSION,
+    RUN_METRICS_SCHEMA_VERSION,
+    RunMetricsStatus,
+)
+from quality.models import SCHEMA_VERSION, CaseStatus, IntegrityStatus
 
 from pipeline_reporting.contracts import (
     CaseDetail,
@@ -33,6 +45,15 @@ _COLLECT_TOTAL_PATTERNS = (
 )
 _COLLECT_PARALLEL_PATTERN = re.compile(r"Parallel pool cases:\s*(\d+)", re.IGNORECASE)
 _COLLECT_SERIAL_PATTERN = re.compile(r"Serial pool cases:\s*(\d+)", re.IGNORECASE)
+_USABLE_METRICS_STATUSES = {
+    RunMetricsStatus.AGGREGATED.value,
+    RunMetricsStatus.DEGRADED.value,
+}
+_USABLE_FLAKY_STATUSES = {
+    FlakyEvaluationStatus.EVALUATED.value,
+    FlakyEvaluationStatus.NOOP.value,
+    FlakyEvaluationStatus.DEGRADED.value,
+}
 
 
 def initialize_stage_status_file(
@@ -88,7 +109,11 @@ def load_stage_statuses(path: str | Path) -> dict[str, StageStatus]:
     return result
 
 
-def load_pipeline_sources(workspace: str | Path) -> LoadedPipelineSources:
+def load_pipeline_sources(
+    workspace: str | Path,
+    *,
+    include_quality: bool = True,
+) -> LoadedPipelineSources:
     root = Path(workspace)
     reports = root / "reports"
     quality = reports / "quality"
@@ -105,49 +130,49 @@ def load_pipeline_sources(workspace: str | Path) -> LoadedPipelineSources:
     smoke_tests = load_junit_summary(smoke_paths, warnings=warnings)
     smoke_collect = load_collect_summary(reports / "smoke-collect.txt", warnings=warnings)
 
-    run_payload = _load_optional_json(quality / "run.json", warnings, "Quality 运行记录")
-    summary_payload = _load_optional_json(quality / "summary.json", warnings, "P0 汇总")
-    quality_run_id = _text(run_payload.get("run_id")) if run_payload else None
-    quality_available = bool(
-        quality_run_id
-        and summary_payload
-        and _text(summary_payload.get("run_id")) == quality_run_id
-    )
-    if run_payload and summary_payload and not quality_available:
-        warnings.append("Quality run_id 与 P0 汇总不一致")
-
+    quality_run_id: str | None = None
+    quality_facts_available = False
     request_health = RequestHealth()
-    if quality_run_id:
-        request_health = load_request_health(
-            quality / "merged" / "request-metrics.jsonl",
-            run_id=quality_run_id,
-            warnings=warnings,
-        )
-
     retry_health = RetryHealth()
     timings: tuple[InterfaceTiming, ...] = ()
-    metrics_payload = _load_optional_json(
-        quality / "metrics" / "run-metrics.json",
-        warnings,
-        "单次运行指标",
-    )
-    if metrics_payload:
-        if quality_run_id and _text(metrics_payload.get("run_id")) != quality_run_id:
-            warnings.append("Metrics run_id 与本轮 Quality run_id 不一致")
-        else:
+    flaky = FlakySummary()
+    if include_quality:
+        quality_run_id, quality_manifest, quality_facts_available = _load_quality_facts(
+            quality,
+            warnings,
+        )
+        if quality_run_id and quality_manifest:
+            request_path = quality / "merged" / "request-metrics.jsonl"
+            expected_hash = _mapping(quality_manifest.get("output_hashes")).get(
+                "request-metrics"
+            )
+            if _artifact_hash_matches(
+                request_path,
+                expected_hash,
+                warnings,
+                "请求指标",
+            ):
+                request_health = load_request_health(
+                    request_path,
+                    run_id=quality_run_id,
+                    warnings=warnings,
+                )
+
+        metrics_payload = (
+            _load_metrics_payload(quality, quality_run_id, warnings)
+            if quality_run_id
+            else None
+        )
+        if metrics_payload:
             retry_health = _retry_health(metrics_payload)
             timings = _interface_timings(metrics_payload)
 
-    flaky = FlakySummary()
-    flaky_payload = _load_optional_json(
-        quality / "flaky-evaluation.json",
-        warnings,
-        "Flaky 评估",
-    )
-    if flaky_payload:
-        if quality_run_id and _text(flaky_payload.get("run_id")) != quality_run_id:
-            warnings.append("Flaky run_id 与本轮 Quality run_id 不一致")
-        else:
+        flaky_payload = (
+            _load_flaky_payload(quality, quality_run_id, warnings)
+            if quality_run_id
+            else None
+        )
+        if flaky_payload:
             flaky = _flaky_summary(flaky_payload)
 
     return LoadedPipelineSources(
@@ -155,7 +180,7 @@ def load_pipeline_sources(workspace: str | Path) -> LoadedPipelineSources:
         unit_tests=unit_tests,
         smoke_tests=smoke_tests,
         smoke_collect=smoke_collect,
-        quality_available=quality_available,
+        quality_facts_available=quality_facts_available,
         quality_run_id=quality_run_id,
         request_health=request_health,
         retry_health=retry_health,
@@ -163,6 +188,165 @@ def load_pipeline_sources(workspace: str | Path) -> LoadedPipelineSources:
         flaky=flaky,
         warnings=tuple(warnings),
     )
+
+
+def _load_quality_facts(
+    quality_dir: Path,
+    warnings: list[str],
+) -> tuple[str | None, dict[str, Any] | None, bool]:
+    run_payload = _load_optional_json(
+        quality_dir / "run.json",
+        warnings,
+        "质量运行记录",
+    )
+    manifest_payload = _load_optional_json(
+        quality_dir / "merged" / "manifest.json",
+        warnings,
+        "质量事实清单",
+    )
+    if run_payload is None or manifest_payload is None:
+        return None, manifest_payload, False
+
+    run_id = _text(run_payload.get("run_id"))
+    if run_payload.get("schema_version") != SCHEMA_VERSION:
+        warnings.append("质量运行记录 Schema 不受支持")
+        return run_id, manifest_payload, False
+    if not run_id or _text(manifest_payload.get("run_id")) != run_id:
+        warnings.append("质量运行记录与事实清单 run_id 不一致")
+        return run_id, manifest_payload, False
+    if manifest_payload.get("manifest_version") != QUALITY_MANIFEST_VERSION:
+        warnings.append("质量事实清单版本不受支持")
+        return run_id, manifest_payload, False
+    if manifest_payload.get("schema_version") != SCHEMA_VERSION:
+        warnings.append("质量事实清单 Schema 不受支持")
+        return run_id, manifest_payload, False
+    if manifest_payload.get("status") != "complete":
+        warnings.append("质量事实清单尚未完整提交")
+        return run_id, manifest_payload, False
+    if manifest_payload.get("integrity_status") == IntegrityStatus.FAILED.value:
+        warnings.append("质量事实完整性校验失败")
+        return run_id, manifest_payload, False
+    if not isinstance(manifest_payload.get("output_hashes"), dict):
+        warnings.append("质量事实清单缺少产物哈希")
+        return run_id, manifest_payload, False
+    return run_id, manifest_payload, True
+
+
+def _load_metrics_payload(
+    quality_dir: Path,
+    run_id: str,
+    warnings: list[str],
+) -> dict[str, Any] | None:
+    metrics_dir = quality_dir / "metrics"
+    manifest_path = metrics_dir / "manifest.json"
+    metrics_path = metrics_dir / "run-metrics.json"
+    if not manifest_path.is_file() and not metrics_path.is_file():
+        return None
+    manifest = _load_optional_json(manifest_path, warnings, "Metrics 清单")
+    payload = _load_optional_json(metrics_path, warnings, "单次运行指标")
+    if manifest is None or payload is None:
+        return None
+    if _text(manifest.get("run_id")) != run_id:
+        warnings.append("Metrics 清单 run_id 与本轮不一致")
+        return None
+    if manifest.get("manifest_version") != RUN_METRICS_MANIFEST_VERSION:
+        warnings.append("Metrics 清单版本不受支持")
+        return None
+    if manifest.get("schema_version") != RUN_METRICS_SCHEMA_VERSION:
+        warnings.append("Metrics 清单 Schema 不受支持")
+        return None
+    if manifest.get("aggregation_version") != RUN_METRICS_AGGREGATION_VERSION:
+        warnings.append("Metrics 聚合版本不受支持")
+        return None
+    if manifest.get("write_status") != "complete":
+        warnings.append("Metrics 产物尚未完整写入")
+        return None
+    metrics_status = _text(manifest.get("metrics_status"))
+    if metrics_status not in _USABLE_METRICS_STATUSES:
+        warnings.append("Metrics 本轮没有可用聚合结果")
+        return None
+    if _text(payload.get("run_id")) != run_id:
+        warnings.append("单次运行指标 run_id 与本轮不一致")
+        return None
+    if payload.get("schema_version") != RUN_METRICS_SCHEMA_VERSION:
+        warnings.append("单次运行指标 Schema 不受支持")
+        return None
+    if payload.get("aggregation_version") != RUN_METRICS_AGGREGATION_VERSION:
+        warnings.append("单次运行指标聚合版本不受支持")
+        return None
+    if _text(payload.get("status")) != metrics_status:
+        warnings.append("Metrics 清单与指标状态不一致")
+        return None
+    expected_hash = _mapping(manifest.get("output_hashes")).get("run_metrics")
+    if not _artifact_hash_matches(metrics_path, expected_hash, warnings, "单次运行指标"):
+        return None
+    return payload
+
+
+def _load_flaky_payload(
+    quality_dir: Path,
+    run_id: str,
+    warnings: list[str],
+) -> dict[str, Any] | None:
+    path = quality_dir / "flaky-evaluation.json"
+    if not path.is_file():
+        return None
+    payload = _load_optional_json(path, warnings, "Flaky 评估")
+    if payload is None:
+        return None
+    if _text(payload.get("run_id")) != run_id:
+        warnings.append("Flaky 评估 run_id 与本轮不一致")
+        return None
+    if payload.get("schema_version") != FLAKY_EVALUATION_SCHEMA_VERSION:
+        warnings.append("Flaky 评估 Schema 不受支持")
+        return None
+    status = _text(payload.get("status"))
+    if status not in _USABLE_FLAKY_STATUSES:
+        warnings.append("Flaky 本轮没有可用评估结果")
+        return None
+    for name in (
+        "newly_suspected",
+        "newly_confirmed",
+        "recovered",
+        "overdue",
+        "transitions",
+    ):
+        if not isinstance(payload.get(name), list):
+            warnings.append(f"Flaky 评估字段 {name} 不可用")
+            return None
+    return payload
+
+
+def _artifact_hash_matches(
+    path: Path,
+    expected_hash: Any,
+    warnings: list[str],
+    label: str,
+) -> bool:
+    if not path.is_file():
+        warnings.append(f"{label}文件缺失")
+        return False
+    expected = _text(expected_hash)
+    if expected is None:
+        warnings.append(f"{label}缺少可信哈希")
+        return False
+    try:
+        actual = _file_sha256(path)
+    except OSError as error:
+        warnings.append(f"{label}不可读：{type(error).__name__}")
+        return False
+    if actual != expected:
+        warnings.append(f"{label}哈希与清单不一致")
+        return False
+    return True
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def load_junit_summary(

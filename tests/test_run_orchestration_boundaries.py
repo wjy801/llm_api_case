@@ -13,10 +13,9 @@ EXPECTED_FILES = {
     "environment.py",
     "paths.py",
     "pytest_execution.py",
+    "quality_fact_merge_stage.py",
     "quality_flaky_stage.py",
     "quality_metrics_stage.py",
-    "quality_observation_stage.py",
-    "quality_p0_stage.py",
     "quality_pipeline.py",
     "quality_run_record.py",
     "quality_semantic_stage.py",
@@ -57,11 +56,10 @@ def test_pytest_main_and_shutil_have_single_owners():
 
 def test_quality_stage_modules_do_not_import_each_other():
     stage_names = {
-        "quality_p0_stage",
+        "quality_fact_merge_stage",
         "quality_semantic_stage",
         "quality_metrics_stage",
         "quality_flaky_stage",
-        "quality_observation_stage",
     }
     for name in stage_names:
         relative_modules = {
@@ -78,6 +76,7 @@ def test_runner_does_not_import_quality_business_implementations_directly():
     forbidden = {
         "quality.aggregator",
         "quality.flaky_importer",
+        "quality.gate",
         "quality.metrics",
         "quality.observation_report",
         "quality.report",

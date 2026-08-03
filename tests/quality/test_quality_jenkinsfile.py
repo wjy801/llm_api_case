@@ -18,7 +18,7 @@ def test_real_smoke_enables_quality_reports_and_archives_artifacts():
     assert "$env:QUALITY_ENABLE = '1'" in content
     assert "$env:QUALITY_SEMANTIC_ENABLE = '1'" in content
     assert "$env:QUALITY_METRICS_ENABLE = '1'" in content
-    assert "$env:QUALITY_P1_REPORT_ENABLE = '1'" in content
+    assert "QUALITY_P1_REPORT_ENABLE" not in content
     assert "$env:QUALITY_FLAKY_HISTORY_ENABLE = '0'" in content
     assert "$env:QUALITY_FLAKY_HISTORY_ENABLE = '1'" in content
     assert "$env:QUALITY_FLAKY_STATE_ENABLE = '0'" in content
@@ -33,10 +33,16 @@ def test_real_smoke_enables_quality_reports_and_archives_artifacts():
     assert "D:/API_CASE_DATA" not in content
     assert "D:\\API_CASE_DATA" not in content
     assert "$env:QUALITY_OUTPUT_DIR = 'reports/quality'" in content
-    assert "$env:QUALITY_SHADOW_GATE = '1'" in content
+    assert "QUALITY_SHADOW_GATE" not in content
+    assert "QUALITY_MIN_REQUEST_SAMPLES" not in content
+    assert "QUALITY_HTTP_5XX_WARN_RATE" not in content
+    assert "QUALITY_TIMEOUT_WARN_RATE" not in content
     assert "Map readQualitySummary()" not in content
     assert "Map readP1ObservationSummary()" not in content
     assert "Map parseJsonObject(String text)" not in content
+    assert "$reportsPath = Join-Path (Get-Location) 'reports'" in content
+    assert "Remove-Item -LiteralPath $reportsPath -Recurse -Force" in content
+    assert content.index("Remove-Item -LiteralPath $reportsPath -Recurse -Force") < content.index("New-Item -ItemType Directory -Force -Path $reportsPath")
 
 
 def test_email_summary_is_compact_and_excludes_quality_stage_details():
@@ -63,12 +69,14 @@ def test_email_summary_is_compact_and_excludes_quality_stage_details():
     assert "fileExists('reports/pipeline-summary.md')" in email_content
     assert "artifact/reports/pipeline-summary.md" in email_content
     assert ">流水线执行摘要</a>" in email_content
-    assert "fileExists('reports/quality/gate-report.md')" in email_content
-    assert "artifact/reports/quality/gate-report.md" in email_content
-    assert ">P0 质量门禁报告</a>" in email_content
-    assert "fileExists('reports/quality/p1-observation.md')" in email_content
-    assert "artifact/reports/quality/p1-observation.md" in email_content
-    assert ">P1 观察报告</a>" in email_content
+    assert ">Allure 报告</a>" in email_content
+    assert ">JUnit 报告</a>" in email_content
+    assert ">构建产物</a>" in email_content
+    assert email_content.count("reportLinks <<") == 4
+    assert "gate-report" not in email_content
+    assert "P0 质量门禁报告" not in email_content
+    assert "p1-observation" not in email_content
+    assert "P1 观察报告" not in email_content
     assert "normalizeBranchName(env.BRANCH_NAME ?: env.GIT_BRANCH)" in content
     assert "shortGitCommit(env.GIT_COMMIT)" in content
     assert 'subject: "【${statusText}】${env.JOB_NAME} #${env.BUILD_NUMBER}｜${resultText}"' in content
@@ -78,6 +86,9 @@ def test_email_summary_is_compact_and_excludes_quality_stage_details():
 
 def test_pipeline_summary_is_parameterized_generated_before_archive_and_has_fallback():
     content = JENKINSFILE.read_text(encoding="utf-8")
+    generator = content[
+        content.index("void generatePipelineSummary()") : content.index("void writeFallbackPipelineSummary()")
+    ]
 
     assert "booleanParam(name: 'GENERATE_PIPELINE_SUMMARY', defaultValue: true" in content
     assert "GENERATE_PIPELINE_SUMMARY=true" in content
@@ -89,7 +100,13 @@ def test_pipeline_summary_is_parameterized_generated_before_archive_and_has_fall
     assert "void generatePipelineSummary()" in content
     assert "void writeFallbackPipelineSummary()" in content
     assert "Pipeline summary generation is disabled by GENERATE_PIPELINE_SUMMARY." in content
+    assert generator.index("if (!pipelineSummaryEnabled())") < generator.index("try {")
+    assert generator.index("return") < generator.index("writeFallbackPipelineSummary")
+    assert "currentBuild.result =" not in generator
+    assert "currentBuild.currentResult =" not in generator
+    assert content.index("generatePipelineSummary()") < content.index("allure includeProperties:")
     assert content.index("generatePipelineSummary()") < content.index("archiveArtifacts artifacts:")
+    assert content.index("generatePipelineSummary()") < content.index("notifyByEmail('FAILED')")
 
 
 def test_jenkins_build_parameters_have_chinese_descriptions():
