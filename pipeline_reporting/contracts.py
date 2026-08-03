@@ -132,7 +132,7 @@ class LoadedPipelineSources:
     unit_tests: TestSummary = TestSummary()
     smoke_tests: TestSummary = TestSummary()
     smoke_collect: CollectSummary = CollectSummary()
-    quality_available: bool = False
+    quality_facts_available: bool = False
     quality_run_id: str | None = None
     request_health: RequestHealth = RequestHealth()
     retry_health: RetryHealth = RetryHealth()
