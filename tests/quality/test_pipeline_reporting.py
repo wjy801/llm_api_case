@@ -558,6 +558,110 @@ def test_selected_stage_without_artifact_is_not_reported_as_zero_tests(tmp_path)
     assert "0 总计" not in markdown
 
 
+def test_explicit_stage_failure_has_priority_over_passing_junit(tmp_path):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    _write_junit(
+        reports / "smoke-tests.xml",
+        [("module.test_demo", "test_ok", "passed", None)],
+    )
+    initialize_stage_status_file(
+        reports / "pipeline-stage-status.json",
+        framework_tests_enabled=False,
+        smoke_collect_enabled=False,
+        real_smoke_enabled=True,
+    )
+    update_stage_status_file(
+        reports / "pipeline-stage-status.json",
+        stage_name="real_smoke",
+        status="FAILED",
+    )
+
+    report = generate_pipeline_summary(
+        tmp_path,
+        environment=_environment(RUN_REAL_SMOKE="true"),
+    )
+
+    assert report is not None
+    interface_stage = next(item for item in report.stages if item.name == "接口测试")
+    assert interface_stage.status.value == "FAILED"
+    assert report.conclusion.value == "FAIL"
+
+
+def test_runner_exit_fact_has_priority_over_passing_junit(tmp_path):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    _write_junit(
+        reports / "smoke-tests.xml",
+        [("module.test_demo", "test_ok", "passed", None)],
+    )
+    _write_json(
+        reports / "execution-result.json",
+        {
+            "schema_version": "runner-execution.v1",
+            "test_target": "module/smoke",
+            "selection_args": [],
+            "planned_case_count": 1,
+            "planned_nodeids": ["module/test_demo.py::test_ok"],
+            "collection_exit_code": 0,
+            "pool_results": [
+                {
+                    "stage_id": "serial-pool",
+                    "planned_nodeids": ["module/test_demo.py::test_ok"],
+                    "status": "COMPLETED",
+                    "raw_pytest_exit_code": 4,
+                    "started_at": "2026-08-04T00:00:00+00:00",
+                    "completed_at": "2026-08-04T00:00:01+00:00",
+                    "exception_type": None,
+                    "junit_path": "reports/smoke-tests.xml",
+                }
+            ],
+            "final_exit_code": 4,
+        },
+    )
+
+    report = generate_pipeline_summary(
+        tmp_path,
+        environment=_environment(RUN_REAL_SMOKE="true"),
+    )
+
+    assert report is not None
+    assert report.execution.available is True
+    interface_stage = next(item for item in report.stages if item.name == "接口测试")
+    assert interface_stage.status.value == "FAILED"
+    assert "退出码 4" in interface_stage.summary
+
+
+def test_markdown_machine_summary_and_email_share_one_report(tmp_path):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    _write_junit(
+        reports / "unit-tests.xml",
+        [("tests.test_demo", "test_ok", "passed", None)],
+    )
+
+    report = generate_pipeline_summary(
+        tmp_path,
+        environment=_environment(RUN_FRAMEWORK_TESTS="true"),
+        machine_output_path="reports/pipeline-summary.json",
+        email_subject_path="reports/pipeline-email-subject.txt",
+        email_html_path="reports/pipeline-email.html",
+    )
+
+    assert report is not None
+    payload = json.loads(
+        (reports / "pipeline-summary.json").read_text(encoding="utf-8")
+    )
+    assert payload["conclusion"] == report.conclusion.value
+    assert payload["unit_tests"]["total"] == report.unit_tests.total == 1
+    assert "0 失败 / 1 项" in (
+        reports / "pipeline-email-subject.txt"
+    ).read_text(encoding="utf-8")
+    assert "1 总计 / 1 通过 / 0 失败 / 0 跳过" in (
+        reports / "pipeline-email.html"
+    ).read_text(encoding="utf-8")
+
+
 def _environment(**updates: str) -> dict[str, str]:
     values = {
         "GENERATE_PIPELINE_SUMMARY": "TRUE",

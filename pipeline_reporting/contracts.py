@@ -4,6 +4,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 
+RUNNER_EXECUTION_SCHEMA_VERSION = "runner-execution.v1"
+
+
 class StageStatus(str, Enum):
     PASSED = "PASSED"
     FAILED = "FAILED"
@@ -62,6 +65,26 @@ class CollectSummary:
     total: int | None = None
     parallel: int | None = None
     serial: int | None = None
+
+
+@dataclass(frozen=True)
+class PoolExecutionSummary:
+    stage_id: str
+    status: str
+    planned_case_count: int
+    raw_pytest_exit_code: int | None = None
+    exception_type: str | None = None
+    junit_path: str | None = None
+
+
+@dataclass(frozen=True)
+class ExecutionSummary:
+    available: bool = False
+    test_target: str | None = None
+    planned_case_count: int = 0
+    collection_exit_code: int | None = None
+    final_exit_code: int | None = None
+    pools: tuple[PoolExecutionSummary, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -132,6 +155,7 @@ class LoadedPipelineSources:
     unit_tests: TestSummary = TestSummary()
     smoke_tests: TestSummary = TestSummary()
     smoke_collect: CollectSummary = CollectSummary()
+    execution: ExecutionSummary = ExecutionSummary()
     quality_facts_available: bool = False
     quality_run_id: str | None = None
     request_health: RequestHealth = RequestHealth()
@@ -157,6 +181,7 @@ class PipelineReport:
     unit_tests: TestSummary
     smoke_tests: TestSummary
     smoke_collect: CollectSummary
+    execution: ExecutionSummary
     request_health: RequestHealth
     retry_health: RetryHealth
     interface_timings: tuple[InterfaceTiming, ...]

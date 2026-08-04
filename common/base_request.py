@@ -9,6 +9,7 @@ import requests
 
 from config import Settings, settings
 from common.base_decorators import download_links_from_poll_get
+from common.capture import CapturePolicy, DEFAULT_CAPTURE_POLICY
 from common.polling import (
     PollingFailedError,
     PollingPolicy,
@@ -29,26 +30,13 @@ from common.retry import (
     RetryAttemptRecord,
     RetryPolicy,
 )
-from common.retry_executor import RetryExecutor
+from common.retry_executor import RetryDeadlineExceeded, RetryExecutor
 from common.runtime_hooks import (
     RuntimeOperationKind,
     RuntimeOperationOutcome,
-    RuntimePollingLease,
-    RuntimePollingOutcome,
-    RuntimeTrafficRole,
-    add_polling_sleep,
-    begin_operation,
-    begin_polling_session,
-    bind_request_context,
-    bind_stream_response,
-    detach_operation,
-    finish_operation,
-    finish_polling_session,
-    finish_request_group,
-    model_id_from_kwargs,
-    observe_polling_state,
+    RuntimeObserver,
+    RuntimePollingObservation,
     operation_outcome_for_error,
-    start_request_group,
 )
 from util import (
     API_REQUEST_STEP_NAME,
@@ -65,30 +53,32 @@ class BaseRequest:
         config: Settings = settings,
         middlewares: list[RequestMiddleware] | None = None,
         retry_executor: RetryExecutor | None = None,
+        capture_policy: CapturePolicy | None = None,
     ):
         self.config = config
         self.session = requests.Session()
         self.default_headers = self._build_default_headers()
         self.session.headers.update(self.default_headers)
+        self.capture_policy = capture_policy or DEFAULT_CAPTURE_POLICY
         self.middlewares = list(self._default_middlewares() if middlewares is None else middlewares)
         self.retry_executor = retry_executor or RetryExecutor(sleeper=time.sleep, monotonic=time.monotonic)
+        self._runtime_observer = RuntimeObserver()
 
     def _default_middlewares(self) -> list[RequestMiddleware]:
-        return default_request_middlewares()
+        return default_request_middlewares(self.capture_policy)
 
     def request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
         attach_log = kwargs.pop("_attach_log", True)
         retry_policy = kwargs.pop("retry_policy", None)
-        operation_name = str(kwargs.pop("_quality_operation_name", "")).strip()
-        traffic_role = kwargs.pop("_quality_traffic_role", RuntimeTrafficRole.UNKNOWN)
+        inherit_session_headers = bool(kwargs.pop("_inherit_session_headers", True))
         stream = bool(kwargs.get("stream"))
         operation_kind = RuntimeOperationKind.SSE if stream else RuntimeOperationKind.HTTP
-        operation_handle = begin_operation(
-            operation_kind,
-            name=operation_name or ("sse_request" if stream else "http_request"),
-            role=traffic_role,
-            model_id=model_id_from_kwargs(kwargs),
+        metadata = self._runtime_observer.normalize_metadata(
+            kwargs,
+            kind=operation_kind,
+            default_name="sse_request" if stream else "http_request",
         )
+        operation = self._runtime_observer.start_operation(metadata)
         try:
             if retry_policy is not None:
                 response = self._send_with_retry(
@@ -96,27 +86,22 @@ class BaseRequest:
                     path,
                     retry_policy,
                     attach_log=attach_log,
+                    inherit_session_headers=inherit_session_headers,
                     **kwargs,
                 )
             else:
-                context = self._build_request_context(method, path, attach_log=attach_log, **kwargs)
+                context = self._build_request_context(
+                    method,
+                    path,
+                    attach_log=attach_log,
+                    inherit_session_headers=inherit_session_headers,
+                    **kwargs,
+                )
                 response = self._send_single_group(context)
         except BaseException as error:
-            finish_operation(operation_handle, self._operation_outcome_for_error(error))
+            operation.finish_error(error)
             raise
-
-        if operation_handle.owned and stream and 200 <= response.status_code < 300:
-            bind_stream_response(response, operation_handle)
-            detach_operation(operation_handle)
-        else:
-            finish_operation(
-                operation_handle,
-                (
-                    RuntimeOperationOutcome.SUCCESS
-                    if 200 <= response.status_code < 300
-                    else RuntimeOperationOutcome.FAILED
-                ),
-            )
+        operation.finish_response(response, stream=stream)
         return response
 
     def set_header(self, name: str, value: str) -> None:
@@ -153,15 +138,12 @@ class BaseRequest:
         if timeout <= 0:
             raise ValueError("poll_timeout must be greater than 0")
 
-        operation_name = str(kwargs.pop("_quality_operation_name", "polling")).strip() or "polling"
-        traffic_role = kwargs.pop("_quality_traffic_role", RuntimeTrafficRole.UNKNOWN)
-        operation_handle = begin_operation(
-            RuntimeOperationKind.POLLING,
-            name=operation_name,
-            role=traffic_role,
-            model_id=model_id_from_kwargs(kwargs),
+        metadata = self._runtime_observer.normalize_metadata(
+            kwargs,
+            kind=RuntimeOperationKind.POLLING,
+            default_name="polling",
         )
-        polling_handle = begin_polling_session()
+        polling = self._runtime_observer.start_polling(metadata)
         try:
             response = self._poll_get_with_policy(
                 path,
@@ -169,31 +151,13 @@ class BaseRequest:
                 timeout=timeout,
                 polling_policy=polling_policy,
                 retry_policy=retry_policy,
-                runtime_polling_lease=polling_handle,
+                runtime_polling=polling,
                 **kwargs,
             )
-        except PollingFailedError:
-            finish_polling_session(polling_handle, RuntimePollingOutcome.FAILURE)
-            finish_operation(operation_handle, RuntimeOperationOutcome.FAILED)
-            raise
-        except PollingUnknownStateError:
-            finish_polling_session(polling_handle, RuntimePollingOutcome.UNKNOWN)
-            finish_operation(operation_handle, RuntimeOperationOutcome.UNKNOWN)
-            raise
-        except PollingTimeoutError:
-            finish_polling_session(polling_handle, RuntimePollingOutcome.TIMEOUT)
-            finish_operation(operation_handle, RuntimeOperationOutcome.TIMEOUT)
-            raise
-        except (KeyboardInterrupt, SystemExit):
-            finish_polling_session(polling_handle, RuntimePollingOutcome.INTERRUPTED)
-            finish_operation(operation_handle, RuntimeOperationOutcome.INTERRUPTED)
-            raise
         except BaseException as error:
-            finish_polling_session(polling_handle, RuntimePollingOutcome.FAILURE)
-            finish_operation(operation_handle, self._operation_outcome_for_error(error))
+            polling.finish_error(error)
             raise
-        finish_polling_session(polling_handle, RuntimePollingOutcome.SUCCESS)
-        finish_operation(operation_handle, RuntimeOperationOutcome.SUCCESS)
+        polling.finish_success()
         return response
 
     def post(self, path: str, **kwargs: Any) -> requests.Response:
@@ -225,8 +189,17 @@ class BaseRequest:
         }
         return headers
 
-    def _merge_headers(self, headers: dict[str, str]) -> dict[str, str]:
-        merged = dict(self.session.headers)
+    def _merge_headers(
+        self,
+        headers: dict[str, Any],
+        *,
+        inherit_session_headers: bool = True,
+    ) -> dict[str, Any]:
+        merged: dict[str, Any]
+        if inherit_session_headers:
+            merged = dict(self.session.headers)
+        else:
+            merged = {str(name): None for name in self.session.headers}
         merged.update(headers)
         return merged
 
@@ -251,15 +224,23 @@ class BaseRequest:
         protocol: str | None = None,
         retry_policy: RetryPolicy | None = None,
         polling_policy: PollingPolicy | None = None,
+        inherit_session_headers: bool = True,
+        deadline: float | None = None,
         **kwargs: Any,
     ) -> RequestContext:
         url = self._build_url(path)
         request_kwargs = self._copy_request_kwargs(kwargs)
         request_kwargs.setdefault("timeout", self.config.timeout)
+        request_kwargs["timeout"] = self.retry_executor.clamp_timeout(
+            request_kwargs["timeout"],
+            deadline,
+        )
 
-        headers = request_kwargs.pop("headers", None)
-        if headers:
-            request_kwargs["headers"] = self._merge_headers(headers)
+        headers = dict(request_kwargs.pop("headers", None) or {})
+        request_kwargs["headers"] = self._merge_headers(
+            headers,
+            inherit_session_headers=inherit_session_headers,
+        )
 
         return RequestContext(
             method=method.upper(),
@@ -291,17 +272,17 @@ class BaseRequest:
         return response
 
     def _send_single_group(self, context: RequestContext) -> requests.Response:
-        group_lease = start_request_group(
+        group = self._runtime_observer.start_request_group(
             method=context.method,
             path=context.path,
             protocol=context.protocol,
             configured_max_attempts=1,
         )
-        bind_request_context(context, group_lease)
+        group.bind(context)
         try:
             return self._send(context)
         finally:
-            finish_request_group(group_lease)
+            group.finish()
 
     def _send_with_retry(
         self,
@@ -315,6 +296,8 @@ class BaseRequest:
         protocol: str | None = None,
         polling_policy: PollingPolicy | None = None,
         context_recorder: list[RequestContext] | None = None,
+        inherit_session_headers: bool = True,
+        deadline: float | None = None,
         **kwargs: Any,
     ) -> requests.Response:
         first_context = self._build_request_context(
@@ -326,17 +309,17 @@ class BaseRequest:
             protocol=protocol,
             retry_policy=retry_policy,
             polling_policy=polling_policy,
+            inherit_session_headers=inherit_session_headers,
+            deadline=deadline,
             **kwargs,
         )
 
-        group_lease = start_request_group(
+        group = self._runtime_observer.start_request_group(
             method=first_context.method,
             path=first_context.path,
             protocol=first_context.protocol,
             configured_max_attempts=retry_policy.max_attempts,
         )
-        retry_waits: list[float] = []
-
         def context_factory(attempt_index: int) -> RequestContext:
             context = self._build_request_context(
                 method,
@@ -347,11 +330,13 @@ class BaseRequest:
                 protocol=protocol,
                 retry_policy=retry_policy,
                 polling_policy=polling_policy,
+                inherit_session_headers=inherit_session_headers,
+                deadline=deadline,
                 **kwargs,
             )
             context.attributes["attempt_index"] = attempt_index
             context.attributes["max_attempts"] = retry_policy.max_attempts
-            bind_request_context(context, group_lease)
+            group.bind(context)
             return context
         try:
             return self.retry_executor.execute(
@@ -362,10 +347,11 @@ class BaseRequest:
                 send_once=self._send,
                 attach_records=self._attach_retry_records,
                 context_recorder=context_recorder,
-                on_wait=retry_waits.append,
+                on_wait=group.add_retry_wait,
+                deadline=deadline,
             )
         finally:
-            finish_request_group(group_lease, retry_wait_seconds=sum(retry_waits))
+            group.finish()
 
     def _run_before_middlewares(self, context: RequestContext) -> None:
         for middleware in self.middlewares:
@@ -412,6 +398,8 @@ class BaseRequest:
         retry_policy: RetryPolicy | None = None,
         protocol: str | None = None,
         polling_policy: PollingPolicy | None = None,
+        inherit_session_headers: bool = True,
+        deadline: float | None = None,
         **kwargs: Any,
     ) -> tuple[requests.Response, ApiCallLogger]:
         context = self._build_request_context(
@@ -423,6 +411,8 @@ class BaseRequest:
             protocol=protocol,
             retry_policy=retry_policy,
             polling_policy=polling_policy,
+            inherit_session_headers=inherit_session_headers,
+            deadline=deadline,
             **kwargs,
         )
         try:
@@ -441,6 +431,8 @@ class BaseRequest:
                     protocol=protocol,
                     polling_policy=polling_policy,
                     context_recorder=context_recorder,
+                    inherit_session_headers=inherit_session_headers,
+                    deadline=deadline,
                     **kwargs,
                 )
                 response_context = context_recorder[-1] if context_recorder else context
@@ -460,11 +452,11 @@ class BaseRequest:
         timeout: float,
         polling_policy: PollingPolicy,
         retry_policy: RetryPolicy | None = None,
-        runtime_polling_lease: RuntimePollingLease | None = None,
+        runtime_polling: RuntimePollingObservation | None = None,
         **kwargs: Any,
     ) -> requests.Response:
-        deadline = time.monotonic() + timeout
-        started_at = time.monotonic()
+        started_at = self.retry_executor.monotonic()
+        deadline = started_at + timeout
         transitions: list[PollingTransition] = []
         last_response: requests.Response | None = None
         last_status: Any = None
@@ -473,16 +465,30 @@ class BaseRequest:
 
         while True:
             attempt_index += 1
-            last_response, last_logger = self._request_without_attach(
-                "GET",
-                path,
-                step_name=POLL_GET_REQUEST_STEP_NAME,
-                response_step_name=POLL_GET_RESPONSE_STEP_NAME,
-                retry_policy=retry_policy,
-                protocol="polling",
-                polling_policy=polling_policy,
-                **kwargs,
-            )
+            try:
+                last_response, last_logger = self._request_without_attach(
+                    "GET",
+                    path,
+                    step_name=POLL_GET_REQUEST_STEP_NAME,
+                    response_step_name=POLL_GET_RESPONSE_STEP_NAME,
+                    retry_policy=retry_policy,
+                    protocol="polling",
+                    polling_policy=polling_policy,
+                    deadline=deadline,
+                    **kwargs,
+                )
+            except RetryDeadlineExceeded as error:
+                raise PollingTimeoutError(
+                    path=path,
+                    timeout=timeout,
+                    last_status=last_status,
+                    last_response=(
+                        error.last_response
+                        if error.last_response is not None
+                        else last_response
+                    ),
+                    transitions=transitions,
+                ) from error
             try:
                 evaluation = evaluate_polling_response(last_response, polling_policy)
             except Exception:
@@ -490,12 +496,12 @@ class BaseRequest:
                 raise
 
             last_status = evaluation.raw_status
-            if runtime_polling_lease is not None:
-                observe_polling_state(runtime_polling_lease, evaluation.state.value)
+            if runtime_polling is not None:
+                runtime_polling.observe_state(evaluation.state.value)
             transitions.append(
                 PollingTransition(
                     attempt_index=attempt_index,
-                    elapsed_seconds=round(time.monotonic() - started_at, 3),
+                    elapsed_seconds=round(self.retry_executor.monotonic() - started_at, 3),
                     state=evaluation.state,
                     raw_status=evaluation.raw_status,
                     response_status_code=last_response.status_code,
@@ -528,7 +534,7 @@ class BaseRequest:
                     transitions=transitions,
                 )
 
-            remaining = deadline - time.monotonic()
+            remaining = deadline - self.retry_executor.monotonic()
             if remaining <= 0:
                 self._attach_polling_transitions(last_logger, transitions)
                 last_logger.attach_success(last_response)
@@ -541,14 +547,13 @@ class BaseRequest:
                 )
 
             sleep_seconds = min(poll_interval, remaining)
-            sleep_started_at = time.monotonic()
+            sleep_started_at = self.retry_executor.monotonic()
             try:
-                time.sleep(sleep_seconds)
+                self.retry_executor.sleeper(sleep_seconds)
             finally:
-                if runtime_polling_lease is not None:
-                    add_polling_sleep(
-                        runtime_polling_lease,
-                        time.monotonic() - sleep_started_at,
+                if runtime_polling is not None:
+                    runtime_polling.add_sleep(
+                        self.retry_executor.monotonic() - sleep_started_at,
                     )
 
     @staticmethod
@@ -560,9 +565,7 @@ class BaseRequest:
 
     def _kwargs_with_session_headers(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         retry_kwargs = dict(kwargs)
-        merged_headers = dict(self.session.headers)
-        merged_headers.update(dict(kwargs.get("headers") or {}))
-        retry_kwargs["headers"] = merged_headers
+        retry_kwargs["headers"] = dict(kwargs.get("headers") or {})
         return retry_kwargs
 
     @staticmethod

@@ -26,14 +26,17 @@ from quality.models import SCHEMA_VERSION, CaseStatus, IntegrityStatus
 from pipeline_reporting.contracts import (
     CaseDetail,
     CollectSummary,
+    ExecutionSummary,
     FlakyChange,
     FlakySummary,
     InterfaceTiming,
     LoadedPipelineSources,
+    PoolExecutionSummary,
     RequestHealth,
     RetryHealth,
     StageStatus,
     TestSummary,
+    RUNNER_EXECUTION_SCHEMA_VERSION,
 )
 
 
@@ -129,6 +132,13 @@ def load_pipeline_sources(
     smoke_paths = tuple(sorted(reports.glob("smoke-tests*.xml")))
     smoke_tests = load_junit_summary(smoke_paths, warnings=warnings)
     smoke_collect = load_collect_summary(reports / "smoke-collect.txt", warnings=warnings)
+    execution = (
+        load_execution_summary(
+            reports / "execution-result.json", warnings=warnings
+        )
+        if include_quality
+        else ExecutionSummary()
+    )
 
     quality_run_id: str | None = None
     quality_facts_available = False
@@ -180,6 +190,7 @@ def load_pipeline_sources(
         unit_tests=unit_tests,
         smoke_tests=smoke_tests,
         smoke_collect=smoke_collect,
+        execution=execution,
         quality_facts_available=quality_facts_available,
         quality_run_id=quality_run_id,
         request_health=request_health,
@@ -188,6 +199,98 @@ def load_pipeline_sources(
         flaky=flaky,
         warnings=tuple(warnings),
     )
+
+
+def load_execution_summary(
+    path: str | Path,
+    *,
+    warnings: list[str] | None = None,
+) -> ExecutionSummary:
+    warning_list = warnings if warnings is not None else []
+    target = Path(path)
+    if not target.is_file():
+        return ExecutionSummary()
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("execution result must be an object")
+        if payload.get("schema_version") != RUNNER_EXECUTION_SCHEMA_VERSION:
+            raise ValueError("unsupported runner execution schema")
+        planned_nodeids = payload.get("planned_nodeids")
+        pool_payloads = payload.get("pool_results")
+        if not isinstance(planned_nodeids, list) or not all(
+            isinstance(nodeid, str) and nodeid.strip()
+            for nodeid in planned_nodeids
+        ):
+            raise ValueError("planned_nodeids must be a string list")
+        if len(set(planned_nodeids)) != len(planned_nodeids):
+            raise ValueError("planned_nodeids contains duplicates")
+        planned_case_count = _required_nonnegative_int(
+            payload.get("planned_case_count"), "planned_case_count"
+        )
+        if planned_case_count != len(planned_nodeids):
+            raise ValueError("planned_case_count differs from planned_nodeids")
+        collection_exit_code = _pytest_exit_code(
+            payload.get("collection_exit_code"), "collection_exit_code"
+        )
+        final_exit_code = _pytest_exit_code(
+            payload.get("final_exit_code"), "final_exit_code"
+        )
+        if not isinstance(pool_payloads, list):
+            raise ValueError("pool_results must be a list")
+        pools = tuple(_pool_execution_summary(item) for item in pool_payloads)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+        warning_list.append(f"Runner 执行事实不可用：{type(error).__name__}")
+        return ExecutionSummary()
+    return ExecutionSummary(
+        available=True,
+        test_target=_text(payload.get("test_target")),
+        planned_case_count=planned_case_count,
+        collection_exit_code=collection_exit_code,
+        final_exit_code=final_exit_code,
+        pools=pools,
+    )
+
+
+def _pool_execution_summary(value: Any) -> PoolExecutionSummary:
+    if not isinstance(value, dict):
+        raise ValueError("pool execution result must be an object")
+    stage_id = _text(value.get("stage_id"))
+    status = _text(value.get("status"))
+    planned_nodeids = value.get("planned_nodeids")
+    if not stage_id:
+        raise ValueError("pool stage_id is required")
+    if status not in {"NOT_RUN", "COMPLETED", "ERROR"}:
+        raise ValueError("pool status is unsupported")
+    if not isinstance(planned_nodeids, list) or not all(
+        isinstance(nodeid, str) and nodeid.strip()
+        for nodeid in planned_nodeids
+    ):
+        raise ValueError("pool planned_nodeids must be a string list")
+    raw_exit = value.get("raw_pytest_exit_code")
+    if raw_exit is not None:
+        raw_exit = _pytest_exit_code(raw_exit, "raw_pytest_exit_code")
+    return PoolExecutionSummary(
+        stage_id=stage_id,
+        status=status,
+        planned_case_count=len(planned_nodeids),
+        raw_pytest_exit_code=raw_exit,
+        exception_type=_text(value.get("exception_type")),
+        junit_path=_text(value.get("junit_path")),
+    )
+
+
+def _required_nonnegative_int(value: Any, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{name} must be a nonnegative integer")
+    return value
+
+
+def _pytest_exit_code(value: Any, name: str) -> int:
+    result = _required_nonnegative_int(value, name)
+    if result > 5:
+        raise ValueError(f"{name} must be between 0 and 5")
+    return result
 
 
 def _load_quality_facts(

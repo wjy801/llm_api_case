@@ -3,13 +3,6 @@
 .env
 .env.*
 !.env.example
-/tests/*
-!/tests/quality/
-!/tests/quality/**
-!/tests/test_protocol_interception_cases.py
-!/tests/test_protocol_interception_payloads.py
-!/tests/test_run_orchestration_boundaries.py
-!/tests/test_run_orchestration_public_contract.py
 
 # Python cache / test cache
 __pycache__/

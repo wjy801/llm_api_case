@@ -34,15 +34,16 @@ test_*.py
 
 | 层级 | 目录/文件 | 职责 | 禁止事项 |
 | --- | --- | --- | --- |
-| 公共请求层 | `common/base_request.py` | HTTP、重试、轮询、中间件和中性运行时观察 | 导入质量模型，放业务路径、模型 ID、真实 payload |
-| 运行时观察层 | `common/runtime_hooks/` | 中性事件、Noop、ContextVar 绑定和生命周期 | 导入 `quality`，实现报告或聚合算法 |
-| 公共业务层 | `common/base_task.py` | 跨模块通用的模型创建、轮询、账单/usage 骨架 | 放单一模块专用逻辑 |
+| 公共请求层 | `common/base_request.py` | HTTP、重试、总 deadline、请求级 Header 和中间件 | 导入质量模型，放业务路径、模型 ID、真实 payload |
+| 运行时观察层 | `common/runtime_hooks/` | 中性 metadata、RuntimeObserver、Noop、ContextVar 和生命周期 | 导入 `quality`，实现报告或聚合算法 |
+| 兼容 Task 门面 | `common/base_task.py` | 保留现有方法、步骤和行为并委托领域能力 | 继续新增领域实现 |
+| 领域能力层 | `common/task_capabilities/` | 可组合的媒体生成与账单能力 | 替代模块四件套、依赖具体业务模块 |
 | 公共断言层 | `common/base_assertions.py` | 状态码、JSONPath、JSON Schema | 放具体业务字段规则 |
 | 工具层 | `util/` | 脱敏、日志、cURL、配置校验、媒体附件 | 持有业务状态 |
 | 质量适配层 | `quality/runtime_adapter.py` | 将 Runtime Hooks 映射到质量采集器 | 被业务用例直接调用 |
 | 质量聚合层 | `quality/metrics/`、`quality/flaky_store/` | Metrics 聚合和 Flaky 状态存储 | 被业务用例直接调用或复制算法 |
 | 执行编排层 | `run_master.py`、`run_orchestration/` | 稳定入口、pytest 调度、产物和质量阶段顺序 | 在业务用例中导入内部 stage |
-| 模块请求层 | `module/<模块>/request.py` | 模块路径、请求参数、质量角色 | 写业务流程和复杂断言 |
+| 模块请求层 | `module/<模块>/request.py` | 模块路径、请求参数、中性 runtime metadata | 写业务流程和复杂断言 |
 | 模块任务层 | `module/<模块>/task.py` | payload builder、业务动作组合 | 重复实现 BaseTask 已有能力 |
 | 模块断言层 | `module/<模块>/assertions.py` | 模块专用断言和字段解析 | 发请求、修改共享状态 |
 | 用例层 | `module/<模块>/test_*.py` | 场景编排和最终断言 | 硬编码域名、Key、复制底层请求代码 |
@@ -110,6 +111,7 @@ from typing import Any
 import requests
 
 from common import BaseRequest
+from common.runtime_hooks import RuntimeOperationKind, runtime_metadata
 
 
 class ExampleModelRequest(BaseRequest):
@@ -119,19 +121,22 @@ class ExampleModelRequest(BaseRequest):
         return self.post(
             self.generation_path,
             json=payload,
-            _quality_operation_name="example_generation",
-            _quality_traffic_role="workload",
+            runtime_metadata=runtime_metadata(
+                RuntimeOperationKind.HTTP,
+                name="example_generation",
+                role="workload",
+            ),
         )
 ```
 
 要求：
 
 - 路径使用相对路径，环境域名由 `BaseRequest` 和 `config.py` 处理。
-- `_quality_operation_name` 使用稳定的业务名称，不能包含 request ID、时间戳或随机数。
+- `runtime_metadata` 使用稳定的业务名称，不能包含 request ID、时间戳或随机数。
 - 真实模型调用使用 `workload`；余额、usage、管理查询使用 `control`。
 - payload 中的 `model` 会被框架自动提取为 Metrics 的 `model_id`。
-- `_quality_*` 参数由框架消费，不会发送给 `requests`。
-- 临时修改 Header 时必须在 `finally` 中恢复，优先复用 BaseTask 的控制接口方法。
+- `runtime_metadata` 由框架消费，不会发送给 `requests`；旧 `_quality_*` 只作兼容，不用于新代码。
+- 单次 Header 通过请求参数传入，禁止为了协议或控制请求临时修改共享 `Session.headers`。
 
 ### 5.2 `assertions.py`
 
@@ -216,7 +221,7 @@ class ExampleModelTask(BaseTask):
 
 - Task 表达业务动作，测试方法只负责场景编排和断言。
 - payload builder 返回新字典，不能复用并修改模块级可变对象。
-- 能使用 `BaseTask.create_chat_completion()`、`create_image_generation()`、`create_and_poll_media_generation()` 时不要重复封装底层请求。
+- 现有媒体/账单流程继续复用 `BaseTask` 兼容入口或对应 task capability；新领域逻辑进入模块 Task，不再向 `BaseTask` 增加方法。
 - 一个 Task 方法内组合多次请求时，必须考虑逻辑调用语义，见“质量语义规范”。
 
 ### 5.5 `response_schemas.py`（推荐）
@@ -373,6 +378,8 @@ response = self.request.post("/v1/items", json=payload)
 - POST 媒体 URL 前置资源附件。
 - 重试和轮询诊断附件。
 
+输入媒体和输出结果捕获由 `CapturePolicy` 分别控制。关闭策略后不得访问外部媒体 URL；捕获、附件或观察失败均不得覆盖业务响应和原始异常。
+
 禁止：
 
 - 在真实用例中直接使用全新 `requests.Session()` 绕过框架。
@@ -464,6 +471,8 @@ response = self.request.poll_get(
 - failure：抛 `PollingFailedError`。
 - unknown：默认抛 `PollingUnknownStateError`。
 - timeout：抛 `PollingTimeoutError`，保留最后状态和迁移序列。
+
+`poll_timeout` 是 HTTP attempt、Retry backoff/`Retry-After` 和 poll sleep 共用的总 deadline。每次 transport timeout 必须截断到剩余预算，预算耗尽后不得再发下一次请求。
 
 媒体任务优先使用 `BaseTask.poll_media_generation_result()` 或 `create_and_poll_media_generation()`。
 
@@ -568,12 +577,20 @@ with ThreadPoolExecutor(max_workers=3) as executor:
 
 ### 14.1 单请求业务动作
 
-模块 Request 使用：
+模块 Request 使用中性 metadata：
 
 ```python
-_quality_operation_name="stable_business_name"
-_quality_traffic_role="workload"  # 或 control
+from common.runtime_hooks import RuntimeOperationKind, runtime_metadata
+
+
+runtime_metadata=runtime_metadata(
+    RuntimeOperationKind.HTTP,
+    name="stable_business_name",
+    role="workload",  # 或 control
+)
 ```
+
+旧 `_quality_operation_name`、`_quality_traffic_role` 继续兼容映射，但新用例不得继续扩散旧名称。
 
 ### 14.2 多请求复合业务动作
 
@@ -688,7 +705,55 @@ polling_responses
 - 修改 `common/runtime_hooks/`：验证 Noop、Hook 故障 fail-open、线程 ContextVar 和 `common` 独立导入。
 - 修改 `quality/metrics/`、`quality/flaky_store/`：验证公开契约、依赖 DAG、产物等价或数据库事务边界。
 - 修改 `run_orchestration/`：验证根入口兼容、collect-only 无副作用、并串行顺序、退出码、环境恢复和质量阶段顺序。
+- 修改下载/Allure 生命周期：验证 Capture 关闭零网络、多池 raw 隔离、最终一次合并/生成和自定义 `--alluredir`。
 - 新增架构边界测试时必须确保文件进入 Git，不能只在本地未跟踪状态下通过。
+
+### 18.1 唯一执行事实规范
+
+Runner 必须先完成一次权威 pytest 收集，再执行最终 nodeid 计划：
+
+```text
+target / -k / -m / --ignore
+-> 权威收集得到 nodeid + marker
+-> scheduling 纯算法分为 parallel / serial
+-> 执行池只消费 nodeid，不再次解释选择条件
+```
+
+必须满足：
+
+- 最终计划等于并行池与串行池的互斥并集；
+- 每个 nodeid 最多执行一次；
+- `expected_case_count` 取自最终计划，不取自控制台文本；
+- 权威空集合返回 pytest exit 5；
+- 单池返回 pytest 原始退出码；
+- 多池只有所有已执行池都为 0 时才返回 0；
+- exit 1 可以继续后续池收集失败证据；exit 2/3/4/5 或 Runner 异常必须停止后续真实接口池；
+- `reports/execution-result.json` 只记录权威计划、池级原始退出事实和最终退出码，不推导 Jenkins 最终状态；
+- Quality、Metrics、Flaky、JUnit 和 Allure 不得改写 pytest 原始退出码。
+
+### 18.2 Allure 单一生命周期规范
+
+Runner 与直接 pytest 共用 `run_orchestration/allure_lifecycle.py`：
+
+```text
+Runner：每池独立临时 raw -> 合并最终 alluredir -> HTML/history 各生成一次
+直接 pytest：session start/finish -> 委托同一生命周期
+collect-only：不清理、不创建、不生成制品
+```
+
+必须保持默认 `allure-results/`、`allure-report/`、`history_report/` 和自定义 `--alluredir`；Allure 清理、合并或 CLI 失败采用 fail-open，不改写 pytest 原始退出码。`module/conftest.py` 只负责 Hook 适配，不复制文件和 subprocess 实现。
+
+报告事实优先级：
+
+```text
+pytest 原始退出码：测试进程事实
+Jenkins 显式阶段状态：流水线事实
+JUnit：统计和失败详情
+Quality / Metrics / Flaky：诊断观察
+Pipeline Conclusion：关注等级
+```
+
+显式 FAILED/BLOCKED 不得被可解析、全绿或陈旧 JUnit 覆盖。Python Reporting 只解析一次 JUnit，并从同一个 `PipelineReport` 生成 Markdown、机器摘要和邮件内容。
 
 ## 19. 本地执行与验收
 
@@ -708,7 +773,7 @@ polling_responses
 没有 PytestCollectionWarning
 没有导入错误
 没有生成 Quality run_id 或质量产物
-没有调用 pytest.main 或真实接口
+没有启动正式执行池或调用真实接口
 ```
 
 ### 19.2 执行指定模块
@@ -730,7 +795,7 @@ polling_responses
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-当前清理后的离线回归基线为 `571 passed`；`module/smoke` collect-only 收集 `41` 项（并发池 `15`、串行池 `26`）。
+离线回归通过数只记录在对应阶段 `code_history`，不作为永久数量合同。当前 `module/smoke` collect-only 审计快照为 `40` 项（并发池 `15`、串行池 `25`），长期合同是集合守恒而不是固定数量。
 
 真实接口会产生调用费用；在未授权时只执行 collect-only 和离线框架测试。
 
@@ -748,6 +813,8 @@ polling_responses
 `pipeline-summary.md` 适用于框架测试、用例收集、接口测试及其组合。报告不暴露 Smoke 专属参数名，未选择的阶段显示“未执行”，不能解释为失败或数据缺失。其生成由 `GENERATE_PIPELINE_SUMMARY` 控制，Jenkins 参数/进程环境优先于 `.env`，默认开启。
 
 `pipeline-summary.md` 是唯一人工质量报告。第 4～6 项均为机器证据，只用于来源审计和问题下钻；新用例或框架改动不得再创建并行的人工汇总报告，也不得把可选机器产物缺失解释为零值或测试失败。
+
+`reports/execution-result.json` 和 `reports/pipeline-summary.json` 是机器传递证据：前者保存 Runner 原始执行事实，后者保证 Markdown 与邮件共享同一解析结果。它们不是新的人工报告入口。
 
 注意：
 
@@ -768,8 +835,8 @@ polling_responses
 [ ] 路径为相对路径，没有硬编码域名
 [ ] 没有硬编码 API Key、账号和敏感数据
 [ ] payload 使用 Python 类型并由 Task/payloads.py 构建
-[ ] 优先复用 BaseTask，没有复制公共创建/轮询/账单逻辑
-[ ] 模块 Request 设置稳定 operation name 和 workload/control 角色
+[ ] 复用现有 BaseTask 兼容入口或 task capability，没有继续扩张 BaseTask
+[ ] 模块 Request 使用中性 runtime_metadata 设置稳定 operation name 和 workload/control 角色
 [ ] 复合业务动作具有正确逻辑调用作用域
 [ ] 业务模块没有导入 quality 或 run_orchestration 内部实现
 [ ] 手动逻辑调用作用域使用 common.runtime_hooks 中性 API
@@ -777,6 +844,8 @@ polling_responses
 [ ] 共享状态、账单和延迟结算用例标记 serial
 [ ] POST 重试具备幂等键或明确 allow_post
 [ ] 轮询使用 PollingPolicy 并设置合理 poll_timeout
+[ ] 单次 Header 使用请求级参数，没有临时修改共享 Session
+[ ] 不需要输入/输出下载时显式使用对应 CapturePolicy
 [ ] 流式响应在 finally 中关闭
 [ ] 通用断言和 JSON Schema 已复用
 [ ] 金额使用 Decimal，账单调用后等待结算查询

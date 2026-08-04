@@ -7,6 +7,7 @@ import requests
 from common.base_request import BaseRequest
 from common.retry import RetryPolicy
 from common.retry_executor import RetryExecutor
+from common.runtime_hooks import RuntimeOperationKind, runtime_metadata
 from quality.storage import read_jsonl
 
 
@@ -64,3 +65,33 @@ def test_retry_fact_relationships_are_preserved_after_runtime_hook_indirection(
     assert operations[0]["traffic_role"] == "workload"
     assert operations[0]["usage"]["input_tokens"] == 3
     assert operations[0]["usage"]["output_tokens"] == 5
+
+
+def test_neutral_runtime_metadata_takes_precedence_and_is_not_sent_to_transport(
+    semantic_runtime,
+):
+    client = BaseRequest(config=DummyConfig(), middlewares=[])
+    sent_kwargs = []
+
+    def request(method, url, **kwargs):
+        sent_kwargs.append(kwargs)
+        return _response(200)
+
+    client.session.request = request  # type: ignore[method-assign]
+
+    client.get(
+        "/v1/items",
+        runtime_metadata=runtime_metadata(
+            RuntimeOperationKind.HTTP,
+            name="neutral-items",
+            role="control",
+        ),
+        _quality_operation_name="legacy-items",
+        _quality_traffic_role="workload",
+    )
+
+    operations = read_jsonl(semantic_runtime.semantic.paths.operations)
+    assert "runtime_metadata" not in sent_kwargs[0]
+    assert "_quality_operation_name" not in sent_kwargs[0]
+    assert operations[0]["operation_name"] == "neutral-items"
+    assert operations[0]["traffic_role"] == "control"

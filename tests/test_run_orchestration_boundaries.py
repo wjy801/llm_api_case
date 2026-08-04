@@ -8,6 +8,7 @@ import run_orchestration
 
 EXPECTED_FILES = {
     "__init__.py",
+    "allure_lifecycle.py",
     "artifacts.py",
     "cli.py",
     "environment.py",
@@ -51,7 +52,7 @@ def test_pytest_main_and_shutil_have_single_owners():
             shutil_owners.append(path.name)
 
     assert pytest_owners == ["pytest_execution.py"]
-    assert shutil_owners == ["artifacts.py"]
+    assert shutil_owners == ["allure_lifecycle.py"]
 
 
 def test_quality_stage_modules_do_not_import_each_other():
