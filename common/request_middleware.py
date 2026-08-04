@@ -5,6 +5,7 @@ from typing import Protocol, cast
 import requests
 
 from common.request_context import RequestContext
+from common.capture import CapturePolicy, DEFAULT_CAPTURE_POLICY
 from common.runtime_hooks import (
     observe_request_failed,
     observe_request_started,
@@ -70,9 +71,15 @@ class LoggingMiddleware:
 
 
 class MediaResourceMiddleware:
+    def __init__(self, capture_policy: CapturePolicy = DEFAULT_CAPTURE_POLICY):
+        self.capture_policy = capture_policy
+
     def before_request(self, context: RequestContext) -> None:
         if context.method == "POST":
-            start_media_downloads(context.kwargs.get("json"))
+            start_media_downloads(
+                context.kwargs.get("json"),
+                policy=self.capture_policy,
+            )
 
     def after_response(self, context: RequestContext, response: requests.Response) -> None:
         return None
@@ -95,10 +102,12 @@ class RuntimeObservationMiddleware:
 QualityMetricsMiddleware = RuntimeObservationMiddleware
 
 
-def default_request_middlewares() -> list[RequestMiddleware]:
+def default_request_middlewares(
+    capture_policy: CapturePolicy = DEFAULT_CAPTURE_POLICY,
+) -> list[RequestMiddleware]:
     middlewares: list[RequestMiddleware] = [
         RuntimeObservationMiddleware(),
-        MediaResourceMiddleware(),
+        MediaResourceMiddleware(capture_policy),
         RedactionMiddleware(),
         LoggingMiddleware(),
     ]

@@ -7,11 +7,19 @@ import inspect
 from pathlib import Path
 import re
 from typing import Any, TypeVar
-from urllib.parse import unquote, urlparse
 
 import allure
 from allure_commons.types import AttachmentType
 import requests
+
+from common.capture import DEFAULT_CAPTURE_POLICY
+from util.downloads import (
+    attachment_type_for_file,
+    download_url,
+    filename_from_url,
+    sanitize_filename,
+    unique_file_path,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -42,16 +50,26 @@ class BaseDecorators:
     def download_links_from_poll_get(self, func: F) -> F:
         @wraps(func)
         def wrapper(instance: Any, path: str, *args: Any, **kwargs: Any) -> requests.Response:
+            capture_policy = getattr(instance, "capture_policy", DEFAULT_CAPTURE_POLICY)
             polling_policy = kwargs.get("polling_policy")
             result_json_path = getattr(polling_policy, "result_json_path", None)
             response = func(instance, path, *args, **kwargs)
-            if result_json_path is None:
+            if result_json_path is None or not capture_policy.capture_output_results:
                 return response
-
-            link_value = self._extract_json_path_value(response, result_json_path)
-            for url in self._extract_urls(link_value):
-                file_path = self._download_url(url, DOWNLOAD_DIR)
-                self._record_model_result_file(file_path)
+            try:
+                link_value = self._extract_json_path_value(response, result_json_path)
+                for url in self._extract_urls(link_value):
+                    try:
+                        file_path = self._download_url(
+                            url,
+                            DOWNLOAD_DIR,
+                            max_bytes=capture_policy.max_output_bytes,
+                        )
+                        self._record_model_result_file(file_path)
+                    except Exception as error:
+                        self._attach_download_failure(url, error)
+            except Exception as error:
+                self._attach_download_failure("<result-json-path>", error)
             return response
 
         return wrapper  # type: ignore[return-value]
@@ -133,76 +151,46 @@ class BaseDecorators:
             for item in value:
                 self._collect_urls(item, urls)
 
-    def _download_url(self, url: str, download_dir: Path) -> Path:
-        download_dir.mkdir(parents=True, exist_ok=True)
-        file_path = self._unique_file_path(download_dir / self._filename_from_url(url))
-
-        with requests.get(url, stream=True, timeout=600) as response:
-            response.raise_for_status()
-            with file_path.open("wb") as file:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        file.write(chunk)
-
-        return file_path
+    def _download_url(
+        self,
+        url: str,
+        download_dir: Path,
+        *,
+        max_bytes: int | None = None,
+    ) -> Path:
+        return download_url(
+            url,
+            download_dir,
+            fallback_name="download",
+            timeout=600,
+            max_bytes=max_bytes,
+        )
 
     def _filename_from_url(self, url: str) -> str:
-        parsed = urlparse(url)
-        name = Path(unquote(parsed.path)).name
-        if name:
-            return self._sanitize_filename(name)
-        return "download"
+        return filename_from_url(url, fallback_name="download")
 
     @staticmethod
     def _sanitize_filename(filename: str) -> str:
-        sanitized = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", filename).strip(". ")
-        return sanitized or "download"
+        return sanitize_filename(filename, fallback_name="download")
 
     @staticmethod
     def _unique_file_path(file_path: Path) -> Path:
-        if not file_path.exists():
-            return file_path
-
-        stem = file_path.stem
-        suffix = file_path.suffix
-        parent = file_path.parent
-        index = 1
-        while True:
-            candidate = parent / f"{stem}_{index}{suffix}"
-            if not candidate.exists():
-                return candidate
-            index += 1
+        return unique_file_path(file_path)
 
     @staticmethod
     def _attachment_type_for_file(file_path: Path) -> AttachmentType | str:
-        suffix = file_path.suffix.lower()
-        if suffix in {".jpg", ".jpeg"}:
-            return AttachmentType.JPG
-        if suffix == ".png":
-            return AttachmentType.PNG
-        if suffix == ".gif":
-            return AttachmentType.GIF
-        if suffix == ".svg":
-            return AttachmentType.SVG
-        if suffix in {".txt", ".log", ".json", ".csv", ".xml", ".html"}:
-            return AttachmentType.TEXT
-        if suffix == ".pdf":
-            return AttachmentType.PDF
-        if suffix == ".mp4":
-            return AttachmentType.MP4
-        if suffix == ".webm":
-            return AttachmentType.WEBM
-        if suffix == ".ogg":
-            return AttachmentType.OGG
-        if suffix == ".mov":
-            return "video/quicktime"
-        if suffix == ".avi":
-            return "video/x-msvideo"
-        if suffix == ".mkv":
-            return "video/x-matroska"
-        if suffix in {".m4v", ".3gp"}:
-            return "video/mp4"
-        return "application/octet-stream"
+        return attachment_type_for_file(file_path)
+
+    @staticmethod
+    def _attach_download_failure(url: str, error: Exception) -> None:
+        try:
+            allure.attach(
+                f"url: {url}\nerror: {type(error).__name__}: {error}",
+                name="模型结果下载失败",
+                attachment_type=AttachmentType.TEXT,
+            )
+        except Exception:
+            return
 
 
 _default_decorators = BaseDecorators()

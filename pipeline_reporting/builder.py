@@ -43,6 +43,7 @@ def build_pipeline_report(
         unit_tests=sources.unit_tests,
         smoke_tests=sources.smoke_tests,
         smoke_collect=sources.smoke_collect,
+        execution=sources.execution,
         request_health=sources.request_health,
         retry_health=sources.retry_health,
         interface_timings=sources.interface_timings,
@@ -62,6 +63,20 @@ def _test_stage(
     if not enabled:
         return StageResult(display_name, StageStatus.NOT_RUN, "本轮参数未启用")
     explicit = sources.stage_statuses.get(stage_name)
+    if explicit is StageStatus.FAILED:
+        return StageResult(display_name, StageStatus.FAILED, "阶段执行失败")
+    if explicit in {StageStatus.BLOCKED, StageStatus.NOT_RUN}:
+        return StageResult(display_name, StageStatus.BLOCKED, "被前序失败或中断阻止")
+    if (
+        stage_name == "real_smoke"
+        and sources.execution.available
+        and sources.execution.final_exit_code not in (None, 0)
+    ):
+        return StageResult(
+            display_name,
+            StageStatus.FAILED,
+            f"pytest 进程退出码 {sources.execution.final_exit_code}",
+        )
     if tests.available:
         status = (
             StageStatus.FAILED
@@ -69,10 +84,6 @@ def _test_stage(
             else StageStatus.PASSED
         )
         return StageResult(display_name, status, _test_summary_text(tests))
-    if explicit is StageStatus.FAILED:
-        return StageResult(display_name, StageStatus.FAILED, "阶段执行失败，未生成可用 JUnit")
-    if explicit in {StageStatus.BLOCKED, StageStatus.NOT_RUN}:
-        return StageResult(display_name, StageStatus.BLOCKED, "被前序失败或中断阻止")
     return StageResult(display_name, StageStatus.NO_DATA, "已选择执行，但测试产物不可用")
 
 
@@ -82,17 +93,17 @@ def _collect_stage(
 ) -> StageResult:
     if not context.smoke_collect_enabled:
         return StageResult("用例收集", StageStatus.NOT_RUN, "本轮参数未启用")
+    explicit = sources.stage_statuses.get("smoke_collect")
+    if explicit is StageStatus.FAILED:
+        return StageResult("用例收集", StageStatus.FAILED, "收集失败")
+    if explicit in {StageStatus.BLOCKED, StageStatus.NOT_RUN}:
+        return StageResult("用例收集", StageStatus.BLOCKED, "被前序失败或中断阻止")
     if sources.smoke_collect.available:
         return StageResult(
             "用例收集",
             StageStatus.PASSED,
             _collect_summary_text(sources.smoke_collect),
         )
-    explicit = sources.stage_statuses.get("smoke_collect")
-    if explicit is StageStatus.FAILED:
-        return StageResult("用例收集", StageStatus.FAILED, "收集失败")
-    if explicit in {StageStatus.BLOCKED, StageStatus.NOT_RUN}:
-        return StageResult("用例收集", StageStatus.BLOCKED, "被前序失败或中断阻止")
     return StageResult("用例收集", StageStatus.NO_DATA, "已选择执行，但收集清单不可用")
 
 

@@ -32,13 +32,15 @@ common/
   base_request.py          # BaseRequest：HTTP 请求、请求中间件、重试、轮询
   base_assertions.py       # BaseAssertions：状态码、JSONPath、JSON Schema 断言
   base_decorators.py       # Allure step、模型结果附件、下载结果挂载
-  base_task.py             # 通用业务骨架：创建、轮询、账单/用量查询
+  base_task.py             # 旧 Task API 的稳定兼容门面
+  task_capabilities/       # 可组合的媒体生成与账单领域能力
+  capture.py               # 输入/输出下载 CapturePolicy
   request_context.py       # 单次请求上下文
   request_middleware.py    # Redaction、Logging、MediaResource 中间件
   retry.py                 # RetryPolicy 与重试判定/退避计算
   polling.py               # PollingPolicy、PollingState 与轮询异常
   context_executor.py      # 在线程池提交边界传播 ContextVar
-  runtime_hooks/           # 中性运行时观察协议、Noop 实现与生命周期
+  runtime_hooks/           # 中性观察协议、RuntimeObserver、Noop 与生命周期
   test_context.py          # 用例级变量传递与清理回调
   __init__.py              # 延迟导出通用对象
 
@@ -47,11 +49,12 @@ util/
   config_validation.py     # 配置校验、类型解析、错误聚合
   curl_builder.py          # 脱敏 cURL 生成
   media_resources.py       # POST 前 input.media.url 异步下载与 Allure 挂载
+  downloads.py             # 下载、命名、限额与附件类型单一实现源
   redaction.py             # 统一脱敏规则
   __init__.py
 
 module/
-  conftest.py              # pytest fixture、Allure 清理、报告生成、test_context fixture
+  conftest.py              # pytest fixture 与直接 pytest 的 Allure 生命周期适配
   image_model/             # 图片模型真实用例
   video_model/             # 视频模型真实用例
   smoke/                   # Smoke 用例、响应 Schema、业务 payload builder
@@ -75,14 +78,16 @@ tests/
 dev/                       # 各阶段设计方案
 code_history/              # 各阶段独立变更历史
 config.py                  # Settings 与环境配置加载
-master_service.py          # pytest nodeid 收集服务
+master_service.py          # 收集/分池旧入口的稳定兼容门面
 run_master.py              # 稳定兼容入口，用户与 Jenkins 命令保持不变
 pipeline_reporting/        # Jenkins 全场景执行摘要、阶段状态与兜底输入
 run_orchestration/
   cli.py                   # CLI 参数解析和 pytest 参数透传
   runner.py                # 测试执行状态机与异常收口
-  pytest_execution.py      # pytest、xdist、JUnit 参数和退出码
-  artifacts.py             # Allure/JUnit 产物生命周期
+  pytest_execution.py      # pytest 权威收集、池执行、参数分相和原始退出码
+  scheduling.py            # 不依赖 pytest 的纯分池与集合守恒算法
+  artifacts.py             # JUnit 路径与 Runner 执行事实产物
+  allure_lifecycle.py      # 多池 Allure raw 合并、HTML/history 单一生命周期
   environment.py           # Quality 配置、run_id 和阶段环境变量
   quality_*_stage.py       # 事实归并、语义、指标与 Flaky 阶段
   quality_pipeline.py      # 质量阶段顺序编排
@@ -118,8 +123,10 @@ module 业务用例
 -> quality 采集并归并质量事实、语义、Metrics 和 Flaky 状态
 
 run_master.py 稳定入口
--> run_orchestration 负责执行与质量阶段编排
--> master_service 负责 nodeid 收集与并串行分池
+-> pytest_execution 完成一次权威收集并形成最终 nodeid/marker 计划
+-> scheduling 从同一计划派生并行池和串行池
+-> runner 只执行已分配 nodeid，保留池级 pytest 原始退出事实
+-> master_service 通过兼容委托保留旧导入路径
 ```
 
 依赖方向必须保持：
@@ -137,6 +144,8 @@ common -X-> quality
 | --- | --- |
 | HTTP、Retry、Polling、SSE 执行语义 | `common/` |
 | 通用观察事件和生命周期 | `common/runtime_hooks/` |
+| 跨模块媒体/账单领域能力 | `common/task_capabilities/` |
+| 输入/输出捕获策略与下载原语 | `common/capture.py`、`util/downloads.py` |
 | 观察事件映射到质量模型 | `quality/runtime_adapter.py` |
 | 指标来源、校验和分粒度聚合 | `quality/metrics/` |
 | Flaky SQLite、迁移、投影和治理 | `quality/flaky_store/` |
@@ -250,6 +259,8 @@ RequestMiddleware.on_exception(context, error)
 
 每次请求使用独立 `RequestContext`，请求参数会尽量深拷贝，避免中间件污染调用方 payload。`on_exception()` 中间件自身失败时不会覆盖原始网络异常。
 
+单次协议或控制请求通过请求级 `headers` 覆盖，不临时 clear/update/reset 共享 `Session.headers`。输入媒体和输出结果下载由同一个 `CapturePolicy` 控制；`CapturePolicy.disabled()` 会同时关闭两类外部下载，下载失败不会覆盖接口响应。
+
 ### 配置校验与安全保护
 
 `util/config_validation.py` 提供：
@@ -348,7 +359,7 @@ response = client.poll_get(
 )
 ```
 
-状态机能够记录状态迁移序列，区分等待、成功、失败、未知状态和超时。
+状态机能够记录状态迁移序列，区分等待、成功、失败、未知状态和超时。`poll_timeout` 是整个 Polling 的总 deadline，单次 HTTP timeout、Retry backoff/`Retry-After` 与轮询 sleep 都只能消费这一个预算。
 
 媒体生成类任务默认使用 `DEFAULT_MEDIA_POLLING_POLICY`，由 `BaseTask.poll_media_generation_result()` 和 `BaseTask.create_and_poll_media_generation()` 自动传入。直接调用 `BaseRequest.poll_get()` 时必须显式传入 `PollingPolicy`。
 
@@ -434,7 +445,7 @@ class XxxTask(BaseTask):
     pass
 ```
 
-`task.py` 只服务当前目录下的测试用例，用于封装本模块独有的业务方法。通用创建、轮询和业务组合骨架优先沉淀到 `BaseTask`。不同模型目录的 `task.py` 不应互相引用。
+`task.py` 只服务当前目录下的测试用例，用于封装本模块独有的业务方法。`BaseTask` 保留现有创建、轮询和账单入口作为兼容门面，真实实现委托 `common/task_capabilities/`；新领域逻辑进入对应模块 Task，确有跨模块复用时再建立窄能力对象，不再扩张 `BaseTask`。不同模型目录的 `task.py` 不应互相引用。
 
 ## 用例写法
 
@@ -474,18 +485,18 @@ class TestImageGenerations:
 
 ## 执行入口
 
-`master_service.py` 负责收集 pytest nodeid 和 marker，并支持把用例拆分为普通并发池与 `serial` 串行池。直接执行可输出收集结果：
+`master_service.py` 保留旧的收集与分池导入路径；实际 pytest 收集由 `run_orchestration/pytest_execution.py` 唯一拥有，分池算法由 `scheduling.py` 唯一拥有。直接执行兼容入口仍可输出收集结果：
 
 ```powershell
 .\.venv\Scripts\python.exe master_service.py
 ```
 
-`run_master.py` 是稳定兼容入口，只重导出 `run()`、`main()` 和路径常量；用户、Jenkins 和已有脚本不需要改变命令。实际流程由 `run_orchestration/` 承担：先通过 `master_service.collect_test_case_items()` 收集 nodeid 和 marker，再组织 pytest、并串行池、JUnit/Allure 和质量阶段。
+`run_master.py` 是稳定兼容入口，只重导出 `run()`、`main()` 和路径常量；用户、Jenkins 和已有脚本不需要改变命令。Runner 将 `-k`、`-m`、`--ignore` 等选择条件放入同一次权威收集，形成不可变 nodeid/marker 计划；正式执行只消费计划，不再二次选测。
 
 关键职责保持单一所有者：
 
 - 只有 `pytest_execution.py` 调用 `pytest.main()`。
-- 只有 `artifacts.py` 保存和恢复 Allure 文件。
+- 只有 `allure_lifecycle.py` 清理、合并并生成 Allure 制品；Runner 每池写独立临时 raw，最终只合并和生成一次。
 - `environment.py` 负责 Quality 阶段环境变量设置与恢复。
 - `quality_pipeline.py` 只决定质量阶段顺序，不承载聚合算法和报告渲染。
 
@@ -510,11 +521,13 @@ class TestImageGenerations:
 传入 `-n/--numprocesses` 后启用“并发优先、串行收尾”：
 
 ```text
-收集全部用例及 marker
+使用 target、-k、-m、--ignore 等条件权威收集最终 nodeid 与 marker
 -> 未标记 serial 的用例使用 pytest-xdist 并发执行
 -> 并发池结束后，标记 serial 的用例单进程执行
+-> pytest 2/3/4/5 或 Runner 异常立即停止后续池；pytest 1 可继续收集失败证据
 -> 两个用例池分别生成 JUnit 文件
--> Jenkins 归档报告，邮件摘要汇总统计
+-> Runner 原子写入 reports/execution-result.json
+-> Jenkins 归档报告，邮件消费与 Markdown 相同的 Python 结构化摘要
 ```
 
 计费、余额、共享账号或其他依赖共享状态的用例应使用：
@@ -532,6 +545,8 @@ pytestmark = pytest.mark.serial
 ```
 
 `--collect-only` 在加载 Quality 配置前短路，不生成 run_id、不写质量产物，也不调用真实接口。
+
+退出码保持 pytest 原始语义：权威空集合返回 5；单池直接返回原始码；多池只有全部已执行池均为 0 时才返回 0。退出码 2/3/4/5 不会被压成 1 或 0，也不会继续启动后续真实接口池。
 
 直接执行框架单测：
 
@@ -648,7 +663,6 @@ OBSERVING（观察中）
 ```ini
 addopts =
     --alluredir=allure-results
-    --clean-alluredir
 testpaths = module
 python_files = test_*.py
 python_classes = Test*
@@ -658,7 +672,9 @@ python_functions = test_*
 执行 pytest 后：
 
 - `allure-results/` 保存 Allure 原始结果。
-- `module/conftest.py` 在 pytest 结束后按配置执行 `allure generate`。
+- `run_orchestration/allure_lifecycle.py` 是清理、合并、HTML 与 history 的唯一实现源。
+- Runner 为 parallel/serial 池分配独立临时 raw，合并到最终目录后只生成一次报告；自定义 `--alluredir` 仍作为最终目录。
+- 直接运行 pytest 时，`module/conftest.py` 只负责把 session start/finish 委托给同一个生命周期。
 - `allure-report/` 保存 HTML 报告。
 - 开启 `GENERATE_HISTORY_REPORT=TRUE` 后会生成历史报告并按 `HISTORY_REPORT_KEEP_LIMIT` 清理。
 
@@ -768,6 +784,8 @@ SMOKE_TARGET=module/smoke/test_response_body_validation.py
 流水线当前发布：
 
 - `reports/pipeline-summary.md`：本轮 Jenkins 参数、阶段和执行效果的默认人工入口。
+- `reports/execution-result.json`：权威计划、池级 pytest 原始退出码、JUnit 路径和 Runner 最终退出码。
+- `reports/pipeline-summary.json`：Markdown 与邮件共享的结构化摘要；不是第二份人工报告。
 - JUnit 测试结果。
 - Allure 报告入口。
 - `allure-results/**` 原始结果。
@@ -794,7 +812,7 @@ SUCCESS 且上一轮为 FAILURE/UNSTABLE -> FIXED 邮件
 其他连续 SUCCESS -> 不发送
 ```
 
-邮件正文包含构建状态、分支、提交、JUnit 汇总、用例收集数量、执行参数和报告入口，不附带完整 Console 日志、`.env`、API Key、请求体或响应体。
+邮件正文包含构建状态、JUnit 汇总、用例收集数量和报告入口，不附带完整 Console 日志、`.env`、API Key、请求体或响应体。JUnit 只由 Python Reporting 业务解析一次；Markdown、`pipeline-summary.json`、邮件主题和邮件 HTML 均由同一个 `PipelineReport` 生成，Jenkins 不再用 Groovy 正则重复解析 XML。
 
 邮件报告入口包括：
 
@@ -814,9 +832,10 @@ SMTP 授权码只配置在 Jenkins 中，不写入 `Jenkinsfile` 或仓库。
 - 框架测试失败会使构建失败。
 - Smoke 收集失败会使构建失败。
 - 真实 Smoke 返回非零退出码会使构建失败。
+- 真实 Smoke 的 pytest 2/3/4/5 会保留原码并停止后续池。
 - Jenkins 超时和节点执行异常会反映到构建状态。
 
-Pipeline Summary 汇总 Jenkins/pytest 原始事实和可用质量指标，不修改构建结果。当前明确不做：
+事实优先级固定为：pytest 原始退出码决定测试进程事实，Jenkins 阶段状态决定流水线事实，JUnit 提供统计与失败详情，Quality/Metrics/Flaky 仅提供诊断。Pipeline Summary 汇总这些事实，不修改构建结果。当前明确不做：
 
 - 基于测试通过率的强制阻断。
 - 性能基线、P95/P99 趋势门禁。

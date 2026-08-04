@@ -11,6 +11,7 @@ from common.polling import PollingFailedError, PollingPolicy, PollingTimeoutErro
 from common.request_context import RequestContext
 from common.request_middleware import LoggingMiddleware
 from common.retry import RetryPolicy
+from common.retry_executor import RetryExecutor
 from tests.mock_helpers import (
     FakeApiCallLogger,
     SequenceTransport,
@@ -371,6 +372,52 @@ def test_polling_request_uses_retry_policy(monkeypatch):
     assert sleep_calls == [0.2]
     assert created_loggers[-1].success_responses == [response]
     assert "succeeded" in created_loggers[-1].polling_transitions[-1]
+
+
+def test_polling_deadline_stops_retry_backoff_before_budget_is_exceeded():
+    class FakeClock:
+        now = 0.0
+
+        def monotonic(self):
+            return self.now
+
+        def sleep(self, seconds):
+            self.now += seconds
+
+    clock = FakeClock()
+    client = BaseRequest(
+        config=DummyConfig(),
+        middlewares=[],
+        retry_executor=RetryExecutor(
+            sleeper=clock.sleep,
+            monotonic=clock.monotonic,
+        ),
+    )
+    timeouts: list[float] = []
+
+    def request(method, url, **kwargs):
+        timeouts.append(float(kwargs["timeout"]))
+        return make_response(url, status_code=503, json_text='{"status": "running"}')
+
+    client.session.request = request  # type: ignore[method-assign]
+
+    with pytest.raises(PollingTimeoutError) as error:
+        client.poll_get(
+            "/v1/media/tasks/task-001",
+            poll_interval=0.1,
+            poll_timeout=1,
+            polling_policy=PollingPolicy(),
+            retry_policy=RetryPolicy(
+                max_attempts=2,
+                base_delay=2,
+                jitter=False,
+                max_elapsed=None,
+            ),
+        )
+
+    assert timeouts == [1]
+    assert clock.now == 0
+    assert error.value.last_response is not None
 
 
 class MutatePayloadMiddleware:

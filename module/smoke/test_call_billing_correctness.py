@@ -87,33 +87,6 @@ class TestCallBillingCorrectness:
             usage_records_responses,
             after_balance_response,
         )
-    @pytest.mark.skip("余额计算方式精度不足，自动化用例可信度不足")
-    def test_stream_text_model_outputs_total_tokens(self):
-        before_balance_response = self.smoke_task.query_account_balance_for_billing(self.smoke_request)
-        response = self.smoke_task.create_stream_chat_completion(self.smoke_request)
-
-        self.smoke_assertions.assert_status_code(response, 200)
-        stream_result = self.smoke_task.interrupt_stream_chat_completion(
-            response,
-            max_duration_seconds=50,
-            print_raw_lines=False,
-        )
-        usage_records_response = self.smoke_task.query_usage_records_by_request_id_for_billing(
-            self.smoke_request,
-            stream_result.request_id,
-        )
-        self.smoke_assertions.print_glm5_actual_stream_cost(usage_records_response)
-        after_balance_response = (
-            self.smoke_task.query_account_balance_after_settlement_for_billing(
-                self.smoke_request,
-            )
-        )
-
-        self.smoke_assertions.assert_call_billing_deduction_matches(
-            before_balance_response,
-            usage_records_response,
-            after_balance_response,
-        )
 
     def test_failed_sync_image_model_call_does_not_deduct_balance(self):
         before_balance_response = self.smoke_task.query_account_balance_for_billing(self.smoke_request)

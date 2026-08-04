@@ -19,6 +19,16 @@ from common.retry import (
 )
 
 
+class RetryDeadlineExceeded(TimeoutError):
+    def __init__(
+        self,
+        *,
+        last_response: requests.Response | None = None,
+    ) -> None:
+        super().__init__("retry deadline exhausted")
+        self.last_response = last_response
+
+
 class RetryExecutor:
     """Execute a single-send callable under a RetryPolicy.
 
@@ -46,10 +56,12 @@ class RetryExecutor:
         attach_records: Callable[[RequestContext, list[RetryAttemptRecord]], None],
         context_recorder: list[RequestContext] | None = None,
         on_wait: Callable[[float], None] | None = None,
+        deadline: float | None = None,
     ) -> requests.Response:
         retry_records: list[RetryAttemptRecord] = []
 
         if not is_method_retry_allowed(method, request_kwargs, policy):
+            self.require_remaining(deadline)
             context = context_factory(1)
             self._prepare_context(context, policy, 1, retry_records)
             self._record_context(context_recorder, context)
@@ -59,6 +71,7 @@ class RetryExecutor:
         last_response: requests.Response | None = None
 
         for attempt_index in range(1, policy.max_attempts + 1):
+            self.require_remaining(deadline, last_response=last_response)
             context = context_factory(attempt_index)
             self._prepare_context(context, policy, attempt_index, retry_records)
             self._record_context(context_recorder, context)
@@ -84,6 +97,8 @@ class RetryExecutor:
                 attach_records(context, retry_records)
                 if not self._can_retry_within_elapsed(policy, started_at, wait_seconds):
                     raise
+                if not self._can_wait_within_deadline(deadline, wait_seconds):
+                    raise RetryDeadlineExceeded(last_response=last_response) from error
                 self.sleeper(wait_seconds)
                 self._notify_wait(on_wait, wait_seconds)
                 continue
@@ -106,6 +121,8 @@ class RetryExecutor:
             attach_records(context, retry_records)
             if not self._can_retry_within_elapsed(policy, started_at, wait_seconds):
                 return response
+            if not self._can_wait_within_deadline(deadline, wait_seconds):
+                raise RetryDeadlineExceeded(last_response=response)
             self.sleeper(wait_seconds)
             self._notify_wait(on_wait, wait_seconds)
 
@@ -141,6 +158,47 @@ class RetryExecutor:
         if policy.max_elapsed is None:
             return True
         return (self.monotonic() - started_at + wait_seconds) <= policy.max_elapsed
+
+    def remaining(self, deadline: float | None) -> float | None:
+        if deadline is None:
+            return None
+        return deadline - self.monotonic()
+
+    def require_remaining(
+        self,
+        deadline: float | None,
+        *,
+        last_response: requests.Response | None = None,
+    ) -> float | None:
+        remaining = self.remaining(deadline)
+        if remaining is not None and remaining <= 0:
+            raise RetryDeadlineExceeded(last_response=last_response)
+        return remaining
+
+    def clamp_timeout(
+        self,
+        timeout: Any,
+        deadline: float | None,
+    ) -> Any:
+        remaining = self.require_remaining(deadline)
+        if remaining is None:
+            return timeout
+        if isinstance(timeout, tuple):
+            return tuple(
+                remaining if value is None else min(float(value), remaining)
+                for value in timeout
+            )
+        if timeout is None:
+            return remaining
+        return min(float(timeout), remaining)
+
+    def _can_wait_within_deadline(
+        self,
+        deadline: float | None,
+        wait_seconds: float,
+    ) -> bool:
+        remaining = self.remaining(deadline)
+        return remaining is None or wait_seconds < remaining
 
     @staticmethod
     def _notify_wait(on_wait: Callable[[float], None] | None, wait_seconds: float) -> None:

@@ -119,7 +119,7 @@ class TestMediaResourceMiddleware:
 
         monkeypatch.setattr(
             "common.request_middleware.start_media_downloads",
-            lambda value: captured_payloads.append(value),
+            lambda value, **_kwargs: captured_payloads.append(value),
         )
 
         middleware = MediaResourceMiddleware()

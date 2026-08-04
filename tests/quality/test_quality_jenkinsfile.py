@@ -45,42 +45,28 @@ def test_real_smoke_enables_quality_reports_and_archives_artifacts():
     assert content.index("Remove-Item -LiteralPath $reportsPath -Recurse -Force") < content.index("New-Item -ItemType Directory -Force -Path $reportsPath")
 
 
-def test_email_summary_is_compact_and_excludes_quality_stage_details():
+def test_email_consumes_the_shared_python_report_without_reparsing_junit():
     content = JENKINSFILE.read_text(encoding="utf-8")
     email_content = content[
-        content.index("String buildResultSummaryHtml") : content.index("String normalizeBranchName")
+        content.index("void notifyByEmail") : content.index("@NonCPS\nString htmlEscape")
     ]
 
-    assert "passed: 0" in content
-    assert "failedTests: []" in content
-    assert "失败用例（最多 5 项）" in content
-    assert "测试报告未生成，构建可能在测试阶段前失败。" in content
-    assert "请查看控制台日志" not in email_content
-    assert "详细执行与质量数据请在构建产物中查看。" in content
-    assert "${junit.tests} 总计 / ${junit.passed} 通过 / ${failedCount} 失败 / ${junit.skipped} 跳过" in content
-    assert "${smoke.total} 项（并发 ${smoke.parallel} / 串行 ${smoke.serial}）" in content
-    assert '>用例收集</td>' in email_content
-    assert "parts << '用例收集'" in email_content
-    assert 'parts << "接口测试（${params.SMOKE_TARGET}）"' in email_content
-    assert '>Smoke</td>' not in email_content
-    assert "buildExecutionSummary()" in email_content
-    assert ">构建详情</a>" not in email_content
-    assert ">控制台日志</a>" not in email_content
-    assert "fileExists('reports/pipeline-summary.md')" in email_content
-    assert "artifact/reports/pipeline-summary.md" in email_content
-    assert ">流水线执行摘要</a>" in email_content
-    assert ">Allure 报告</a>" in email_content
-    assert ">JUnit 报告</a>" in email_content
-    assert ">构建产物</a>" in email_content
-    assert email_content.count("reportLinks <<") == 4
+    assert "Map readJunitSummary()" not in content
+    assert "Map readSmokeCollectSummary()" not in content
+    assert "parseJunitXmlText" not in content
+    assert "parseSmokeCollectText" not in content
+    assert "reports/pipeline-summary.json" in content
+    assert "reports/pipeline-email-subject.txt" in content
+    assert "reports/pipeline-email.html" in content
+    assert "readFile('reports/pipeline-email-subject.txt').trim()" in email_content
+    assert "readFile('reports/pipeline-email.html')" in email_content
+    assert "buildFallbackEmailHtml(status)" in email_content
+    assert "emailext(" in email_content
+    assert "body: body" in email_content
     assert "gate-report" not in email_content
     assert "P0 质量门禁报告" not in email_content
     assert "p1-observation" not in email_content
     assert "P1 观察报告" not in email_content
-    assert "normalizeBranchName(env.BRANCH_NAME ?: env.GIT_BRANCH)" in content
-    assert "shortGitCommit(env.GIT_COMMIT)" in content
-    assert 'subject: "【${statusText}】${env.JOB_NAME} #${env.BUILD_NUMBER}｜${resultText}"' in content
-    assert "body: buildResultSummaryHtml(status, junit, smoke)" in content
     assert "'dev2'" not in content
 
 
