@@ -11,7 +11,14 @@ from run_orchestration import environment as orchestration_environment
 from run_orchestration import artifacts, pytest_execution, quality_pipeline, scheduling
 
 
-def _set_quality_enabled(monkeypatch) -> None:
+@pytest.fixture(autouse=True)
+def _isolate_runner_quality_environment(monkeypatch) -> None:
+    """Keep Runner unit tests independent from the local Quality switch."""
+    monkeypatch.setenv("QUALITY_ENABLE", "0")
+
+
+def _set_quality_enabled(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("QUALITY_ENABLE", "1")
     monkeypatch.setattr(
         orchestration_environment,
         "resolve_parent_quality_config",
@@ -19,7 +26,7 @@ def _set_quality_enabled(monkeypatch) -> None:
             enabled=True,
             run_id=None,
             execution_id=None,
-            output_dir=Path("reports/quality"),
+            output_dir=tmp_path / "quality",
         ),
     )
 
@@ -98,8 +105,8 @@ def test_split_test_cases_separates_serial_pool():
     assert serial_cases == ["test_b.py::test_serial"]
 
 
-def test_run_without_numprocesses_runs_all_cases_once(monkeypatch):
-    _set_quality_enabled(monkeypatch)
+def test_run_without_numprocesses_runs_all_cases_once(monkeypatch, tmp_path):
+    _set_quality_enabled(monkeypatch, tmp_path)
     monkeypatch.setattr(
         pytest_execution,
         "collect_test_case_items",
@@ -155,8 +162,8 @@ def test_run_with_numprocesses_runs_parallel_pool_before_serial_pool(monkeypatch
     ]
 
 
-def test_run_with_empty_serial_pool_skips_serial_stage(monkeypatch):
-    _set_quality_enabled(monkeypatch)
+def test_run_with_empty_serial_pool_skips_serial_stage(monkeypatch, tmp_path):
+    _set_quality_enabled(monkeypatch, tmp_path)
     monkeypatch.setattr(
         pytest_execution,
         "collect_test_case_items",
@@ -176,8 +183,8 @@ def test_run_with_empty_serial_pool_skips_serial_stage(monkeypatch):
     assert _generated_junit_name(calls[0]) == "quality-parallel.xml"
 
 
-def test_run_with_empty_parallel_pool_runs_serial_only(monkeypatch):
-    _set_quality_enabled(monkeypatch)
+def test_run_with_empty_parallel_pool_runs_serial_only(monkeypatch, tmp_path):
+    _set_quality_enabled(monkeypatch, tmp_path)
     monkeypatch.setattr(
         pytest_execution,
         "collect_test_case_items",
@@ -218,8 +225,8 @@ def test_run_collect_only_prints_pool_counts_without_execution(monkeypatch, caps
     assert "Serial pool cases: 1" in captured.out
 
 
-def test_run_continues_serial_pool_after_parallel_failure(monkeypatch):
-    _set_quality_enabled(monkeypatch)
+def test_run_continues_serial_pool_after_parallel_failure(monkeypatch, tmp_path):
+    _set_quality_enabled(monkeypatch, tmp_path)
     monkeypatch.setattr(
         pytest_execution,
         "collect_test_case_items",
@@ -250,16 +257,7 @@ def test_run_continues_serial_pool_after_parallel_failure(monkeypatch):
 
 
 def test_run_with_quality_disabled_does_not_add_default_junit(monkeypatch):
-    monkeypatch.setattr(
-        orchestration_environment,
-        "resolve_parent_quality_config",
-        lambda: QualityRuntimeConfig(
-            enabled=False,
-            run_id=None,
-            execution_id=None,
-            output_dir=Path("reports/quality"),
-        ),
-    )
+    monkeypatch.setenv("QUALITY_ENABLE", "0")
     monkeypatch.setattr(
         pytest_execution,
         "collect_test_case_items",
@@ -432,7 +430,10 @@ def test_runner_writes_pool_level_execution_facts(monkeypatch):
     assert payload["pool_results"][0]["raw_pytest_exit_code"] == 0
 
 
-def test_quality_finalization_failure_does_not_override_pytest_exit(monkeypatch):
+def test_quality_finalization_failure_does_not_override_pytest_exit(
+    monkeypatch, tmp_path
+):
+    _set_quality_enabled(monkeypatch, tmp_path)
     monkeypatch.setattr(
         pytest_execution,
         "collect_test_case_items",

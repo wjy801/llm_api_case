@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+import pytest
 
 
 # Framework tests must be collectable in a clean checkout without a developer
@@ -17,3 +20,39 @@ os.environ.update(
         "GENERATE_HISTORY_REPORT": "FALSE",
     }
 )
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config: pytest.Config) -> None:
+    """Do not mix implicit framework-test Allure data with business results."""
+    if _has_explicit_allure_results_arg(config.invocation_params.args):
+        return
+    config.option.allure_report_dir = None
+
+
+def _has_explicit_allure_results_arg(args: tuple[str, ...]) -> bool:
+    return any(
+        argument == "--alluredir" or argument.startswith("--alluredir=")
+        for argument in args
+    )
+
+
+@pytest.fixture(autouse=True)
+def isolate_framework_runner_artifacts(monkeypatch, tmp_path: Path) -> None:
+    """Redirect production-default Runner artifacts used by framework tests."""
+    from run_orchestration import artifacts, pytest_execution
+
+    monkeypatch.setattr(
+        pytest_execution,
+        "DEFAULT_ALLURE_RESULTS_DIR",
+        tmp_path / "allure-results",
+    )
+    write_execution_result = artifacts.write_execution_result_atomic
+    monkeypatch.setattr(
+        artifacts,
+        "write_execution_result_atomic",
+        lambda payload: write_execution_result(
+            payload,
+            tmp_path / "execution-result.json",
+        ),
+    )
