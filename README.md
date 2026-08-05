@@ -11,7 +11,8 @@
 - 协议与业务层已覆盖 OpenAI Chat Completions、Responses、Anthropic Messages，以及图片、视频和真实 Smoke 链路。
 - 质量链已实现事实归并、完整性校验、失败分类、请求指标和机器可读产物。
 - 语义与指标链已实现逻辑调用、HTTP/SSE/异步耗时、Token/媒体用量覆盖；Flaky 历史、状态机与治理命令完整保留。
-- 已建立确定性离线学习模块：标准库 loopback 服务提供 9 个固定场景，18 项基础设施门禁验证协议、隔离、并发计数和线程回收；当前 7 条业务分类用例覆盖四件套、默认 Middleware 与 Retry。
+- 已建立确定性离线学习模块：标准库 loopback 服务提供 9 个固定场景，18 项基础设施门禁验证协议、隔离、并发计数和线程回收；截至 2026-08-05，23 条业务用例覆盖 6 组能力分类和 1 条黄金路径，Runner 计划为 23 条并发、0 条串行。
+- 当前离线模块本地 Runner、Quality、Metrics 与 Flaky 验收已通过；实际 Jenkins 因阶段4核心文件尚未进入可 Checkout 的 SCM 提交而阻塞，完整框架回归仍有 4 项仓库边界失败，因此整体发布状态为 `BLOCKED`。
 - Jenkins 已支持参数化执行、并发优先与串行收尾、每轮 Pipeline 执行摘要、JUnit/Allure、邮件直达链接和构建产物自动清理。
 - `reports/pipeline-summary.md` 是唯一人工质量报告；缺失的 Metrics 或 Flaky 数据只降级对应章节，不按零计算，也不覆盖 pytest/Jenkins 结果。
 
@@ -71,6 +72,11 @@ module/
     conftest.py            # 服务、Request、Capture 与 Runtime 观察 fixture
     test_request_pipeline.py # Request 与默认 Middleware 分类
     test_retry.py          # GET/POST Retry 资格与挽救分类
+    test_polling.py        # Polling success/failure/unknown/timeout 分类
+    test_context_cleanup.py # TestContext 提取、转换与 LIFO cleanup 分类
+    test_capture_assertions.py # Capture、Schema 与脱敏诊断分类
+    test_concurrency_context.py # ContextVar、Session 与 Header 隔离分类
+    test_full_framework_flow.py # 稳定成功主链黄金路径
 
 quality/
   collector.py             # Case/请求事实采集
@@ -152,10 +158,13 @@ OfflineService（127.0.0.1 + 随机端口 + 固定响应序列）
 -> OfflineFrameworkTask 构建 payload 和业务动作
 -> OfflineFrameworkRequest 复用 BaseRequest/Middleware/Retry
 -> OfflineFrameworkAssertions 复用 BaseAssertions
+-> Request/Middleware/Retry/Polling/TestContext/Capture 分类
+-> ContextVar/Session/Header 并发隔离分类
+-> 稳定成功黄金路径组合能力
 -> pytest / Runner / Allure / 可选 Quality 消费同一执行事实
 ```
 
-当前离线业务用例只覆盖 Request、默认 Middleware 和 Retry。`offline_service.py` 虽然提供了 Polling、上下文、Capture 和并发所需的协议端点，但对应业务分类用例及黄金路径尚不存在，不计入已实现能力和验收范围。
+当前离线业务模块已经实现 Request、默认 Middleware、Retry、Polling、TestContext、Capture、Assertions、并发隔离和黄金路径。所有示例复用框架公共实现，不建立第二套 Request、Retry、Polling、Capture、Runner 或 Quality 实现。
 
 依赖方向必须保持：
 
@@ -183,7 +192,7 @@ common -X-> quality
 
 ## 安装依赖
 
-Python 最低版本为 3.11（框架使用 `datetime.UTC` 等 Python 3.11 标准库能力）；本轮离线基线验证版本为 Python 3.14.6。
+Python 最低版本为 3.11（框架使用 `datetime.UTC` 等 Python 3.11 标准库能力）；截至 2026-08-05，本轮阶段6本地验收使用 Python 3.12.10。
 
 从仓库根目录创建独立虚拟环境：
 
@@ -451,9 +460,9 @@ def test_chain(self, test_context):
     request_id = test_context.require("request_id", expected_type=str)
 ```
 
-### 两层离线回归与故障模拟
+### 三层离线回归与故障模拟
 
-框架按验证成本分成两层离线能力。第一层位于 `tests/mock_helpers.py`，用于快速、精确地验证核心分支，不启动网络服务：
+框架按验证成本分成三层离线能力。第一层位于 `tests/mock_helpers.py`，用于快速、精确地验证核心分支，不启动网络服务：
 
 已提供：
 
@@ -465,11 +474,25 @@ def test_chain(self, test_context):
 - `polling_responses()`：快速生成轮询状态序列。
 - `FakeStreamResponse`：模拟 SSE/流式响应中断和 chunk 行为。
 
-第二层位于 `module/offline_framework_example/offline_service.py`，使用 Python 标准库在 `127.0.0.1` 随机端口启动确定性 HTTP 服务。它冻结 9 个场景，覆盖 Echo、瞬时 429/503、幂等 POST、Polling 成功/失败/未知/超时和超限下载；所有请求均经过真实 `requests.Session`、`BaseRequest`、Middleware 与 Retry 链路，并由 loopback 守卫阻止访问合同外地址。
+第二层位于 `module/offline_framework_example/offline_service.py`，使用 Python 标准库在 `127.0.0.1` 随机端口启动确定性 HTTP 服务。它冻结 9 个场景，覆盖 Echo、瞬时 429/503、幂等 POST、Polling 成功/失败/未知/超时和超限下载；`tests/test_offline_service.py` 的 18 项门禁验证协议、实例隔离、并发计数、线程回收和 IPv4 loopback 边界。
 
-`tests/test_offline_service.py` 的 18 项门禁负责验证离线协议、实例隔离、并发计数、线程回收和 IPv4 loopback 边界。`module/offline_framework_example/` 当前另有 7 条业务分类用例：3 条验证 Request/默认 Middleware，4 条验证 Retry 资格与挽救；它们全部属于并发池，不依赖真实服务、账号或凭据。
+第三层是 `module/offline_framework_example/test_*.py` 的真实四件套业务验证。截至 2026-08-05，共 23 条用例：Request/Middleware 3 条、Retry 4 条、Polling 4 条、TestContext/cleanup 4 条、Capture/Assertions 4 条、并发隔离 3 条、黄金路径 1 条；它们全部属于并发池，不依赖真实服务、账号或凭据。
 
-这两层能力用于框架核心回归和学习，不替代真实环境业务用例。Polling、TestContext、Capture、并发与黄金路径分类尚未实现，不能把离线服务已提供的协议端点误认为对应业务分类已经完成。
+三层能力用于框架核心回归和学习，不替代真实环境业务用例。推荐按以下顺序阅读：
+
+```text
+offline_service.py 与 conftest.py
+-> request.py / task.py / assertions.py / decorators.py
+-> test_request_pipeline.py
+-> test_retry.py
+-> test_polling.py
+-> test_context_cleanup.py
+-> test_capture_assertions.py
+-> test_concurrency_context.py
+-> test_full_framework_flow.py
+```
+
+分类用例回答“哪项能力或边界失效”，并发分类回答“Context、Session 与请求级状态是否隔离”，黄金路径只回答“已验证能力能否沿稳定成功主链组合成立”。Polling failure、unknown、timeout、非幂等 POST 禁止重试、Capture 超限和 cleanup 多错误等互斥异常继续保留在分类用例，不扩张黄金路径。
 
 ## 分层规范
 
@@ -595,6 +618,107 @@ class TestOfflineEcho:
 ```powershell
 .\.venv\Scripts\python.exe run_master.py module/offline_framework_example -n 2
 ```
+
+### 离线学习模块运行级验收
+
+Quality 关闭时使用唯一临时目录运行，避免历史报告污染：
+
+```powershell
+$python = (Resolve-Path .\.venv\Scripts\python.exe).Path
+$evidenceRoot = Join-Path `
+  ([System.IO.Path]::GetTempPath()) `
+  ('offline-example-disabled-' + [guid]::NewGuid().ToString('N'))
+$junitPath = Join-Path $evidenceRoot 'offline-disabled.xml'
+$allurePath = Join-Path $evidenceRoot 'allure'
+New-Item -ItemType Directory -Path $evidenceRoot -Force | Out-Null
+
+$env:QUALITY_ENABLE = '0'
+$env:GENERATE_ALLURE_REPORT = 'FALSE'
+$env:GENERATE_HISTORY_REPORT = 'FALSE'
+try {
+  & $python run_master.py module/offline_framework_example `
+    -n 2 `
+    --junitxml=$junitPath `
+    --alluredir=$allurePath `
+    -q
+  if ($LASTEXITCODE -ne 0) { throw 'Offline example failed.' }
+}
+finally {
+  @(
+    'QUALITY_ENABLE',
+    'GENERATE_ALLURE_REPORT',
+    'GENERATE_HISTORY_REPORT'
+  ) | ForEach-Object {
+    Remove-Item ('Env:' + $_) -ErrorAction SilentlyContinue
+  }
+}
+```
+
+当前预期为 23 条通过、Quality 文件为 0；JUnit 与 Allure 原始结果位于 `$evidenceRoot`。
+
+Quality、Semantic 和 Metrics 开启时使用全新的 run ID 与输出目录：
+
+```powershell
+$python = (Resolve-Path .\.venv\Scripts\python.exe).Path
+$runId = 'offline-doc-' + [guid]::NewGuid().ToString('N')
+$evidenceRoot = Join-Path ([System.IO.Path]::GetTempPath()) $runId
+$qualityRoot = Join-Path $evidenceRoot 'quality'
+$junitPath = Join-Path $evidenceRoot 'offline-quality.xml'
+$allurePath = Join-Path $evidenceRoot 'allure'
+New-Item -ItemType Directory -Path $qualityRoot -Force | Out-Null
+
+$env:QUALITY_ENABLE = '1'
+$env:QUALITY_SEMANTIC_ENABLE = '1'
+$env:QUALITY_METRICS_ENABLE = '1'
+$env:QUALITY_FLAKY_HISTORY_ENABLE = '0'
+$env:QUALITY_FLAKY_STATE_ENABLE = '0'
+$env:QUALITY_OUTPUT_DIR = $qualityRoot
+$env:QUALITY_RUN_ID = $runId
+$env:QUALITY_EXECUTION_ID = $runId
+$env:USE_CHINA_ENVIRONMENT = 'FALSE'
+$env:GENERATE_ALLURE_REPORT = 'FALSE'
+$env:GENERATE_HISTORY_REPORT = 'FALSE'
+try {
+  & $python run_master.py module/offline_framework_example `
+    -n 2 `
+    --junitxml=$junitPath `
+    --alluredir=$allurePath `
+    -q
+  if ($LASTEXITCODE -ne 0) { throw 'Offline Quality example failed.' }
+}
+finally {
+  @(
+    'QUALITY_ENABLE',
+    'QUALITY_SEMANTIC_ENABLE',
+    'QUALITY_METRICS_ENABLE',
+    'QUALITY_FLAKY_HISTORY_ENABLE',
+    'QUALITY_FLAKY_STATE_ENABLE',
+    'QUALITY_OUTPUT_DIR',
+    'QUALITY_RUN_ID',
+    'QUALITY_EXECUTION_ID',
+    'USE_CHINA_ENVIRONMENT',
+    'GENERATE_ALLURE_REPORT',
+    'GENERATE_HISTORY_REPORT'
+  ) | ForEach-Object {
+    Remove-Item ('Env:' + $_) -ErrorAction SilentlyContinue
+  }
+}
+```
+
+完整 23 条模块当前允许 Metrics 因 `usage_incomplete` 进入受控 `degraded`；黄金路径的 usage 完整，Metrics 必须为 `aggregated`。
+
+黄金路径稳定 nodeid：
+
+```powershell
+$goldenNodeId = 'module/offline_framework_example/test_full_framework_flow.py::TestFullFrameworkFlow::test_offline_async_media_flow'
+.\.venv\Scripts\python.exe -m pytest $goldenNodeId -q
+```
+
+当前运行级关系为 `4 operations / 7 request groups / 1 polling session / 8 request events`，并包含一次 `503 -> 200` Retry 挽救和 `pending -> pending -> success` Polling。该数量是当前快照，业务断言不直接读取 Quality 内部模型。
+
+Flaky 需要同一黄金 nodeid、稳定 case 身份、独占绝对 SQLite 数据库以及逐轮新 run ID。执行轮数按 `stable_min_samples + 1` 动态决定；当前阈值为 3，阶段5的 4 轮真实样本状态为 `OBSERVING -> OBSERVING -> STABLE -> STABLE`。
+
+本地示例把 JUnit、Allure 和 Quality 机器产物写入唯一 `$evidenceRoot`；Jenkins 使用 `reports/smoke-tests*.xml`、`allure-results/**`、`reports/quality/**` 和 `reports/pipeline-summary.md`。Flaky 数据库必须位于 Workspace 外的 Job 独占绝对本地路径。
 
 执行指定目录：
 
@@ -844,6 +968,21 @@ SMOKE_TARGET=module/smoke
 TEST_PARALLEL_WORKERS=2
 ```
 
+离线框架示例运行级验收：
+
+```text
+RUN_FRAMEWORK_TESTS=false
+RUN_COLLECT_ONLY=false
+RUN_REAL_SMOKE=true
+GENERATE_PIPELINE_SUMMARY=true
+ALWAYS_SEND_REPORT_EMAIL=false
+USE_CHINA_ENVIRONMENT=FALSE
+SMOKE_TARGET=module/offline_framework_example
+TEST_PARALLEL_WORKERS=2
+```
+
+该构建要求阶段4并发分类和黄金路径文件已经进入 Jenkins 实际 Checkout 的提交。业务测试 HTTP 只访问本轮 fixture 提供的 `127.0.0.1` 地址；`Prepare Python Env` 仍可能访问 pip/npm 镜像，因此这里证明的是“业务接口零外部请求”，不是整个构建物理断网。
+
 只执行指定业务文件：
 
 ```text
@@ -952,10 +1091,14 @@ CI 变更前建议按“确定性离线门禁 → 全部框架回归 → 真实�
 .\.venv\Scripts\python.exe run_master.py module/smoke --collect-only -q
 ```
 
-当前基线使用 Python 3.14.6，并在 `QUALITY_ENABLE=FALSE` 的干净质量开关条件下验证：
+截至 2026-08-05，当前工作树使用 Python 3.12.10，验收快照如下。数量用于识别意外丢失，不替代集合守恒和零失败发布合同：
 
-- 框架测试：`686 passed`。
 - 离线服务合同：`18 passed`。
-- 离线业务分类：收集并通过 `7` 项（并发池 `7`、串行池 `0`）。
-- Smoke collect-only：收集 `40` 项（并发池 `15`、串行池 `25`），只验证收集和分池，不执行真实接口。
+- 离线业务模块：`23 passed`（并发池 `23`、串行池 `0`）。
+- Quality、Semantic、Metrics 与 Flaky：本地运行级门禁通过；完整模块 Metrics 唯一受控降级原因为 `usage_incomplete`。
+- 黄金路径：`4 operations / 7 request groups / 1 polling session / 8 request events`。
+- Smoke collect-only：`40` 项（并发池 `15`、串行池 `25`），只验证收集和分池。
+- 完整框架回归：收集 `686` 项，`682 passed / 4 failed`；阶段5无集合外新增失败，但发布门禁仍为 `BLOCKED`。
+- 实际 Jenkins：`BLOCKED`，因为 `test_concurrency_context.py` 和 `test_full_framework_flow.py` 尚未进入当前 HEAD，不能被 `checkout scm`取得。
+- 整体发布：`BLOCKED`。本地门禁通过不能替代实际 Jenkins 和完整回归零失败。
 
