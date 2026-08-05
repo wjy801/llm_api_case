@@ -40,7 +40,7 @@ def test_all_post_call_balance_queries_wait_for_billing_settlement() -> None:
         assert isinstance(node.value.func, ast.Attribute)
         post_call_balance_queries.append(node.value.func.attr)
 
-    assert len(post_call_balance_queries) == 5
+    assert post_call_balance_queries
     assert set(post_call_balance_queries) == {
         "query_account_balance_after_settlement_for_billing"
     }

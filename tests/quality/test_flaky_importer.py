@@ -17,6 +17,7 @@ from quality.models import (
     IssueSeverity,
     RunStatus,
 )
+from quality.storage import write_json_atomic
 
 
 def _request(artifacts, database_path, **updates):
@@ -111,6 +112,54 @@ def test_untrusted_run_is_rejected(
 
     assert result.status is FlakyImportStatus.FAILED
     assert result.issues[0].code == error_code
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error_code"),
+    (
+        ("run_id", "foreign-run", "run_id_mismatch"),
+        ("manifest_version", "quality.manifest.unsupported", "manifest_version_unsupported"),
+        ("schema_version", "quality.schema.unsupported", "p0_schema_unsupported"),
+        ("status", "merging", "manifest_incomplete"),
+    ),
+)
+def test_manifest_exact_field_validation_preserves_error_codes(
+    p0_artifact_factory,
+    tmp_path,
+    field,
+    value,
+    error_code,
+):
+    artifacts = p0_artifact_factory()
+    manifest = dict(artifacts.manifest)
+    manifest[field] = value
+    write_json_atomic(artifacts.merged / "manifest.json", manifest)
+
+    result = import_flaky_history(_request(artifacts, tmp_path / "history.sqlite3"))
+
+    assert result.status is FlakyImportStatus.FAILED
+    assert result.issues[0].code == error_code
+
+
+def test_manifest_exact_field_validation_preserves_first_error_priority(
+    p0_artifact_factory,
+    tmp_path,
+):
+    artifacts = p0_artifact_factory()
+    manifest = dict(artifacts.manifest)
+    manifest.update(
+        {
+            "run_id": "foreign-run",
+            "manifest_version": "quality.manifest.unsupported",
+            "schema_version": "quality.schema.unsupported",
+            "status": "merging",
+        }
+    )
+    write_json_atomic(artifacts.merged / "manifest.json", manifest)
+
+    result = import_flaky_history(_request(artifacts, tmp_path / "history.sqlite3"))
+
+    assert result.issues[0].code == "run_id_mismatch"
 
 
 def test_degraded_run_with_safe_warning_is_importable(

@@ -11,6 +11,15 @@ from typing import Any, Sequence, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from util.artifact_io import (
+    ArtifactFormatError,
+    ArtifactJsonLineError,
+    exact_field_mismatches,
+    file_sha256,
+    read_json_object as read_artifact_json_object,
+    read_jsonl_values,
+)
+
 from quality.aggregator import MANIFEST_VERSION
 from quality.flaky_models import (
     CaseObservationCandidate,
@@ -770,19 +779,30 @@ def _validate_run_and_manifest(
         normalize_flaky_environment(run_record.environment)
     except ValueError as error:
         raise FlakyImportError("environment_unsupported", str(error)) from error
-    if manifest.get("run_id") != requested_run_id:
+
+    mismatches = exact_field_mismatches(
+        manifest,
+        {
+            "run_id": requested_run_id,
+            "manifest_version": MANIFEST_VERSION,
+            "schema_version": SCHEMA_VERSION,
+            "status": "complete",
+        },
+    )
+    field = mismatches[0] if mismatches else None
+    if field == "run_id":
         raise FlakyImportError("run_id_mismatch", "manifest run_id differs from request")
-    if manifest.get("manifest_version") != MANIFEST_VERSION:
+    if field == "manifest_version":
         raise FlakyImportError(
             "manifest_version_unsupported",
             "manifest version is missing or unsupported",
         )
-    if manifest.get("schema_version") != SCHEMA_VERSION:
+    if field == "schema_version":
         raise FlakyImportError(
             "p0_schema_unsupported",
             "P0 schema version is missing or unsupported",
         )
-    if manifest.get("status") != "complete":
+    if field == "status":
         raise FlakyImportError(
             "manifest_incomplete",
             "P0 manifest status must be complete",
@@ -922,20 +942,17 @@ def _read_model(path: Path, model: type[TModel]) -> TModel:
 
 def _read_json_object(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        return read_artifact_json_object(path)
+    except ArtifactFormatError as error:
+        raise FlakyImportError(
+            "artifact_schema_invalid",
+            f"{path.name} must contain a JSON object",
+        ) from error
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise FlakyImportError(
             "artifact_invalid_json",
             f"cannot read {path.name}: {type(error).__name__}",
         ) from error
-    if not isinstance(payload, dict):
-        raise FlakyImportError(
-            "artifact_schema_invalid",
-            f"{path.name} must contain a JSON object",
-        )
-    return payload
-
-
 def _read_jsonl_models(
     path: Path,
     model: type[TModel],
@@ -943,24 +960,25 @@ def _read_jsonl_models(
 ) -> tuple[TModel, ...]:
     records: list[TModel] = []
     try:
-        with path.open("r", encoding="utf-8") as handle:
-            for line_number, line in enumerate(handle, start=1):
-                if not line.strip():
-                    continue
-                try:
-                    payload = json.loads(line)
-                    record = model.model_validate(payload)
-                except (json.JSONDecodeError, ValidationError) as error:
-                    raise FlakyImportError(
-                        "artifact_schema_invalid",
-                        f"{path.name}:{line_number} is invalid: {type(error).__name__}",
-                    ) from error
-                if getattr(record, "run_id", None) != run_id:
-                    raise FlakyImportError(
-                        "foreign_run_record",
-                        f"{path.name}:{line_number} belongs to another run",
-                    )
-                records.append(record)
+        for item in read_jsonl_values(path):
+            try:
+                record = model.model_validate(item.value)
+            except ValidationError as error:
+                raise FlakyImportError(
+                    "artifact_schema_invalid",
+                    f"{path.name}:{item.number} is invalid: {type(error).__name__}",
+                ) from error
+            if getattr(record, "run_id", None) != run_id:
+                raise FlakyImportError(
+                    "foreign_run_record",
+                    f"{path.name}:{item.number} belongs to another run",
+                )
+            records.append(record)
+    except ArtifactJsonLineError as error:
+        raise FlakyImportError(
+            "artifact_schema_invalid",
+            f"{path.name}:{error.line_number} is invalid: {type(error.error).__name__}",
+        ) from error
     except OSError as error:
         raise FlakyImportError(
             "artifact_read_failed",
@@ -1049,11 +1067,7 @@ def _safe_audit_text(value: str, limit: int) -> str:
 
 
 def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return file_sha256(path)
 
 
 def _full_hash(payload: dict[str, Any]) -> str:

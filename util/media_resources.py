@@ -4,14 +4,21 @@ from collections.abc import Iterable
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from pathlib import Path
-import re
 import threading
 from typing import Any
-from urllib.parse import unquote, urlparse
 
 import allure
 from allure_commons.types import AttachmentType
-import requests
+
+from common.capture import CapturePolicy, DEFAULT_CAPTURE_POLICY
+from util.downloads import (
+    DownloadCancelled,
+    attachment_type_for_file,
+    download_url,
+    filename_from_url,
+    sanitize_filename,
+    unique_file_path,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +40,7 @@ class MediaDownloadTask:
     done_event: threading.Event = field(default_factory=threading.Event)
     file_path: Path | None = None
     error: str | None = None
+    max_bytes: int | None = None
 
     @property
     def is_done(self) -> bool:
@@ -45,10 +53,20 @@ _MEDIA_DOWNLOAD_TASKS: ContextVar[list[MediaDownloadTask] | None] = ContextVar(
 )
 
 
-def start_media_downloads(payload: Any) -> list[MediaDownloadTask]:
+def start_media_downloads(
+    payload: Any,
+    *,
+    policy: CapturePolicy = DEFAULT_CAPTURE_POLICY,
+) -> list[MediaDownloadTask]:
+    if not policy.capture_input_media:
+        return []
     tasks = []
     for media_type, url in _extract_media_entries(payload):
-        task = MediaDownloadTask(media_type=media_type, url=url)
+        task = MediaDownloadTask(
+            media_type=media_type,
+            url=url,
+            max_bytes=policy.max_input_bytes,
+        )
         thread = threading.Thread(
             target=_run_download,
             args=(task,),
@@ -115,8 +133,9 @@ def _run_download(task: MediaDownloadTask) -> None:
             task.url,
             MEDIA_DOWNLOAD_DIR,
             task.cancel_event,
+            max_bytes=task.max_bytes,
         )
-    except MediaDownloadCancelled:
+    except (MediaDownloadCancelled, DownloadCancelled):
         task.error = MEDIA_DOWNLOAD_STEP_FALLBACK
     except Exception as error:
         task.error = f"{type(error).__name__}: {error}"
@@ -161,28 +180,20 @@ def _download_media_url(
     url: str,
     download_dir: Path,
     cancel_event: threading.Event,
+    *,
+    max_bytes: int | None = None,
 ) -> Path:
-    if cancel_event.is_set():
-        raise MediaDownloadCancelled()
-
-    download_dir.mkdir(parents=True, exist_ok=True)
-    file_path = _unique_file_path(download_dir / _filename_from_url(url))
-
     try:
-        with requests.get(url, stream=True, timeout=MEDIA_DOWNLOAD_TIMEOUT) as response:
-            response.raise_for_status()
-            with file_path.open("wb") as file:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if cancel_event.is_set():
-                        raise MediaDownloadCancelled()
-                    if chunk:
-                        file.write(chunk)
-    except Exception:
-        if file_path.exists():
-            file_path.unlink()
-        raise
-
-    return file_path
+        return download_url(
+            url,
+            download_dir,
+            fallback_name="media",
+            timeout=MEDIA_DOWNLOAD_TIMEOUT,
+            cancel_event=cancel_event,
+            max_bytes=max_bytes,
+        )
+    except DownloadCancelled as error:
+        raise MediaDownloadCancelled() from error
 
 
 def _fallback_text(task: MediaDownloadTask, status: str) -> str:
@@ -197,59 +208,16 @@ def _fallback_text(task: MediaDownloadTask, status: str) -> str:
 
 
 def _filename_from_url(url: str) -> str:
-    parsed = urlparse(url)
-    name = Path(unquote(parsed.path)).name
-    if name:
-        return _sanitize_filename(name)
-    return "media"
+    return filename_from_url(url, fallback_name="media")
 
 
 def _sanitize_filename(filename: str) -> str:
-    sanitized = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", filename).strip(". ")
-    return sanitized or "media"
+    return sanitize_filename(filename, fallback_name="media")
 
 
 def _unique_file_path(file_path: Path) -> Path:
-    if not file_path.exists():
-        return file_path
-
-    stem = file_path.stem
-    suffix = file_path.suffix
-    parent = file_path.parent
-    index = 1
-    while True:
-        candidate = parent / f"{stem}_{index}{suffix}"
-        if not candidate.exists():
-            return candidate
-        index += 1
+    return unique_file_path(file_path)
 
 
 def _attachment_type_for_file(file_path: Path) -> AttachmentType | str:
-    suffix = file_path.suffix.lower()
-    if suffix in {".jpg", ".jpeg"}:
-        return AttachmentType.JPG
-    if suffix == ".png":
-        return AttachmentType.PNG
-    if suffix == ".gif":
-        return AttachmentType.GIF
-    if suffix == ".svg":
-        return AttachmentType.SVG
-    if suffix in {".txt", ".log", ".json", ".csv", ".xml", ".html"}:
-        return AttachmentType.TEXT
-    if suffix == ".pdf":
-        return AttachmentType.PDF
-    if suffix == ".mp4":
-        return AttachmentType.MP4
-    if suffix == ".webm":
-        return AttachmentType.WEBM
-    if suffix == ".ogg":
-        return AttachmentType.OGG
-    if suffix == ".mov":
-        return "video/quicktime"
-    if suffix == ".avi":
-        return "video/x-msvideo"
-    if suffix == ".mkv":
-        return "video/x-matroska"
-    if suffix in {".m4v", ".3gp"}:
-        return "video/mp4"
-    return "application/octet-stream"
+    return attachment_type_for_file(file_path)

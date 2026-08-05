@@ -28,21 +28,24 @@ test_*.py
 
 新用例不需要直接调用质量聚合器。只要通过标准入口执行并遵循本文质量语义规范，框架会自动采集。
 
-`run_master.py` 继续作为用户和 Jenkins 的稳定入口；内部调度、环境恢复与各质量阶段分别位于 `run_orchestration/`，用例目录和执行命令不变。
+`run_master.py` 是用户和 Jenkins 共用的稳定入口；内部调度、环境恢复与各质量阶段分别位于 `run_orchestration/`。
 
 ## 3. 分层职责
 
 | 层级 | 目录/文件 | 职责 | 禁止事项 |
 | --- | --- | --- | --- |
-| 公共请求层 | `common/base_request.py` | HTTP、重试、轮询、中间件和中性运行时观察 | 导入质量模型，放业务路径、模型 ID、真实 payload |
-| 运行时观察层 | `common/runtime_hooks/` | 中性事件、Noop、ContextVar 绑定和生命周期 | 导入 `quality`，实现报告或聚合算法 |
-| 公共业务层 | `common/base_task.py` | 跨模块通用的模型创建、轮询、账单/usage 骨架 | 放单一模块专用逻辑 |
+| 公共请求层 | `common/base_request.py` | HTTP、重试、总 deadline、请求级 Header 和中间件 | 导入质量模型，放业务路径、模型 ID、真实 payload |
+| 运行时观察层 | `common/runtime_hooks/` | 中性 metadata、RuntimeObserver、Noop、ContextVar 和生命周期 | 导入 `quality`，实现报告或聚合算法 |
+| 兼容 Task 门面 | `common/base_task.py` | 保留现有方法、步骤和行为并委托领域能力 | 继续新增领域实现 |
+| 领域能力层 | `common/task_capabilities/` | 可组合的媒体生成与账单能力 | 替代模块四件套、依赖具体业务模块 |
 | 公共断言层 | `common/base_assertions.py` | 状态码、JSONPath、JSON Schema | 放具体业务字段规则 |
 | 工具层 | `util/` | 脱敏、日志、cURL、配置校验、媒体附件 | 持有业务状态 |
 | 质量适配层 | `quality/runtime_adapter.py` | 将 Runtime Hooks 映射到质量采集器 | 被业务用例直接调用 |
 | 质量聚合层 | `quality/metrics/`、`quality/flaky_store/` | Metrics 聚合和 Flaky 状态存储 | 被业务用例直接调用或复制算法 |
+| 可选扩展边界 | `quality/pytest_plugin.py`、`run_orchestration/quality_lifecycle.py` | 轻量插件入口、Noop/Enabled 生命周期和按开关加载 | 在关闭路径导入 Collector、Semantic、Metrics、Flaky |
 | 执行编排层 | `run_master.py`、`run_orchestration/` | 稳定入口、pytest 调度、产物和质量阶段顺序 | 在业务用例中导入内部 stage |
-| 模块请求层 | `module/<模块>/request.py` | 模块路径、请求参数、质量角色 | 写业务流程和复杂断言 |
+| 报告数据源层 | `pipeline_reporting/sources.py`、`quality_sources.py` | 核心事实常驻、质量事实按需加载 | 用陈旧质量产物推断本轮已启用 |
+| 模块请求层 | `module/<模块>/request.py` | 模块路径、请求参数、中性 runtime metadata | 写业务流程和复杂断言 |
 | 模块任务层 | `module/<模块>/task.py` | payload builder、业务动作组合 | 重复实现 BaseTask 已有能力 |
 | 模块断言层 | `module/<模块>/assertions.py` | 模块专用断言和字段解析 | 发请求、修改共享状态 |
 | 用例层 | `module/<模块>/test_*.py` | 场景编排和最终断言 | 硬编码域名、Key、复制底层请求代码 |
@@ -78,6 +81,8 @@ module/
    └─ test_generation.py
 ```
 
+`request.py`、`assertions.py`、`decorators.py`、`task.py` 是强制四件套。四个文件必须分别定义继承 `BaseRequest`、`BaseAssertions`、`BaseDecorators`、`BaseTask` 的真实类；即使暂时只有空继承，也必须保留类身份、MRO、`__name__` 和稳定导入路径，不能用简单别名替代。
+
 ### 4.2 按需增加的文件
 
 ```text
@@ -110,6 +115,11 @@ from typing import Any
 import requests
 
 from common import BaseRequest
+from common.runtime_hooks import (
+    RuntimeOperationKind,
+    RuntimeTrafficRole,
+    runtime_metadata,
+)
 
 
 class ExampleModelRequest(BaseRequest):
@@ -119,19 +129,22 @@ class ExampleModelRequest(BaseRequest):
         return self.post(
             self.generation_path,
             json=payload,
-            _quality_operation_name="example_generation",
-            _quality_traffic_role="workload",
+            runtime_metadata=runtime_metadata(
+                RuntimeOperationKind.HTTP,
+                name="example_generation",
+                role=RuntimeTrafficRole.WORKLOAD,
+            ),
         )
 ```
 
 要求：
 
 - 路径使用相对路径，环境域名由 `BaseRequest` 和 `config.py` 处理。
-- `_quality_operation_name` 使用稳定的业务名称，不能包含 request ID、时间戳或随机数。
-- 真实模型调用使用 `workload`；余额、usage、管理查询使用 `control`。
+- `runtime_metadata` 使用稳定的业务名称，不能包含 request ID、时间戳或随机数。
+- 真实模型调用使用 `RuntimeTrafficRole.WORKLOAD`；余额、usage、管理查询使用 `RuntimeTrafficRole.CONTROL`。
 - payload 中的 `model` 会被框架自动提取为 Metrics 的 `model_id`。
-- `_quality_*` 参数由框架消费，不会发送给 `requests`。
-- 临时修改 Header 时必须在 `finally` 中恢复，优先复用 BaseTask 的控制接口方法。
+- `runtime_metadata` 由框架消费，不会发送给 `requests`；`_quality_*` 参数仅保留兼容解析，新代码不得使用。
+- 单次 Header 通过请求参数传入，禁止为了协议或控制请求临时修改共享 `Session.headers`。
 
 ### 5.2 `assertions.py`
 
@@ -158,6 +171,8 @@ class ExampleModelAssertions(BaseAssertions):
 要求：
 
 - 通用断言直接调用 `BaseAssertions`，不要重复实现。
+- `BaseAssertions` 同步方法是通用断言唯一实现源；异步方法、模块级函数和领域子类通过委托或继承复用，不复制算法。
+- 模块 Assertions 必须保留真实类身份、MRO、`__name__` 和导入路径，不得改成简单别名。
 - 模块断言应返回响应对象，便于链式使用。
 - 错误信息说明字段路径、期望和实际值。
 - 敏感字段不得原样拼接到错误信息；需要输出响应时确认已有脱敏边界。
@@ -216,8 +231,10 @@ class ExampleModelTask(BaseTask):
 
 - Task 表达业务动作，测试方法只负责场景编排和断言。
 - payload builder 返回新字典，不能复用并修改模块级可变对象。
-- 能使用 `BaseTask.create_chat_completion()`、`create_image_generation()`、`create_and_poll_media_generation()` 时不要重复封装底层请求。
+- 现有媒体/账单流程继续复用 `BaseTask` 兼容入口或对应 task capability；新领域逻辑进入模块 Task，不再向 `BaseTask` 增加方法。
 - 一个 Task 方法内组合多次请求时，必须考虑逻辑调用语义，见“质量语义规范”。
+- 独立 CLI 调用本模块业务时，端点必须来自 Request，payload/流程/轮询必须来自 Task，响应规则必须来自 Assertions；CLI 只负责参数、展示和退出码。
+- `--insecure` 等传输选项只能调整当前 Request Session，`--quiet` 等展示选项只能影响当前 CLI，不能修改框架全局状态。
 
 ### 5.5 `response_schemas.py`（推荐）
 
@@ -299,7 +316,7 @@ class TestExampleGeneration:
         self.example_assertions.assert_generation_id(response)
 ```
 
-测试类禁止定义 `__init__`，否则 pytest 不收集。`teardown_method` 必须关闭请求 Session；需要释放业务资源时使用 `test_context.add_cleanup()`。
+测试类禁止定义 `__init__`，否则 pytest 不收集。Request Session 必须有唯一且可验证的所有者：使用 `setup_method` 创建时由 `teardown_method` 关闭；使用 fixture 创建时由 fixture 的 `yield` 收尾关闭。需要释放业务资源时使用 `test_context.add_cleanup()`。
 
 ## 6. 优先使用 BaseTask 已有能力
 
@@ -367,11 +384,22 @@ response = self.request.post("/v1/items", json=payload)
 框架默认中间件负责：
 
 - 通过 `RuntimeObservationMiddleware` 观察请求开始、成功和异常；Quality 关闭时自动为空操作。
-- 请求/响应/异常日志。
-- cURL 生成。
-- Authorization、Key、Token 等敏感信息脱敏。
 - POST 媒体 URL 前置资源附件。
-- 重试和轮询诊断附件。
+- Authorization、Key、Token 等敏感信息脱敏。
+- 请求/响应/异常日志和 cURL 生成。
+
+默认注册与执行顺序固定为：
+
+```text
+RuntimeObservationMiddleware
+-> MediaResourceMiddleware
+-> RedactionMiddleware
+-> LoggingMiddleware
+```
+
+重试和轮询诊断附件由请求执行链统一挂载。显式传入自定义中间件时按传入顺序执行；传入空列表表示禁用默认中间件。
+
+输入媒体和输出结果捕获由 `CapturePolicy` 分别控制。关闭策略后不得访问外部媒体 URL；捕获、附件或观察失败均不得覆盖业务响应和原始异常。
 
 禁止：
 
@@ -465,6 +493,8 @@ response = self.request.poll_get(
 - unknown：默认抛 `PollingUnknownStateError`。
 - timeout：抛 `PollingTimeoutError`，保留最后状态和迁移序列。
 
+`poll_timeout` 是 HTTP attempt、Retry backoff/`Retry-After` 和 poll sleep 共用的总 deadline。每次 transport timeout 必须截断到剩余预算，预算耗尽后不得再发下一次请求。
+
 媒体任务优先使用 `BaseTask.poll_media_generation_result()` 或 `create_and_poll_media_generation()`。
 
 ## 11. SSE/流式响应规范
@@ -488,6 +518,13 @@ finally:
 流式 Request 应设置：
 
 ```python
+from common.runtime_hooks import (
+    RuntimeOperationKind,
+    RuntimeTrafficRole,
+    runtime_metadata,
+)
+
+
 def create_stream_chat_completion(self, payload):
     return self.post(
         "/v1/chat/completions",
@@ -495,12 +532,15 @@ def create_stream_chat_completion(self, payload):
         stream=True,
         headers={"Accept": "text/event-stream"},
         _attach_log=False,
-        _quality_operation_name="chat_completion_stream",
-        _quality_traffic_role="workload",
+        runtime_metadata=runtime_metadata(
+            RuntimeOperationKind.SSE,
+            name="chat_completion_stream",
+            role=RuntimeTrafficRole.WORKLOAD,
+        ),
     )
 ```
 
-禁止把未关闭的流式响应留到 teardown 之后。非法 chunk、提前断流和缺少 `[DONE]` 应有明确断言。
+`_attach_log=False` 用于避免响应日志提前消费流；流式用例改为记录状态码、Header、终态和必要的脱敏片段。禁止把未关闭的流式响应留到 teardown 之后。非法 chunk、提前断流和缺少 `[DONE]` 应有明确断言。
 
 ## 12. 测试上下文与资源清理
 
@@ -568,12 +608,24 @@ with ThreadPoolExecutor(max_workers=3) as executor:
 
 ### 14.1 单请求业务动作
 
-模块 Request 使用：
+模块 Request 使用中性 metadata：
 
 ```python
-_quality_operation_name="stable_business_name"
-_quality_traffic_role="workload"  # 或 control
+from common.runtime_hooks import (
+    RuntimeOperationKind,
+    RuntimeTrafficRole,
+    runtime_metadata,
+)
+
+
+runtime_metadata=runtime_metadata(
+    RuntimeOperationKind.HTTP,
+    name="stable_business_name",
+    role=RuntimeTrafficRole.WORKLOAD,  # 控制流量使用 CONTROL
+)
 ```
+
+`_quality_operation_name`、`_quality_traffic_role` 仅作为兼容输入被映射；新用例统一使用中性 `runtime_metadata`。
 
 ### 14.2 多请求复合业务动作
 
@@ -638,12 +690,14 @@ API_TIMEOUT
 
 要求：
 
-- 不使用旧 `BASE_URL`、`API_KEY`。
+- `BASE_URL`、`API_KEY` 不是有效配置变量。
 - 特殊账号只在明确用例/局部配置中使用。
 - `.env`、数据库、真实响应和密钥不提交仓库。
 - payload 使用 `True/False/None`，不是 JSON 的 `true/false/null`。
 - 新的配置/策略/状态机模型优先使用 Pydantic frozen model。
 - 日志、异常、cURL、Allure 附件都经过统一脱敏。
+- 环境选择、布尔/正数解析、当前环境 URL/Key 校验和错误聚合只在 `util.config_validation.validate_settings_values()` 编排；`config.py` 仅构造 frozen `Settings`。
+- 新增配置规则时修改规范实现源，并为默认值、错误文本、错误顺序和导入时机增加离线测试，不在调用方重复校验。
 
 ## 17. Allure 步骤规范
 
@@ -668,7 +722,9 @@ def create_example_generation(self, request_client, payload):
 
 ## 18. 框架能力的离线测试
 
-修改 `common/`、`quality/` 或 `util/` 时，必须在 `tests/` 增加离线回归，优先使用：
+离线验证分为两层，选择能够暴露目标故障的最低成本层级。
+
+第一层是无网络的隔离单测。修改纯算法、异常分支、日志或观察适配时，在 `tests/` 增加回归并优先使用：
 
 ```text
 tests/mock_helpers.py
@@ -681,18 +737,123 @@ polling_responses
 连接/超时异常工厂
 ```
 
-框架单测不调用真实付费接口。需要测试文件内容、Jenkinsfile 或报告结构时使用结构测试和临时目录。
+第二层是真实 HTTP 生命周期的 loopback 集成验证。需要验证 `requests.Session`、Request、Middleware、Retry、Polling、Capture 或 Runtime Hooks 的组合行为时，复用：
 
-重构后的框架改动还必须按职责补充以下保护：
+```text
+module/offline_framework_example/offline_service.py  # 127.0.0.1 随机端口服务
+module/offline_framework_example/conftest.py         # 服务、Request 与观察 fixture
+tests/test_offline_service.py                        # 协议、隔离、并发和线程回收门禁
+module/offline_framework_example/test_*.py           # 四件套业务分类用例
+```
+
+离线服务当前冻结 9 个场景，`tests/test_offline_service.py` 包含 18 项基础设施门禁；业务分类当前只有 7 项，覆盖 Request、默认 Middleware 与 Retry。Polling、TestContext、Capture、并发和黄金路径虽然已有服务端协议端点，但对应业务分类用例尚未实现，不能计入当前验收能力。
+
+loopback 用例必须使用随机端口、禁止读取系统代理、通过守卫拒绝合同外地址，并由 fixture 确保 Request、Server 和线程回收。不得为了离线测试复制一套 BaseRequest、Retry 或 Polling 实现。
+
+框架单测和离线分类用例都不得调用真实付费接口。需要测试文件内容、Jenkinsfile 或报告结构时使用结构测试和临时目录。
+
+框架改动必须按职责补充以下保护：
 
 - 修改 `common/runtime_hooks/`：验证 Noop、Hook 故障 fail-open、线程 ContextVar 和 `common` 独立导入。
-- 修改 `quality/metrics/`、`quality/flaky_store/`：验证公开契约、依赖 DAG、产物等价或数据库事务边界。
+- 修改 `quality/metrics/`、`quality/flaky_store/`：验证公开契约、依赖方向、产物等价或数据库事务边界。
 - 修改 `run_orchestration/`：验证根入口兼容、collect-only 无副作用、并串行顺序、退出码、环境恢复和质量阶段顺序。
+- 修改 Quality 可选加载边界：验证 `quality.__all__` 对象身份、disabled 导入预算、Noop 零文件副作用、enabled pytest/xdist 等价和报告 `NOT_RUN/NO_DATA` 四象限。
+- 修改下载/Allure 生命周期：验证 Capture 关闭零网络、多池 raw 隔离、最终一次合并/生成和自定义 `--alluredir`。
 - 新增架构边界测试时必须确保文件进入 Git，不能只在本地未跟踪状态下通过。
+- 架构测试不得断言 Python 文件集合与白名单完全相等，也不得冻结完整模块 DAG；应验证公共行为、禁止反向依赖和单一所有权。
+
+### 18.1 唯一执行事实规范
+
+Runner 必须先完成一次权威 pytest 收集，再执行最终 nodeid 计划：
+
+```text
+target / -k / -m / --ignore
+-> 权威收集得到 nodeid + marker
+-> scheduling 纯算法分为 parallel / serial
+-> 执行池只消费 nodeid，不再次解释选择条件
+```
+
+必须满足：
+
+- 最终计划等于并行池与串行池的互斥并集；
+- 每个 nodeid 最多执行一次；
+- `expected_case_count` 取自最终计划，不取自控制台文本；
+- 权威空集合返回 pytest exit 5；
+- 单池返回 pytest 原始退出码；
+- 多池只有所有已执行池都为 0 时才返回 0；
+- exit 1 可以继续后续池收集失败证据；exit 2/3/4/5 或 Runner 异常必须停止后续真实接口池；
+- `reports/execution-result.json` 只记录权威计划、池级原始退出事实和最终退出码，不推导 Jenkins 最终状态；
+- Quality、Metrics、Flaky、JUnit 和 Allure 不得改写 pytest 原始退出码。
+
+### 18.2 Allure 单一生命周期规范
+
+Runner 与直接 pytest 共用 `run_orchestration/allure_lifecycle.py`：
+
+```text
+Runner：每池独立临时 raw -> 合并最终 alluredir -> HTML/history 各生成一次
+直接 pytest：session start/finish -> 委托同一生命周期
+collect-only：不清理、不创建、不生成制品
+```
+
+必须保持默认 `allure-results/`、`allure-report/`、`history_report/` 和自定义 `--alluredir`；Allure 清理、合并或 CLI 失败采用 fail-open，不改写 pytest 原始退出码。`module/conftest.py` 只负责 Hook 适配，不复制文件和 subprocess 实现。
+
+### 18.3 可选 Quality 加载规范
+
+`quality/__init__.py` 必须保留全部公共名称、顺序和对象身份，并通过静态映射按首次访问加载定义模块。`quality.pytest_plugin` 保持稳定注册路径，但关闭或 collect-only 时不得加载 `pytest_plugin_runtime`。
+
+Runner 只能依赖中性的 `QualityRunLifecycle` 和 `RunLifecycleStatus`：关闭时工厂返回 Noop，不创建 run_id、质量目录或质量产物；JUnit 与 Allure 仍按测试执行配置生成，不受 Quality 开关影响。开启时才局部加载 environment、run record 和 Quality Pipeline。`pytest_execution.py` 唯一拥有统一预收集和各池执行，可选扩展不得形成第二个 pytest 生命周期所有者。
+
+Reporting 核心 Source 不得顶层导入 Quality 实现。只有接口测试与 `QUALITY_ENABLE` 同时开启时才加载 `pipeline_reporting/quality_sources.py`；未开启显示 `NOT_RUN`，即使目录中存在陈旧质量产物也不得读取；已开启但本轮产物缺失、损坏、Hash/Schema/版本不可信时显示 `NO_DATA`。两种状态都不得覆盖 pytest 或 Jenkins 事实。
+
+报告事实优先级：
+
+```text
+pytest 原始退出码：测试进程事实
+Jenkins 显式阶段状态：流水线事实
+JUnit：统计和失败详情
+Quality / Metrics / Flaky：诊断观察
+Pipeline Conclusion：关注等级
+```
+
+显式 FAILED/BLOCKED 不得被可解析、全绿或陈旧 JUnit 覆盖。Python Reporting 只解析一次 JUnit，并从同一个 `PipelineReport` 生成 Markdown、机器摘要和邮件内容。
+
+### 18.4 Artifact 信任边界规范
+
+`util/artifact_io.py` 只拥有 UTF-8 JSON/JSONL 读取、原始文件字节 SHA256 和纯字段比较。Metrics、Flaky、Reporting、Aggregator 可复用这些原语，但必须由各自消费者翻译领域错误：
+
+- Metrics 保持既有 `MetricsSourceError` code 和关系校验；
+- Flaky 保持既有 `FlakyImportError` code、可导入规则和数据库边界；
+- Reporting 保持中文 warning、局部降级及 `NOT_RUN/NO_DATA`；
+- Schema、Manifest、版本、状态机和规范 JSON 内容 Hash 不得迁入通用 I/O 原语。
+
+文件 Hash 始终按原始 bytes 计算，不能解析 JSON 后重新序列化。迁移 Artifact 读取实现时必须用相同夹具验证 Hash、错误码、warning 和产物格式完全等价。
 
 ## 19. 本地执行与验收
 
-### 19.1 收集检查
+离线用例只访问 `127.0.0.1`，但导入 `config.py` 时仍会校验环境变量。首次运行先复制语法合法的模板；离线 Request 不会使用其中的真实 URL 或 Key：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+### 19.1 确定性离线门禁
+
+先验证本地服务协议和资源回收：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_offline_service.py -q
+```
+
+再验证离线业务分类的收集、分池和 Runner 执行：
+
+```powershell
+.\.venv\Scripts\python.exe run_master.py module/offline_framework_example --collect-only -q
+.\.venv\Scripts\python.exe run_master.py module/offline_framework_example -n 2
+```
+
+当前收集事实应为 7 项并发、0 项串行。该数量用于确认当前 Request/Middleware/Retry 分类边界，不是后续新增分类时不可改变的永久合同。
+
+### 19.2 新模块收集检查
 
 ```powershell
 .\.venv\Scripts\python.exe run_master.py `
@@ -708,31 +869,31 @@ polling_responses
 没有 PytestCollectionWarning
 没有导入错误
 没有生成 Quality run_id 或质量产物
-没有调用 pytest.main 或真实接口
+没有启动正式执行池或调用真实接口
 ```
 
-### 19.2 执行指定模块
+### 19.3 执行指定模块
 
 ```powershell
 .\.venv\Scripts\python.exe run_master.py module/example_model
 ```
 
-### 19.3 并发优先、串行收尾
+### 19.4 并发优先、串行收尾
 
 ```powershell
 .\.venv\Scripts\python.exe run_master.py module/example_model -n 2
 ```
 
-### 19.4 框架回归
+### 19.5 框架回归
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/quality -q
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-当前清理后的离线回归基线为 `571 passed`；`module/smoke` collect-only 收集 `41` 项（并发池 `15`、串行池 `26`）。
+当前 `tests/` 收集基线为 686 项；`module/smoke` collect-only 快照为 40 项（并发池 15、串行池 25）。数量用于发现意外丢失，不替代“最终计划等于并发池与串行池互斥并集”的集合守恒合同。
 
-真实接口会产生调用费用；在未授权时只执行 collect-only 和离线框架测试。
+不带目标执行 `run_master.py` 会收集 `module/` 下全部业务用例，其中包含真实接口、付费调用和共享状态场景。未明确执行真实业务回归时，只运行 collect-only、`tests/` 和 `module/offline_framework_example`。
 
 ## 20. 构建后报告使用
 
@@ -745,9 +906,11 @@ polling_responses
 5. `reports/quality/semantic/merged/manifest.json`、`reports/quality/semantic/merged/*.jsonl`、`reports/quality/metrics/manifest.json` 和 `reports/quality/metrics/run-metrics.json`：核对逻辑调用语义、指标来源和完整数据。
 6. 启用 Flaky 历史与状态机后，使用 `reports/quality/flaky-import.json`、`reports/quality/flaky-evaluation.json` 和 CLI 核对样本导入、状态迁移及治理信息。
 
-`pipeline-summary.md` 适用于框架测试、用例收集、接口测试及其组合。报告不暴露 Smoke 专属参数名，未选择的阶段显示“未执行”，不能解释为失败或数据缺失。其生成由 `GENERATE_PIPELINE_SUMMARY` 控制，Jenkins 参数/进程环境优先于 `.env`，默认开启。
+`pipeline-summary.md` 适用于框架测试、用例收集、接口测试及其组合。报告不暴露 Smoke 专属参数名，未选择的阶段显示“未执行”，不能解释为失败或数据缺失。其生成由 `GENERATE_PIPELINE_SUMMARY` 控制；质量数据源由 `QUALITY_ENABLE` 独立控制。两者均遵循 Jenkins 参数/进程环境优先于 `.env`，摘要默认开启、Quality 默认关闭。
 
 `pipeline-summary.md` 是唯一人工质量报告。第 4～6 项均为机器证据，只用于来源审计和问题下钻；新用例或框架改动不得再创建并行的人工汇总报告，也不得把可选机器产物缺失解释为零值或测试失败。
+
+`reports/execution-result.json` 和 `reports/pipeline-summary.json` 是机器传递证据：前者保存 Runner 原始执行事实，后者保证 Markdown 与邮件共享同一解析结果。它们不是新的人工报告入口。
 
 注意：
 
@@ -761,15 +924,16 @@ polling_responses
 ```text
 [ ] 模块包含 __init__.py/request.py/assertions.py/decorators.py/task.py/test_*.py
 [ ] 模块类分别继承 BaseRequest/BaseAssertions/BaseDecorators/BaseTask
+[ ] 四件套均为真实类，没有使用会改变类身份的简单别名
 [ ] __init__.py 正确导出四个模块类
 [ ] 测试类没有 __init__
-[ ] setup_method 创建 Request/Assertions/Task
-[ ] teardown_method 关闭 Request Session
+[ ] Request/Assertions/Task 由 setup_method 或 fixture 明确创建
+[ ] Request Session 由 teardown_method 或 fixture yield 收尾关闭
 [ ] 路径为相对路径，没有硬编码域名
 [ ] 没有硬编码 API Key、账号和敏感数据
 [ ] payload 使用 Python 类型并由 Task/payloads.py 构建
-[ ] 优先复用 BaseTask，没有复制公共创建/轮询/账单逻辑
-[ ] 模块 Request 设置稳定 operation name 和 workload/control 角色
+[ ] 复用现有 BaseTask 兼容入口或 task capability，没有继续扩张 BaseTask
+[ ] 模块 Request 使用中性 runtime_metadata 设置稳定 operation name 和 workload/control 角色
 [ ] 复合业务动作具有正确逻辑调用作用域
 [ ] 业务模块没有导入 quality 或 run_orchestration 内部实现
 [ ] 手动逻辑调用作用域使用 common.runtime_hooks 中性 API
@@ -777,12 +941,16 @@ polling_responses
 [ ] 共享状态、账单和延迟结算用例标记 serial
 [ ] POST 重试具备幂等键或明确 allow_post
 [ ] 轮询使用 PollingPolicy 并设置合理 poll_timeout
-[ ] 流式响应在 finally 中关闭
+[ ] 单次 Header 使用请求级参数，没有临时修改共享 Session
+[ ] 不需要输入/输出下载时显式使用对应 CapturePolicy
+[ ] 流式 Request 使用 SSE runtime_metadata、关闭响应体日志，并在 finally 中关闭响应
 [ ] 通用断言和 JSON Schema 已复用
 [ ] 金额使用 Decimal，账单调用后等待结算查询
 [ ] 用例 nodeid 和参数 ID 稳定，适合 Flaky 历史比较
 [ ] collect-only 通过
+[ ] 能离线验证的请求生命周期优先复用 offline_framework_example，不复制公共实现
 [ ] 相关离线框架测试通过
 [ ] 启用 Pipeline Summary 时无来源告警，或告警已明确定位到对应机器数据
+[ ] Quality 关闭路径未加载重实现、未创建质量身份或产物，陈旧产物未污染本轮报告
 [ ] 没有新增并行人工质量报告，也没有把可选机器产物缺失按零值处理
 ```

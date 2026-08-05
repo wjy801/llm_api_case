@@ -41,6 +41,10 @@ def _case(nodeid, *markers):
     return CollectedTestCase(nodeid=nodeid, markers=frozenset(markers))
 
 
+def _collection(*cases):
+    return pytest_execution.CollectionResult(0, tuple(cases), "", "")
+
+
 def _capture_pytest_environment(monkeypatch):
     calls = []
 
@@ -86,9 +90,9 @@ def test_disabled_quality_preserves_existing_environment(monkeypatch):
     monkeypatch.setenv("QUALITY_RUN_ID", "outside-run")
     monkeypatch.setenv("QUALITY_EXECUTION_ID", "outside-execution")
     monkeypatch.setattr(
-        scheduling,
+        pytest_execution,
         "collect_test_case_items",
-        lambda path: [_case("module/test_sample.py::test_ok")],
+        lambda path, pytest_args=(): _collection(_case("module/test_sample.py::test_ok")),
     )
     calls = _capture_pytest_environment(monkeypatch)
 
@@ -105,9 +109,9 @@ def test_serial_run_uses_semantic_execution_id_and_restores_environment(monkeypa
     monkeypatch.setenv("QUALITY_EXECUTION_ID", "outside-execution")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", "quality-output")
     monkeypatch.setattr(
-        scheduling,
+        pytest_execution,
         "collect_test_case_items",
-        lambda path: [_case("module/test_sample.py::test_ok")],
+        lambda path, pytest_args=(): _collection(_case("module/test_sample.py::test_ok")),
     )
     calls = _capture_pytest_environment(monkeypatch)
     _capture_quality_finalization(monkeypatch)
@@ -126,12 +130,12 @@ def test_parallel_and_serial_stages_share_one_run_id(monkeypatch, tmp_path):
     monkeypatch.setenv("QUALITY_ENABLE", "1")
     monkeypatch.setattr(pytest_execution, "DEFAULT_ALLURE_RESULTS_DIR", tmp_path / "allure-results")
     monkeypatch.setattr(
-        scheduling,
+        pytest_execution,
         "collect_test_case_items",
-        lambda path: [
+        lambda path, pytest_args=(): _collection(
             _case("module/test_sample.py::test_parallel"),
             _case("module/test_sample.py::test_serial", "serial"),
-        ],
+        ),
     )
     generated = []
     monkeypatch.setattr(
@@ -159,9 +163,9 @@ def test_jenkins_identity_is_used_only_when_job_and_build_are_present(monkeypatc
     monkeypatch.setenv("JOB_NAME", "api-case")
     monkeypatch.setenv("BUILD_NUMBER", "42")
     monkeypatch.setattr(
-        scheduling,
+        pytest_execution,
         "collect_test_case_items",
-        lambda path: [_case("module/test_sample.py::test_ok")],
+        lambda path, pytest_args=(): _collection(_case("module/test_sample.py::test_ok")),
     )
     captured = []
     monkeypatch.setattr(
@@ -181,9 +185,9 @@ def test_jenkins_identity_is_used_only_when_job_and_build_are_present(monkeypatc
 def test_collect_only_does_not_generate_or_inject_quality_identity(monkeypatch):
     monkeypatch.setenv("QUALITY_ENABLE", "1")
     monkeypatch.setattr(
-        scheduling,
+        pytest_execution,
         "collect_test_case_items",
-        lambda path: [_case("module/test_sample.py::test_ok")],
+        lambda path, pytest_args=(): _collection(_case("module/test_sample.py::test_ok")),
     )
     monkeypatch.setattr(
         orchestration_environment,
@@ -202,9 +206,9 @@ def test_collect_only_does_not_generate_or_inject_quality_identity(monkeypatch):
 def test_invalid_quality_enable_fails_open(monkeypatch, capsys):
     monkeypatch.setenv("QUALITY_ENABLE", "invalid")
     monkeypatch.setattr(
-        scheduling,
+        pytest_execution,
         "collect_test_case_items",
-        lambda path: [_case("module/test_sample.py::test_ok")],
+        lambda path, pytest_args=(): _collection(_case("module/test_sample.py::test_ok")),
     )
     calls = _capture_pytest_environment(monkeypatch)
 
@@ -220,9 +224,9 @@ def test_quality_enabled_adds_default_junit_path_and_finalizes(monkeypatch, tmp_
     monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(output_dir))
     monkeypatch.setattr(
-        scheduling,
+        pytest_execution,
         "collect_test_case_items",
-        lambda path: [_case("module/test_sample.py::test_ok")],
+        lambda path, pytest_args=(): _collection(_case("module/test_sample.py::test_ok")),
     )
     calls = _capture_pytest_environment(monkeypatch)
     merges, writes = _capture_quality_finalization(monkeypatch)
@@ -242,9 +246,9 @@ def test_quality_finalize_runs_and_original_exception_is_preserved(monkeypatch, 
     monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(output_dir))
     monkeypatch.setattr(
-        scheduling,
+        pytest_execution,
         "collect_test_case_items",
-        lambda path: [_case("module/test_sample.py::test_ok")],
+        lambda path, pytest_args=(): _collection(_case("module/test_sample.py::test_ok")),
     )
     merges, writes = _capture_quality_finalization(monkeypatch)
 
@@ -268,9 +272,9 @@ def test_semantic_merge_runs_after_fact_merge_when_enabled(monkeypatch, tmp_path
     monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
     monkeypatch.setattr(
-        scheduling,
+        pytest_execution,
         "collect_test_case_items",
-        lambda path: [_case("module/test_sample.py::test_ok")],
+        lambda path, pytest_args=(): _collection(_case("module/test_sample.py::test_ok")),
     )
     _capture_pytest_environment(monkeypatch)
     _capture_quality_finalization(monkeypatch)
@@ -293,9 +297,9 @@ def test_semantic_merge_failure_is_fail_open(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
     monkeypatch.setattr(
-        scheduling,
+        pytest_execution,
         "collect_test_case_items",
-        lambda path: [_case("module/test_sample.py::test_ok")],
+        lambda path, pytest_args=(): _collection(_case("module/test_sample.py::test_ok")),
     )
     _capture_pytest_environment(monkeypatch)
     _capture_quality_finalization(monkeypatch)
@@ -316,9 +320,9 @@ def test_metrics_runs_after_semantic_when_enabled(monkeypatch, tmp_path):
     monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
     monkeypatch.setattr(
-        scheduling,
+        pytest_execution,
         "collect_test_case_items",
-        lambda path: [_case("module/test_sample.py::test_ok")],
+        lambda path, pytest_args=(): _collection(_case("module/test_sample.py::test_ok")),
     )
     _capture_pytest_environment(monkeypatch)
     _capture_quality_finalization(monkeypatch)
@@ -353,9 +357,9 @@ def test_metrics_exception_is_fail_open(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("QUALITY_RUN_ID", "run-1")
     monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
     monkeypatch.setattr(
-        scheduling,
+        pytest_execution,
         "collect_test_case_items",
-        lambda path: [_case("module/test_sample.py::test_ok")],
+        lambda path, pytest_args=(): _collection(_case("module/test_sample.py::test_ok")),
     )
     _capture_pytest_environment(monkeypatch)
     _capture_quality_finalization(monkeypatch)

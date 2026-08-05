@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import sys
 from typing import Sequence
 
+from config import settings
 from master_service import DEFAULT_SERIAL_MARKER, DEFAULT_TEST_PATH
-from quality.models import RunStatus
 
 from . import (
-    environment,
+    artifacts,
     pytest_execution,
-    quality_pipeline,
-    quality_run_record,
+    quality_lifecycle,
     scheduling,
 )
 
@@ -23,140 +23,275 @@ def run(
     dist: str | None = None,
     serial_marker: str = DEFAULT_SERIAL_MARKER,
 ) -> int:
-    cases = scheduling.collect_test_case_items(test_path)
-    if len(cases) == 0:
-        print("No executable test cases collected.")
-        return 1
+    try:
+        argument_plan = pytest_execution.partition_pytest_args(
+            extra_pytest_args or ()
+        )
+    except ValueError as error:
+        print(f"Invalid pytest arguments: {error}", file=sys.stderr)
+        return pytest_execution.PYTEST_EXIT_USAGE_ERROR
 
-    case_nodeids = [case.nodeid for case in cases]
+    try:
+        collection = pytest_execution.collect_test_case_items(
+            test_path,
+            argument_plan.collection_args,
+        )
+    except Exception as error:
+        print(
+            f"Authoritative pytest collection failed: "
+            f"{type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        return pytest_execution.PYTEST_EXIT_TESTS_FAILED
+
+    if collection.raw_pytest_exit_code != pytest_execution.PYTEST_EXIT_OK:
+        if collection.raw_pytest_exit_code == pytest_execution.PYTEST_EXIT_NO_TESTS_COLLECTED:
+            print("No executable test cases collected.")
+        else:
+            print(
+                pytest_execution.format_collection_error(collection),
+                file=sys.stderr,
+            )
+        final_exit_code = collection.raw_pytest_exit_code
+        if not argument_plan.collect_only:
+            final_exit_code = _write_execution_result(
+                test_path=test_path,
+                argument_plan=argument_plan,
+                collection=collection,
+                pool_results=(),
+                final_exit_code=final_exit_code,
+            )
+        return final_exit_code
+
+    cases = collection.cases
+    case_nodeids = tuple(case.nodeid for case in cases)
     print(f"Collected test cases: {len(cases)}")
     for nodeid in case_nodeids:
         print(f"- {nodeid}")
 
-    pytest_args = list(extra_pytest_args or [])
-    if pytest_execution.has_collect_only(pytest_args):
-        parallel_cases, serial_cases = scheduling.split_test_cases(
-            cases, serial_marker=serial_marker
-        )
-        print(f"Parallel pool cases: {len(parallel_cases)}")
-        print(f"Serial pool cases: {len(serial_cases)}")
-        print(f"{len(cases)} tests collected")
-        return 0
-
-    quality_config = environment.resolve_parent_quality_config()
-    quality_start_time = datetime.now(UTC)
-    if quality_config.enabled:
-        quality_run_record.write_initial_run_record(
-            quality_config, quality_start_time
-        )
-
-    if not numprocesses:
-        print("Parallel test execution disabled. Running all cases serially.")
-        stage_id = "serial-pool"
-        serial_args = pytest_execution.ensure_quality_junit_args(
-            pytest_args, quality_config
-        )
-        junit_files = (pytest_execution.extract_junit_path(serial_args),)
-        final_status = RunStatus.FINISHED
-        try:
-            with environment.quality_stage_environment(
-                quality_config, stage_id
-            ):
-                return pytest_execution.run_pytest(case_nodeids + serial_args)
-        except (KeyboardInterrupt, SystemExit):
-            final_status = RunStatus.INTERRUPTED
-            raise
-        except Exception:
-            final_status = RunStatus.PARTIAL
-            raise
-        finally:
-            quality_pipeline.finalize_quality_run(
-                quality_config,
-                start_time=quality_start_time,
-                expected_execution_ids=(stage_id,),
-                expected_case_count=len(case_nodeids),
-                junit_files=junit_files,
-                status=final_status,
-            )
-
     parallel_cases, serial_cases = scheduling.split_test_cases(
         cases, serial_marker=serial_marker
     )
-    print(
-        "Parallel-first execution enabled: "
-        f"workers={numprocesses}, parallel_cases={len(parallel_cases)}, "
-        f"serial_cases={len(serial_cases)}"
-    )
+    if argument_plan.collect_only:
+        print(f"Parallel pool cases: {len(parallel_cases)}")
+        print(f"Serial pool cases: {len(serial_cases)}")
+        print(f"{len(cases)} tests collected")
+        return pytest_execution.PYTEST_EXIT_OK
 
-    results: list[int] = []
-    executed_stage_ids: list[str] = []
-    junit_files = []
-    final_status = RunStatus.FINISHED
+    allure_lifecycle = pytest_execution.AllureRunLifecycle(
+        results_dir=pytest_execution.extract_allure_results_dir(
+            argument_plan.execution_args
+        ),
+        generate_report=settings.generate_allure_report,
+        generate_history=settings.generate_history_report,
+        history_keep_limit=settings.history_report_keep_limit,
+        pooled=True,
+    )
+    allure_lifecycle.prepare()
+
+    quality_run_lifecycle = quality_lifecycle.create_quality_run_lifecycle()
+    quality_start_time = datetime.now(UTC)
+    quality_run_lifecycle.prepare(quality_start_time)
+
+    pool_results: list[pytest_execution.PoolExecutionResult] = []
+    final_status = quality_lifecycle.RunLifecycleStatus.FINISHED
     try:
-        if parallel_cases:
-            stage_id = "parallel-pool"
-            pytest_args = pytest_execution.ensure_quality_junit_args(
-                pytest_args, quality_config
+        if not numprocesses:
+            print("Parallel test execution disabled. Running all cases serially.")
+            serial_args = quality_run_lifecycle.ensure_junit_args(
+                argument_plan.execution_args
+            )
+            with quality_run_lifecycle.stage_environment("serial-pool"):
+                pool_results.append(
+                    pytest_execution.execute_pool(
+                        "serial-pool",
+                        case_nodeids,
+                        serial_args,
+                        allure_lifecycle=allure_lifecycle,
+                    )
+                )
+        else:
+            print(
+                "Parallel-first execution enabled: "
+                f"workers={numprocesses}, parallel_cases={len(parallel_cases)}, "
+                f"serial_cases={len(serial_cases)}"
+            )
+            parallel_args = quality_run_lifecycle.ensure_junit_args(
+                argument_plan.execution_args
             )
             parallel_args = pytest_execution.build_parallel_args(
-                pytest_args,
+                parallel_args,
                 numprocesses=numprocesses,
                 dist=dist,
                 junit_suffix="parallel",
             )
-            junit_files.append(
-                pytest_execution.extract_junit_path(parallel_args)
-            )
-            executed_stage_ids.append(stage_id)
-            print(f"Running parallel pool: {len(parallel_cases)} cases")
-            with environment.quality_stage_environment(
-                quality_config, stage_id
-            ):
-                results.append(
-                    pytest_execution.run_pytest(
-                        parallel_cases + parallel_args
+            if parallel_cases:
+                print(f"Running parallel pool: {len(parallel_cases)} cases")
+                with quality_run_lifecycle.stage_environment("parallel-pool"):
+                    parallel_result = pytest_execution.execute_pool(
+                        "parallel-pool",
+                        parallel_cases,
+                        parallel_args,
+                        allure_lifecycle=allure_lifecycle,
                     )
+            else:
+                print("Parallel pool is empty. Skipping parallel stage.")
+                parallel_result = _not_run_pool(
+                    "parallel-pool", parallel_cases, parallel_args
                 )
-        else:
-            print("Parallel pool is empty. Skipping parallel stage.")
+            pool_results.append(parallel_result)
 
-        if serial_cases:
-            stage_id = "serial-pool"
-            pytest_args = pytest_execution.ensure_quality_junit_args(
-                pytest_args, quality_config
+            stop_after_parallel = (
+                parallel_result.status is pytest_execution.PoolExecutionStatus.ERROR
+                or pytest_execution.should_stop_after_exit_code(
+                    parallel_result.raw_pytest_exit_code
+                )
+            )
+            serial_args = quality_run_lifecycle.ensure_junit_args(
+                argument_plan.execution_args
             )
             serial_args = pytest_execution.build_serial_args(
-                pytest_args, junit_suffix="serial"
+                serial_args, junit_suffix="serial"
             )
-            junit_files.append(
-                pytest_execution.extract_junit_path(serial_args)
-            )
-            executed_stage_ids.append(stage_id)
-            print(f"Running serial pool: {len(serial_cases)} cases")
-            with environment.quality_stage_environment(
-                quality_config, stage_id
-            ):
-                results.append(
-                    pytest_execution.run_serial_pool(
-                        serial_cases + serial_args
-                    )
+            if stop_after_parallel:
+                print(
+                    "Skipping serial pool because the parallel pool returned "
+                    "a terminating execution result."
                 )
-        else:
-            print("Serial pool is empty. Skipping serial stage.")
+                serial_result = _not_run_pool(
+                    "serial-pool", serial_cases, serial_args
+                )
+            elif serial_cases:
+                print(f"Running serial pool: {len(serial_cases)} cases")
+                with quality_run_lifecycle.stage_environment("serial-pool"):
+                    serial_result = pytest_execution.execute_pool(
+                        "serial-pool",
+                        serial_cases,
+                        serial_args,
+                        allure_lifecycle=allure_lifecycle,
+                    )
+            else:
+                print("Serial pool is empty. Skipping serial stage.")
+                serial_result = _not_run_pool(
+                    "serial-pool", serial_cases, serial_args
+                )
+            pool_results.append(serial_result)
 
-        return pytest_execution.merge_exit_codes(results)
+        final_exit_code = _final_exit_code(pool_results)
+        if any(
+            result.status is pytest_execution.PoolExecutionStatus.ERROR
+            for result in pool_results
+        ):
+            final_status = quality_lifecycle.RunLifecycleStatus.PARTIAL
+        final_exit_code = _write_execution_result(
+            test_path=test_path,
+            argument_plan=argument_plan,
+            collection=collection,
+            pool_results=tuple(pool_results),
+            final_exit_code=final_exit_code,
+        )
+        return final_exit_code
     except (KeyboardInterrupt, SystemExit):
-        final_status = RunStatus.INTERRUPTED
+        final_status = quality_lifecycle.RunLifecycleStatus.INTERRUPTED
         raise
-    except Exception:
-        final_status = RunStatus.PARTIAL
-        raise
+    except Exception as error:
+        final_status = quality_lifecycle.RunLifecycleStatus.PARTIAL
+        print(
+            f"Runner execution failed: {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        return pytest_execution.PYTEST_EXIT_TESTS_FAILED
     finally:
-        quality_pipeline.finalize_quality_run(
-            quality_config,
+        allure_lifecycle.finalize()
+        quality_run_lifecycle.finalize(
             start_time=quality_start_time,
-            expected_execution_ids=tuple(executed_stage_ids),
             expected_case_count=len(case_nodeids),
-            junit_files=tuple(junit_files),
+            pool_results=tuple(pool_results),
             status=final_status,
         )
+
+
+def _not_run_pool(
+    stage_id: str,
+    nodeids: Sequence[str],
+    pytest_args: Sequence[str],
+) -> pytest_execution.PoolExecutionResult:
+    return pytest_execution.PoolExecutionResult(
+        stage_id=stage_id,
+        planned_nodeids=tuple(nodeids),
+        status=pytest_execution.PoolExecutionStatus.NOT_RUN,
+        junit_path=pytest_execution.extract_junit_path(pytest_args),
+    )
+
+
+def _final_exit_code(
+    pool_results: Sequence[pytest_execution.PoolExecutionResult],
+) -> int:
+    if any(
+        result.status is pytest_execution.PoolExecutionStatus.ERROR
+        for result in pool_results
+    ):
+        return pytest_execution.PYTEST_EXIT_TESTS_FAILED
+    return pytest_execution.merge_exit_codes(
+        [
+            result.raw_pytest_exit_code
+            for result in pool_results
+            if result.raw_pytest_exit_code is not None
+        ]
+    )
+
+
+def _write_execution_result(
+    *,
+    test_path: str,
+    argument_plan: pytest_execution.PytestArgumentPlan,
+    collection: pytest_execution.CollectionResult,
+    pool_results: tuple[pytest_execution.PoolExecutionResult, ...],
+    final_exit_code: int,
+) -> int:
+    payload = {
+        "schema_version": artifacts.RUNNER_EXECUTION_SCHEMA_VERSION,
+        "test_target": str(test_path),
+        "selection_args": list(argument_plan.selection_args),
+        "planned_case_count": len(collection.cases),
+        "planned_nodeids": [case.nodeid for case in collection.cases],
+        "collection_exit_code": collection.raw_pytest_exit_code,
+        "pool_results": [
+            {
+                "stage_id": result.stage_id,
+                "planned_nodeids": list(result.planned_nodeids),
+                "status": result.status.value,
+                "raw_pytest_exit_code": result.raw_pytest_exit_code,
+                "started_at": (
+                    result.started_at.isoformat()
+                    if result.started_at is not None
+                    else None
+                ),
+                "completed_at": (
+                    result.completed_at.isoformat()
+                    if result.completed_at is not None
+                    else None
+                ),
+                "exception_type": result.exception_type,
+                "junit_path": (
+                    result.junit_path.as_posix()
+                    if result.junit_path is not None
+                    else None
+                ),
+            }
+            for result in pool_results
+        ],
+        "final_exit_code": final_exit_code,
+    }
+    try:
+        artifacts.write_execution_result_atomic(payload)
+    except Exception as error:
+        print(
+            f"Runner execution result write failed: "
+            f"{type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        if final_exit_code in pytest_execution.PYTEST_TERMINATING_EXIT_CODES:
+            return final_exit_code
+        return pytest_execution.PYTEST_EXIT_TESTS_FAILED
+    return final_exit_code

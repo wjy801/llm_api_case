@@ -35,6 +35,13 @@ from common.runtime_hooks.models import (
     RuntimeTrafficRole,
 )
 from common.runtime_hooks.noop import NoopRuntimeHooks
+from common.runtime_hooks.observer import (
+    RuntimeObserver,
+    RuntimeOperationObservation,
+    RuntimePollingObservation,
+    RuntimeRequestGroupObservation,
+    runtime_metadata,
+)
 from common.runtime_hooks.protocol import RuntimeHooks
 from common.runtime_hooks.provider import (
     bind_runtime_hooks,
@@ -45,6 +52,10 @@ from common.runtime_hooks.provider import (
 
 __all__ = [
     "NoopRuntimeHooks",
+    "RuntimeObserver",
+    "RuntimeOperationObservation",
+    "RuntimePollingObservation",
+    "RuntimeRequestGroupObservation",
     "RuntimeHooks",
     "RuntimeOperationKind",
     "RuntimeOperationLease",
@@ -80,5 +91,6 @@ __all__ = [
     "operation_outcome_for_error",
     "operation_scope",
     "reset_runtime_hooks",
+    "runtime_metadata",
     "start_request_group",
 ]

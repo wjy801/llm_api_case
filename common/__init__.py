@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     )
     from common.base_request import BaseRequest
     from common.base_task import BaseTask
+    from common.capture import CapturePolicy
     from common.context_executor import submit_with_context
     from common.polling import DEFAULT_MEDIA_POLLING_POLICY, PollingPolicy, PollingState, PollingTimeoutError
     from common.retry import RetryPolicy
@@ -43,6 +44,7 @@ __all__ = [
     "BaseDecorators",
     "BaseRequest",
     "BaseTask",
+    "CapturePolicy",
     "PollingPolicy",
     "PollingState",
     "PollingTimeoutError",
@@ -82,6 +84,10 @@ def __getattr__(name: str):
         from common.base_task import BaseTask
 
         return BaseTask
+    if name == "CapturePolicy":
+        from common.capture import CapturePolicy
+
+        return CapturePolicy
     if name == "BaseAssertions":
         from common.base_assertions import BaseAssertions
 
