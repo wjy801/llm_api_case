@@ -24,6 +24,7 @@ def render_pipeline_summary(report: PipelineReport) -> str:
         ("框架测试", _enabled_state(context.framework_tests_enabled)),
         ("用例收集", _enabled_state(context.smoke_collect_enabled)),
         ("接口测试", _enabled_state(context.real_smoke_enabled)),
+        ("质量观测", _enabled_state(context.quality_enabled)),
     ]
     if context.real_smoke_enabled:
         parameter_rows.append(("测试目标", context.smoke_target))
@@ -66,7 +67,7 @@ def render_pipeline_summary(report: PipelineReport) -> str:
     lines.extend(_collect_section(report))
     lines.extend(_test_section("接口测试", report.smoke_tests, context.real_smoke_enabled))
     lines.extend(_case_details(report))
-    if context.real_smoke_enabled:
+    if context.real_smoke_enabled and context.quality_enabled:
         lines.extend(_request_section(report))
         lines.extend(_retry_section(report))
         lines.extend(_timing_section(report))

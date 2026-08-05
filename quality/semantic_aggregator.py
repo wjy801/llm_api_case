@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-import hashlib
 import json
 from pathlib import Path
 from typing import Any, Iterable
 
 from pydantic import ValidationError
+
+from util.artifact_io import file_sha256
 
 from quality.models import IntegrityStatus, IssueSeverity, RequestMetric
 from quality.redaction import redact_quality_value
@@ -623,11 +624,7 @@ def _canonical(record: Any) -> str:
 
 
 def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return file_sha256(path)
 
 
 def _relative_path(path: Path, root: Path) -> str:

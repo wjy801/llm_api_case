@@ -21,6 +21,7 @@ class MaterialLibraryRequest(BaseRequest):
     volc_visual_validate_sessions_path = "/v1/volc/assets/visual-validate/sessions"
     volc_visual_validate_session_path_template = "/v1/volc/assets/visual-validate/sessions/{session_id}"
     volc_visual_validate_result_path_template = "/v1/volc/assets/visual-validate/results/{session_id}"
+    volc_visual_validate_callback_path = "/v1/volc/assets/visual-validate/callback"
     media_generations_path = "/v1/media/generations"
     media_task_path_template = "/v1/media/tasks/{task_id}"
 
@@ -126,6 +127,25 @@ class MaterialLibraryRequest(BaseRequest):
     def get_volc_visual_validate_result(self, session_id: str, **kwargs: Any) -> requests.Response:
         return self.get(
             self.volc_visual_validate_result_path_template.format(session_id=session_id),
+            **kwargs,
+        )
+
+    def trigger_volc_visual_validate_callback(
+        self,
+        session_id: str,
+        byted_token: str,
+        *,
+        result_code: str = "10000",
+        **kwargs: Any,
+    ) -> requests.Response:
+        return self.get(
+            self.volc_visual_validate_callback_path,
+            params={
+                "platform_session": session_id,
+                "bytedToken": byted_token,
+                "resultCode": result_code,
+            },
+            _inherit_session_headers=False,
             **kwargs,
         )
 

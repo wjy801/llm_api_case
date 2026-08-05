@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
+
+from util.artifact_io import (
+    ArtifactFormatError,
+    ArtifactJsonLineError,
+    file_sha256,
+    read_json_object as read_artifact_json_object,
+    read_jsonl_values,
+)
 
 from quality.aggregator import MANIFEST_VERSION as P0_MANIFEST_VERSION
 from quality.metrics_models import ArtifactEvidence, SourceEvidence
@@ -199,37 +206,37 @@ def read_model(path: Path, model: type[_T], code: str) -> _T:
 
 def read_json_object(path: Path, code: str) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        return read_artifact_json_object(path)
     except FileNotFoundError:
         raise_source_error(
             code, f"required manifest {path.name} is missing", path.name
+        )
+    except ArtifactFormatError:
+        raise_source_error(
+            code, f"required manifest {path.name} is not an object", path.name
         )
     except (OSError, json.JSONDecodeError):
         raise_source_error(
             code, f"required manifest {path.name} is invalid", path.name
         )
-    if not isinstance(value, dict):
-        raise_source_error(
-            code, f"required manifest {path.name} is not an object", path.name
-        )
-    return value
-
-
 def read_jsonl_models(path: Path, model: type[_T], code: str) -> list[_T]:
     records: list[_T] = []
     try:
-        with path.open("r", encoding="utf-8") as handle:
-            for line_number, line in enumerate(handle, start=1):
-                if not line.strip():
-                    continue
-                try:
-                    records.append(model.model_validate_json(line))
-                except (ValidationError, ValueError):
-                    raise_source_error(
-                        code,
-                        f"{path.name} contains an invalid record",
-                        f"{path.name}:{line_number}",
-                    )
+        for item in read_jsonl_values(path):
+            try:
+                records.append(model.model_validate(item.value))
+            except (ValidationError, ValueError):
+                raise_source_error(
+                    code,
+                    f"{path.name} contains an invalid record",
+                    f"{path.name}:{item.number}",
+                )
+    except ArtifactJsonLineError as error:
+        raise_source_error(
+            code,
+            f"{path.name} contains an invalid record",
+            f"{path.name}:{error.line_number}",
+        )
     except FileNotFoundError:
         raise_source_error(code, f"required source {path.name} is missing", path.name)
     except OSError:
@@ -253,8 +260,4 @@ def validated_source_output_hash(
 
 
 def source_file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return file_sha256(path)

@@ -119,13 +119,15 @@ data/
 ```text
 module 业务用例
 -> common 请求、重试、轮询和中性 Runtime Hooks
--> pytest 插件按配置注入 quality.runtime_adapter
+-> quality.pytest_plugin 轻量入口按开关加载 pytest_plugin_runtime
+-> 开启后注入 quality.runtime_adapter
 -> quality 采集并归并质量事实、语义、Metrics 和 Flaky 状态
 
 run_master.py 稳定入口
 -> pytest_execution 完成一次权威收集并形成最终 nodeid/marker 计划
 -> scheduling 从同一计划派生并行池和串行池
--> runner 只执行已分配 nodeid，保留池级 pytest 原始退出事实
+-> runner 只依赖中性 QualityRunLifecycle 并执行已分配 nodeid
+-> Quality 关闭返回 Noop；开启后才加载质量阶段实现
 -> master_service 通过兼容委托保留旧导入路径
 ```
 
@@ -136,7 +138,7 @@ quality -> common.runtime_hooks
 common -X-> quality
 ```
 
-未启用 Quality 时，Runtime Hooks 使用 Noop 实现，不加载质量采集器，也不创建质量产物；启用后由 `quality.pytest_plugin` 在当前 pytest worker 中绑定 `QualityRuntimeHooks`。观察器异常采用 fail-open，不覆盖业务响应和原始异常。
+未启用 Quality 时，`quality` 根包按符号懒加载，pytest 只注册轻量兼容入口，Runner 使用 `NoopQualityRunLifecycle`；Collector、Semantic、Metrics、Flaky 不进入核心导入和执行路径，也不创建质量身份、目录或产物。启用后才加载 `quality.pytest_plugin_runtime`，并在当前 pytest worker 中绑定 `QualityRuntimeHooks`。观察器异常采用 fail-open，不覆盖业务响应和原始异常。
 
 修改能力时按以下边界落位：
 
@@ -194,6 +196,8 @@ GENERATE_ALLURE_REPORT=TRUE
 GENERATE_HISTORY_REPORT=FALSE
 HISTORY_REPORT_KEEP_LIMIT=30
 GENERATE_PIPELINE_SUMMARY=TRUE
+QUALITY_ENABLE=FALSE
+QUALITY_SEMANTIC_ENABLE=FALSE
 ```
 
 账单、余额及用量查询需要对应环境的 `*_CONTROL_API_KEY`。特殊账号 Key 继续按 `.env.example` 配置，不写入代码或 Jenkinsfile。
@@ -226,7 +230,7 @@ USE_CHINA_ENVIRONMENT=FALSE  # 海外环境
 
 `load_settings()` 会在执行前校验 URL、API Key、超时和报告开关配置。配置错误会聚合为明确的变量名错误，不再等到请求阶段暴露模糊异常。
 
-当前配置校验由 Pydantic 模型承接，但对外仍保持原有接口：
+配置规则由 `util.config_validation.validate_settings_values()` 统一编排，`config.py` 只把规范值转换为 frozen Pydantic `Settings`。对外仍保持原有接口：
 
 - `load_settings()` 返回 `Settings`，字段名和默认值保持不变。
 - 配置缺失、类型错误、非法 URL 等仍通过 `ConfigValidationError` 暴露。
@@ -276,7 +280,7 @@ redact_config_summary()
 is_enabled()
 ```
 
-`config.py` 使用 Pydantic `Settings` 模型保存当前环境配置，并在导入时完成基础校验。脱敏能力集中在 `util/redaction.py`，`api_call_logger.py` 与 `curl_builder.py` 都复用同一套规则。
+`util/config_validation.py` 是环境选择、布尔/正数解析、当前环境 URL/Key 校验和错误聚合顺序的唯一规则源。`config.py` 使用 Pydantic `Settings` 模型保存规范值，并在导入时完成初始化；不得在 `config.py` 或调用方复制第二套配置判断。脱敏能力集中在 `util/redaction.py`，`api_call_logger.py` 与 `curl_builder.py` 都复用同一套规则。
 
 后续如果从 `.env` 扩展到 YAML/JSON/TOML 等文件型配置，继续优先使用 Pydantic 做结构化校验，用模型约束替代散落的手写属性类和字段解析逻辑。
 
@@ -307,6 +311,12 @@ async_assert_schema(response, schema)
 ```
 
 `assert_schema()` 使用 JSON Schema 校验响应结构，并在失败信息中输出 JSONPath、Schema path、期望、实际类型和值；敏感值会先脱敏。`module/smoke/response_schemas.py` 提供成功响应和标准错误响应 Schema 示例。
+
+同步方法是断言算法的唯一实现源；`async_assert_*`、模块级同步/异步函数和领域 Assertions 子类都通过委托或继承复用同步实现。四件套中的 Assertions 继续保持真实类身份、MRO 和导入路径，不能为了去重替换为简单别名。
+
+### Artifact 基础原语与领域翻译
+
+`util/artifact_io.py` 只提供 UTF-8 JSON/JSONL 读取、原始文件字节 SHA256 和精确字段比较等无领域原语。Metrics、Flaky 和 Pipeline Reporting 复用这些原语，但分别保留自己的错误码、导入规则和 warning/降级语义；Schema、版本、状态机和可信度结论不下沉到通用工具层。
 
 ### 重试策略
 
@@ -447,6 +457,8 @@ class XxxTask(BaseTask):
 
 `task.py` 只服务当前目录下的测试用例，用于封装本模块独有的业务方法。`BaseTask` 保留现有创建、轮询和账单入口作为兼容门面，真实实现委托 `common/task_capabilities/`；新领域逻辑进入对应模块 Task，确有跨模块复用时再建立窄能力对象，不再扩张 `BaseTask`。不同模型目录的 `task.py` 不应互相引用。
 
+独立业务 CLI 也必须复用所属模块四件套：脚本只保留 argparse、控制台展示和退出码翻译，端点归 Request，payload/流程/轮询归 Task，响应规则归 Assertions。`material_library` 的两个联调 CLI 已按此边界实现；`--insecure` 只影响当前 Request Session，`--quiet` 只影响当前脚本输出。
+
 ## 用例写法
 
 测试类中不要定义 `__init__`，pytest 会跳过带自定义 `__init__` 的测试类。
@@ -497,8 +509,11 @@ class TestImageGenerations:
 
 - 只有 `pytest_execution.py` 调用 `pytest.main()`。
 - 只有 `allure_lifecycle.py` 清理、合并并生成 Allure 制品；Runner 每池写独立临时 raw，最终只合并和生成一次。
+- `quality_lifecycle.py` 是 Runner 接入可选质量能力的唯一边界；关闭时为 Noop，开启时兼容委托原有质量阶段。
 - `environment.py` 负责 Quality 阶段环境变量设置与恢复。
 - `quality_pipeline.py` 只决定质量阶段顺序，不承载聚合算法和报告渲染。
+
+架构测试保护上述公共行为、依赖方向和单一所有权，不锁定 Python 文件的精确集合或完整导入 DAG。新增职责明确的小文件本身不应导致门禁失败；只有形成反向依赖、重复所有者或公共合同回退时才失败。
 
 执行全部业务用例：
 
@@ -727,6 +742,8 @@ Checkout
 
 `GENERATE_PIPELINE_SUMMARY` 默认开启，也可在 `.env` 中使用同名变量。本轮 Jenkins 参数/进程环境优先于 `.env`；关闭时不生成主摘要、兜底摘要和邮件摘要链接，但不影响 JUnit、Allure、质量事实、Metrics 与 Flaky 产物。
 
+`QUALITY_ENABLE` 独立控制质量采集和报告质量数据源。Jenkins 的真实接口阶段会显式开启它，并在生成摘要时传递同一执行事实；本地未开启时，报告中的“质量观测”为 `NOT_RUN`，且不会读取上轮遗留的 `reports/quality`。已开启但本轮核心质量产物缺失、损坏或版本不匹配时才显示 `NO_DATA`。
+
 `Jenkinsfile` 还配置了每日 `00:00` 的参数化真实 Smoke。真实接口会产生模型调用和账单数据；不需要定时执行时，应在 Jenkins Job 的 Build Triggers 中停用对应触发器。
 
 ### 推荐构建模式
@@ -796,7 +813,7 @@ SMOKE_TARGET=module/smoke/test_response_body_validation.py
 
 Jenkins 只保留最近 4 天的归档产物；构建编号、结果、参数和控制台历史不按天数或数量删除。Flaky SQLite 位于 Job 外部持久路径，不受产物清理影响。
 
-查看任意一轮流水线时，先打开 `Artifacts -> reports -> pipeline-summary.md`。报告统一使用“框架测试、用例收集、接口测试”等通用字段，区分阶段通过、失败、未执行、被阻断和产物缺失；只有接口测试启用时才展示请求成功率、重试挽救率、接口耗时 Top 和 Flaky 状态迁移。
+查看任意一轮流水线时，先打开 `Artifacts -> reports -> pipeline-summary.md`。报告统一使用“框架测试、用例收集、接口测试”等通用字段，区分阶段通过、失败、未执行、被阻断和产物缺失；只有接口测试与 Quality 同时启用时才展示请求成功率、重试挽救率、接口耗时 Top 和 Flaky 状态迁移。
 
 需要继续下钻接口测试时，使用 Allure 定位具体请求、响应或附件；需要核对口径或排查数据来源时，再进入 `Artifacts -> reports -> quality` 查看机器产物。
 

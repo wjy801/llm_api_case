@@ -7,7 +7,7 @@ import pytest
 
 from quality.metrics import RunMetricsAggregationRequest, aggregate_run_metrics
 from quality.metrics.contracts import MetricsSourceError
-from quality.metrics.validation import relative_artifact_path
+from quality.metrics.validation import relative_artifact_path, require_manifest
 from quality.storage import read_jsonl, write_json_atomic, write_jsonl_atomic
 from tests.quality.test_metrics_sources import _build_sources
 
@@ -18,6 +18,51 @@ def _sha256(path) -> str:
 
 def _read_json(path):
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize(
+    ("manifest", "expected_code"),
+    (
+        (
+            {
+                "run_id": "foreign-run",
+                "status": "merging",
+                "schema_version": "unsupported",
+            },
+            "p0_manifest_run_id_mismatch",
+        ),
+        (
+            {
+                "run_id": "run-1",
+                "status": "merging",
+                "schema_version": "unsupported",
+            },
+            "p0_manifest_not_complete",
+        ),
+        (
+            {
+                "run_id": "run-1",
+                "status": "complete",
+                "schema_version": "unsupported",
+            },
+            "p0_schema_version_unsupported",
+        ),
+    ),
+)
+def test_manifest_exact_field_validation_preserves_error_priority(
+    manifest,
+    expected_code,
+):
+    with pytest.raises(MetricsSourceError) as captured:
+        require_manifest(
+            manifest,
+            run_id="run-1",
+            status="complete",
+            versions={"schema_version": "quality.v1"},
+            code_prefix="p0",
+        )
+
+    assert captured.value.code == expected_code
 
 
 def _rewrite_request_metrics(semantic_runtime, mutate) -> None:
