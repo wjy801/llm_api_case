@@ -157,6 +157,15 @@ common -X-> quality
 
 ## 安装依赖
 
+Python 最低版本为 3.11（框架使用 `datetime.UTC` 等 Python 3.11 标准库能力）；本轮离线基线验证版本为 Python 3.14.6。
+
+从仓库根目录创建独立虚拟环境：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+```
+
 安装 Python 依赖：
 
 ```powershell
@@ -874,5 +883,5 @@ CI 变更前仍建议先执行：
 .\.venv\Scripts\python.exe run_master.py module/smoke --collect-only -q
 ```
 
-当前清理后的离线验收基线为 `571 passed`；Smoke collect-only 收集 `41` 项（并发池 `15`、串行池 `26`），只验证收集和分池，不执行真实接口。
+当前清理后的离线验收基线为 `668 passed`；Smoke collect-only 收集 `40` 项（并发池 `15`、串行池 `25`），只验证收集和分池，不执行真实接口。该基线使用 Python 3.14.6，并在 `QUALITY_ENABLE=FALSE` 的干净质量开关条件下验证通过。
 

@@ -322,9 +322,7 @@ def test_polling_policy_unknown_state_raises(monkeypatch):
 
 
 def test_polling_policy_timeout_raises_with_last_response(monkeypatch):
-    sleep_calls: list[float] = []
-    monkeypatch.setattr("common.base_request.time.sleep", sleep_calls.append)
-    times = iter([0.0, 0.0, 0.0, 0.2, 0.2])
+    times = iter([0.0, 0.0, 0.2])
     monkeypatch.setattr("common.base_request.time.monotonic", lambda: next(times))
     client = BaseRequest(config=DummyConfig(), middlewares=[])
     client.session.request = lambda method, url, **kwargs: make_response(  # type: ignore[method-assign]
@@ -343,6 +341,50 @@ def test_polling_policy_timeout_raises_with_last_response(monkeypatch):
     assert exc_info.value.last_status == "running"
     assert exc_info.value.last_response is not None
     assert len(exc_info.value.transitions) == 1
+
+
+def test_polling_rejects_success_response_observed_after_deadline():
+    class FakeClock:
+        now = 0.0
+
+        def monotonic(self):
+            return self.now
+
+        def sleep(self, seconds):
+            self.now += seconds
+
+    clock = FakeClock()
+    client = BaseRequest(
+        config=DummyConfig(),
+        middlewares=[],
+        retry_executor=RetryExecutor(
+            sleeper=clock.sleep,
+            monotonic=clock.monotonic,
+        ),
+    )
+    timeouts: list[float] = []
+
+    def request(method, url, **kwargs):
+        timeouts.append(float(kwargs["timeout"]))
+        clock.now = 0.2
+        return make_response(url, json_text='{"status": "succeeded"}')
+
+    client.session.request = request  # type: ignore[method-assign]
+
+    with pytest.raises(PollingTimeoutError) as exc_info:
+        client.poll_get(
+            "/v1/media/tasks/task-001",
+            poll_interval=0.1,
+            poll_timeout=0.1,
+            polling_policy=PollingPolicy(),
+        )
+
+    assert timeouts == [0.1]
+    assert exc_info.value.last_status == "succeeded"
+    assert exc_info.value.last_response is not None
+    assert [transition.raw_status for transition in exc_info.value.transitions] == [
+        "succeeded"
+    ]
 
 
 def test_polling_request_uses_retry_policy(monkeypatch):

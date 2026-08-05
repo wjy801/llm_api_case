@@ -498,15 +498,28 @@ class BaseRequest:
             last_status = evaluation.raw_status
             if runtime_polling is not None:
                 runtime_polling.observe_state(evaluation.state.value)
+            observed_at = self.retry_executor.monotonic()
             transitions.append(
                 PollingTransition(
                     attempt_index=attempt_index,
-                    elapsed_seconds=round(self.retry_executor.monotonic() - started_at, 3),
+                    elapsed_seconds=round(observed_at - started_at, 3),
                     state=evaluation.state,
                     raw_status=evaluation.raw_status,
                     response_status_code=last_response.status_code,
                 )
             )
+
+            remaining = deadline - observed_at
+            if remaining <= 0:
+                self._attach_polling_transitions(last_logger, transitions)
+                last_logger.attach_success(last_response)
+                raise PollingTimeoutError(
+                    path=path,
+                    timeout=timeout,
+                    last_status=last_status,
+                    last_response=last_response,
+                    transitions=transitions,
+                )
 
             if evaluation.state is PollingState.SUCCESS:
                 self._attach_polling_transitions(last_logger, transitions)
@@ -529,18 +542,6 @@ class BaseRequest:
                 last_logger.attach_success(last_response)
                 raise PollingUnknownStateError(
                     path=path,
-                    last_status=last_status,
-                    last_response=last_response,
-                    transitions=transitions,
-                )
-
-            remaining = deadline - self.retry_executor.monotonic()
-            if remaining <= 0:
-                self._attach_polling_transitions(last_logger, transitions)
-                last_logger.attach_success(last_response)
-                raise PollingTimeoutError(
-                    path=path,
-                    timeout=timeout,
                     last_status=last_status,
                     last_response=last_response,
                     transitions=transitions,
