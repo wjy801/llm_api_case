@@ -6,11 +6,12 @@
 
 ## 当前状态
 
-- 基础层已实现请求中间件、配置校验与脱敏、契约断言、显式重试、轮询状态机、测试上下文、轻量 Mock 与故障模拟。
-- 框架重构已完成：`common` 不再静态依赖 `quality`，质量观察通过中性 Runtime Hooks 注入；指标、Flaky Store 和运行编排均已按变化原因拆入独立目录。
+- 基础层已实现请求中间件、配置校验与脱敏、契约断言、显式重试、轮询状态机、测试上下文，以及单元级 Mock 与 loopback 集成级离线验证。
+- `common` 不静态依赖 `quality`，质量观察通过中性 Runtime Hooks 注入；指标、Flaky Store 和运行编排分别位于职责独立的目录。
 - 协议与业务层已覆盖 OpenAI Chat Completions、Responses、Anthropic Messages，以及图片、视频和真实 Smoke 链路。
 - 质量链已实现事实归并、完整性校验、失败分类、请求指标和机器可读产物。
 - 语义与指标链已实现逻辑调用、HTTP/SSE/异步耗时、Token/媒体用量覆盖；Flaky 历史、状态机与治理命令完整保留。
+- 已建立确定性离线学习模块：标准库 loopback 服务提供 9 个固定场景，18 项基础设施门禁验证协议、隔离、并发计数和线程回收；当前 7 条业务分类用例覆盖四件套、默认 Middleware 与 Retry。
 - Jenkins 已支持参数化执行、并发优先与串行收尾、每轮 Pipeline 执行摘要、JUnit/Allure、邮件直达链接和构建产物自动清理。
 - `reports/pipeline-summary.md` 是唯一人工质量报告；缺失的 Metrics 或 Flaky 数据只降级对应章节，不按零计算，也不覆盖 pytest/Jenkins 结果。
 
@@ -32,7 +33,7 @@ common/
   base_request.py          # BaseRequest：HTTP 请求、请求中间件、重试、轮询
   base_assertions.py       # BaseAssertions：状态码、JSONPath、JSON Schema 断言
   base_decorators.py       # Allure step、模型结果附件、下载结果挂载
-  base_task.py             # 旧 Task API 的稳定兼容门面
+  base_task.py             # Task 公共 API 的稳定兼容门面
   task_capabilities/       # 可组合的媒体生成与账单领域能力
   capture.py               # 输入/输出下载 CapturePolicy
   request_context.py       # 单次请求上下文
@@ -58,7 +59,18 @@ module/
   image_model/             # 图片模型真实用例
   video_model/             # 视频模型真实用例
   smoke/                   # Smoke 用例、响应 Schema、业务 payload builder
+  material_library/        # 素材管理领域四件套、真实用例与独立 CLI
   protocol_testing/        # OpenAI/Anthropic 协议兼容性用例
+  offline_framework_example/
+    offline_service.py     # 127.0.0.1 随机端口确定性 HTTP 服务与冻结场景
+    request.py             # 显式离线 Settings、相对路径与中性 metadata
+    task.py                # 离线 payload、业务动作与 Retry/Polling 策略
+    assertions.py          # 离线领域断言，委托 BaseAssertions
+    decorators.py          # 保留真实类身份的薄 Decorators 子类
+    response_schemas.py    # 创建、Polling、错误与审计响应 Schema
+    conftest.py            # 服务、Request、Capture 与 Runtime 观察 fixture
+    test_request_pipeline.py # Request 与默认 Middleware 分类
+    test_retry.py          # GET/POST Retry 资格与挽救分类
 
 quality/
   collector.py             # Case/请求事实采集
@@ -72,14 +84,16 @@ quality/
 
 tests/
   mock_helpers.py          # 离线响应、故障、流式响应和睡眠记录工具
+  test_offline_service.py  # 确定性本地服务协议、隔离、资源与回收门禁
   quality/                 # 质量事实、Metrics、Flaky、Jenkins 集成回归测试
   test_*.py                # 框架基础能力单测
 
-dev/                       # 各阶段设计方案
-code_history/              # 各阶段独立变更历史
+dev/                       # 架构审查、协议合同与开发思路
+dev_plan/                  # 可执行的阶段开发方案
+code_history/              # 历史存量变更记录；当前不再新增
 config.py                  # Settings 与环境配置加载
-master_service.py          # 收集/分池旧入口的稳定兼容门面
-run_master.py              # 稳定兼容入口，用户与 Jenkins 命令保持不变
+master_service.py          # 收集与分池公共导入的稳定兼容门面
+run_master.py              # 本地与 Jenkins 共用的稳定执行入口
 pipeline_reporting/        # Jenkins 全场景执行摘要、阶段状态与兜底输入
 run_orchestration/
   cli.py                   # CLI 参数解析和 pytest 参数透传
@@ -112,9 +126,9 @@ __pycache__/
 data/
 ```
 
-## 重构后的架构边界
+## 架构边界与依赖方向
 
-本轮重构保持测试写法、执行命令、保留机器产物的 Schema 和质量规则稳定；已删除旧的独立人工质量报告及其专用路径，人工查看统一收敛到 `reports/pipeline-summary.md`。代码结构调整的重点是缩短变化传播路径：
+框架按请求执行、测试编排和质量观察三个变化方向划分职责。`reports/pipeline-summary.md` 是人工查看入口，JUnit、Allure 和 `reports/quality/**` 分别提供测试结果、用例明细与机器证据。当前调用关系如下：
 
 ```text
 module 业务用例
@@ -128,8 +142,20 @@ run_master.py 稳定入口
 -> scheduling 从同一计划派生并行池和串行池
 -> runner 只依赖中性 QualityRunLifecycle 并执行已分配 nodeid
 -> Quality 关闭返回 Noop；开启后才加载质量阶段实现
--> master_service 通过兼容委托保留旧导入路径
+-> master_service 通过兼容委托提供稳定公共导入
 ```
+
+离线学习链路复用同一公共入口，不建立第二套测试框架：
+
+```text
+OfflineService（127.0.0.1 + 随机端口 + 固定响应序列）
+-> OfflineFrameworkTask 构建 payload 和业务动作
+-> OfflineFrameworkRequest 复用 BaseRequest/Middleware/Retry
+-> OfflineFrameworkAssertions 复用 BaseAssertions
+-> pytest / Runner / Allure / 可选 Quality 消费同一执行事实
+```
+
+当前离线业务用例只覆盖 Request、默认 Middleware 和 Retry。`offline_service.py` 虽然提供了 Polling、上下文、Capture 和并发所需的协议端点，但对应业务分类用例及黄金路径尚不存在，不计入已实现能力和验收范围。
 
 依赖方向必须保持：
 
@@ -187,7 +213,13 @@ npm install
 
 ## 环境配置
 
-创建或修改 `.env`，按 `config.py` 当前读取的变量配置：
+先从模板创建本地 `.env`：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+再按 `config.py` 当前读取的变量修改配置：
 
 ```text
 USE_CHINA_ENVIRONMENT=TRUE
@@ -207,9 +239,15 @@ HISTORY_REPORT_KEEP_LIMIT=30
 GENERATE_PIPELINE_SUMMARY=TRUE
 QUALITY_ENABLE=FALSE
 QUALITY_SEMANTIC_ENABLE=FALSE
+QUALITY_METRICS_ENABLE=FALSE
+QUALITY_FLAKY_HISTORY_ENABLE=FALSE
+QUALITY_FLAKY_STATE_ENABLE=FALSE
+QUALITY_FLAKY_DB_PATH=
 ```
 
 账单、余额及用量查询需要对应环境的 `*_CONTROL_API_KEY`。特殊账号 Key 继续按 `.env.example` 配置，不写入代码或 Jenkinsfile。
+
+离线分类用例只访问 `127.0.0.1` 随机端口，`OfflineFrameworkRequest` 会创建自己的离线 `Settings`，不会使用 `.env` 中的真实 URL 或 Key。不过，框架导入 `config.py` 时仍会校验所选环境配置，因此 `.env` 至少要保留语法合法的 URL、非空 Key 和有效开关值；直接复制 `.env.example` 已满足离线运行要求。
 
 本地启用完整质量事实与 Metrics 数据链路时，可在 PowerShell 当前进程中设置：
 
@@ -247,7 +285,7 @@ USE_CHINA_ENVIRONMENT=FALSE  # 海外环境
 
 安全边界：
 
-- 旧的 `BASE_URL`、`API_KEY` 变量当前不会被 `config.py` 读取。
+- `BASE_URL`、`API_KEY` 不属于 `config.py` 的有效配置变量。
 - B 账号、zero 账号等特殊账号不进入全局统一配置，使用范围限制在明确用例或局部 fixture 中。
 - 日志、异常、cURL、Allure 附件和配置摘要共用 `util/redaction.py` 的脱敏规则。
 
@@ -266,9 +304,11 @@ RequestMiddleware.on_exception(context, error)
 默认中间件包括：
 
 - `RuntimeObservationMiddleware`：通过中性 Runtime Hooks 观察请求开始、成功和异常；Quality 关闭时为空操作。
+- `MediaResourceMiddleware`：在 POST 前收集 `input.media.url` 前置资源下载任务。
 - `RedactionMiddleware`：对请求参数建立脱敏副本。
 - `LoggingMiddleware`：输出请求、响应、异常、重试记录和轮询迁移日志。
-- `MediaResourceMiddleware`：在 POST 前收集 `input.media.url` 前置资源下载任务。
+
+默认注册与执行顺序固定为 `RuntimeObservation → MediaResource → Redaction → Logging`；自定义中间件按传入顺序执行。
 
 每次请求使用独立 `RequestContext`，请求参数会尽量深拷贝，避免中间件污染调用方 payload。`on_exception()` 中间件自身失败时不会覆盖原始网络异常。
 
@@ -387,7 +427,7 @@ response = client.poll_get(
 - `PollingPolicy(...)` 的公开构造参数保持兼容。
 - `PollingTransition(1, 0.0, state, status, 200)` 的旧位置参数写法仍可使用。
 - 非法 JSONPath、未知状态策略等仍以 `ValueError` 语义暴露。
-- 旧版 `success_json_path` / `failure_json_path` 调用方式已删除。
+- `poll_get()` 不接受 `success_json_path` / `failure_json_path` 参数。
 
 ### 测试上下文与变量传递
 
@@ -411,9 +451,9 @@ def test_chain(self, test_context):
     request_id = test_context.require("request_id", expected_type=str)
 ```
 
-### 轻量 Mock 与故障模拟
+### 两层离线回归与故障模拟
 
-第一版离线回归能力放在 `tests/mock_helpers.py`，不引入独立 Mock Server。
+框架按验证成本分成两层离线能力。第一层位于 `tests/mock_helpers.py`，用于快速、精确地验证核心分支，不启动网络服务：
 
 已提供：
 
@@ -425,13 +465,17 @@ def test_chain(self, test_context):
 - `polling_responses()`：快速生成轮询状态序列。
 - `FakeStreamResponse`：模拟 SSE/流式响应中断和 chunk 行为。
 
-该能力用于框架核心分支单测，不替代真实环境用例。
+第二层位于 `module/offline_framework_example/offline_service.py`，使用 Python 标准库在 `127.0.0.1` 随机端口启动确定性 HTTP 服务。它冻结 9 个场景，覆盖 Echo、瞬时 429/503、幂等 POST、Polling 成功/失败/未知/超时和超限下载；所有请求均经过真实 `requests.Session`、`BaseRequest`、Middleware 与 Retry 链路，并由 loopback 守卫阻止访问合同外地址。
+
+`tests/test_offline_service.py` 的 18 项门禁负责验证离线协议、实例隔离、并发计数、线程回收和 IPv4 loopback 边界。`module/offline_framework_example/` 当前另有 7 条业务分类用例：3 条验证 Request/默认 Middleware，4 条验证 Retry 资格与挽救；它们全部属于并发池，不依赖真实服务、账号或凭据。
+
+这两层能力用于框架核心回归和学习，不替代真实环境业务用例。Polling、TestContext、Capture、并发与黄金路径分类尚未实现，不能把离线服务已提供的协议端点误认为对应业务分类已经完成。
 
 ## 分层规范
 
 `common/` 只放所有模型都能复用的通用能力。具体模型路径、payload builder、模型 ID 和真实测试数据应放在对应 `module/<model_name>/` 中。
 
-每个模型目录建议固定包含：
+每个模型目录必须创建四件套，并以真实类保留类身份、MRO、`__name__` 和稳定导入路径；即使当前职责很薄，也不能替换为简单别名：
 
 ```text
 request.py
@@ -441,6 +485,8 @@ task.py
 test_*.py
 __init__.py
 ```
+
+其中 `request.py`、`assertions.py`、`decorators.py`、`task.py` 是强制四件套；`test_*.py` 是业务用例入口，`__init__.py` 负责稳定导出。`response_schemas.py`、`payload_builders.py`、`conftest.py` 等文件按实际 Schema、数据构造和 fixture 职责增设，不要求机械创建。
 
 新增模块时，每个独立文件的类应分别继承 `common` 中对应公共基类：
 
@@ -472,28 +518,28 @@ class XxxTask(BaseTask):
 
 测试类中不要定义 `__init__`，pytest 会跳过带自定义 `__init__` 的测试类。
 
-推荐写法：
+推荐先从不依赖外部环境的离线用例学习。下面的写法可直接放入 `module/offline_framework_example/test_*.py`，`conftest.py` 会负责启动和回收本地服务与 Request：
 
 ```python
-from module.image_model import ImageAssertions, ImageRequest, ImageTask
+from module.offline_framework_example import (
+    OfflineFrameworkAssertions,
+    OfflineFrameworkRequest,
+    OfflineFrameworkTask,
+)
 
 
-class TestImageGenerations:
-    def setup_method(self):
-        self.image_request = ImageRequest()
-        self.image_assertions = ImageAssertions()
-        self.image_task = ImageTask()
+class TestOfflineEcho:
+    def test_echo(self, offline_request: OfflineFrameworkRequest) -> None:
+        task = OfflineFrameworkTask()
+        assertions = OfflineFrameworkAssertions()
+        payload = task.build_echo_payload()
 
-    def teardown_method(self):
-        self.image_request.close()
+        response = task.submit_echo(offline_request, payload)
 
-    def test_create_image_generation(self):
-        response = self.image_task.create_and_poll_media_generation(
-            self.image_request,
-            payload,
-        )
-        self.image_assertions.assert_status_code(response, 200)
+        assertions.assert_echo_accepted(response, payload)
 ```
+
+完整的已实现示例见 `module/offline_framework_example/test_request_pipeline.py` 和 `test_retry.py`。真实业务模块沿用相同的 Request → Task → Assertions 调用方向，只替换领域端点、payload 和响应规则。
 
 约束：
 
@@ -506,13 +552,13 @@ class TestImageGenerations:
 
 ## 执行入口
 
-`master_service.py` 保留旧的收集与分池导入路径；实际 pytest 收集由 `run_orchestration/pytest_execution.py` 唯一拥有，分池算法由 `scheduling.py` 唯一拥有。直接执行兼容入口仍可输出收集结果：
+`master_service.py` 提供稳定的收集与分池公共导入；实际 pytest 收集由 `run_orchestration/pytest_execution.py` 唯一拥有，分池算法由 `scheduling.py` 唯一拥有。直接执行该入口可输出收集结果：
 
 ```powershell
 .\.venv\Scripts\python.exe master_service.py
 ```
 
-`run_master.py` 是稳定兼容入口，只重导出 `run()`、`main()` 和路径常量；用户、Jenkins 和已有脚本不需要改变命令。Runner 将 `-k`、`-m`、`--ignore` 等选择条件放入同一次权威收集，形成不可变 nodeid/marker 计划；正式执行只消费计划，不再二次选测。
+`run_master.py` 是本地与 Jenkins 共用的执行入口，只导出 `run()`、`main()` 和路径常量。Runner 将 `-k`、`-m`、`--ignore` 等选择条件放入同一次权威收集，形成不可变 nodeid/marker 计划；正式执行只消费计划，不再二次选测。
 
 关键职责保持单一所有者：
 
@@ -528,6 +574,26 @@ class TestImageGenerations:
 
 ```powershell
 .\.venv\Scripts\python.exe run_master.py
+```
+
+未指定目标时会收集 `module/` 下全部业务用例，其中包含可能调用真实接口、产生费用或修改共享状态的用例。学习和离线验收应始终显式指定 `module/offline_framework_example`。
+
+完全离线验证本地服务合同：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_offline_service.py -q
+```
+
+只收集离线业务分类，不发起请求：
+
+```powershell
+.\.venv\Scripts\python.exe run_master.py module/offline_framework_example --collect-only -q
+```
+
+通过 Runner 并发执行离线业务分类：
+
+```powershell
+.\.venv\Scripts\python.exe run_master.py module/offline_framework_example -n 2
 ```
 
 执行指定目录：
@@ -876,12 +942,20 @@ Jenkins 环境复建和迁移参考：
 
 ### 本地验收
 
-CI 变更前仍建议先执行：
+CI 变更前建议按“确定性离线门禁 → 全部框架回归 → 真实用例收集”的顺序执行：
 
 ```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_offline_service.py -q
+.\.venv\Scripts\python.exe run_master.py module/offline_framework_example --collect-only -q
+.\.venv\Scripts\python.exe run_master.py module/offline_framework_example -n 2
 .\.venv\Scripts\python.exe -m pytest tests -q
 .\.venv\Scripts\python.exe run_master.py module/smoke --collect-only -q
 ```
 
-当前清理后的离线验收基线为 `668 passed`；Smoke collect-only 收集 `40` 项（并发池 `15`、串行池 `25`），只验证收集和分池，不执行真实接口。该基线使用 Python 3.14.6，并在 `QUALITY_ENABLE=FALSE` 的干净质量开关条件下验证通过。
+当前基线使用 Python 3.14.6，并在 `QUALITY_ENABLE=FALSE` 的干净质量开关条件下验证：
+
+- 框架测试：`686 passed`。
+- 离线服务合同：`18 passed`。
+- 离线业务分类：收集并通过 `7` 项（并发池 `7`、串行池 `0`）。
+- Smoke collect-only：收集 `40` 项（并发池 `15`、串行池 `25`），只验证收集和分池，不执行真实接口。
 
