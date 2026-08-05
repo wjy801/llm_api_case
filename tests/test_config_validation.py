@@ -9,6 +9,7 @@ from util.config_validation import (
     is_enabled,
     parse_bool,
     redact_config_summary,
+    validate_settings_values,
 )
 
 
@@ -157,6 +158,47 @@ class TestLoadSettings:
 
 
 class TestConfigValidationHelpers:
+    def test_canonical_values_match_public_settings(self):
+        environment = {
+            "USE_CHINA_ENVIRONMENT": "TRUE",
+            "CHINA_TEST_ENVIRONMENT_BASE_URL": "https://pre.example.com/",
+            "CHINA_API_KEY": "china-secret",
+            "API_TIMEOUT": "10.5",
+            "GENERATE_ALLURE_REPORT": "false",
+            "GENERATE_HISTORY_REPORT": "true",
+            "HISTORY_REPORT_KEEP_LIMIT": "7",
+        }
+
+        values = validate_settings_values(environment)
+        settings = load_settings(environment)
+
+        assert values.timeout == settings.timeout
+        assert values.generate_allure_report is settings.generate_allure_report
+        assert values.generate_history_report is settings.generate_history_report
+        assert values.history_report_keep_limit == settings.history_report_keep_limit
+        assert values.base_url == settings.base_url
+        assert values.api_key == settings.api_key
+        assert values.environment_name == settings.environment_name
+
+    def test_canonical_values_preserve_scalar_error_order(self):
+        with pytest.raises(ConfigValidationError) as exc_info:
+            validate_settings_values(
+                {
+                    "OVERSEAS_TEST_BASE_URL": "https://pre.example.org",
+                    "OVERSEAS_API_KEY": "overseas-secret",
+                    "API_TIMEOUT": "bad",
+                    "GENERATE_ALLURE_REPORT": "nope",
+                    "HISTORY_REPORT_KEEP_LIMIT": "0",
+                }
+            )
+
+        assert str(exc_info.value) == (
+            "Configuration validation failed:\n"
+            "- Invalid config API_TIMEOUT='bad'. Expected positive number.\n"
+            "- Invalid config GENERATE_ALLURE_REPORT='nope'. Expected TRUE or FALSE.\n"
+            "- Invalid config HISTORY_REPORT_KEEP_LIMIT='0'. Expected integer >= 1."
+        )
+
     def test_parse_bool_is_case_insensitive(self):
         assert parse_bool("FLAG", "TRUE") is True
         assert parse_bool("FLAG", "true") is True

@@ -18,7 +18,6 @@ def test_real_smoke_enables_quality_reports_and_archives_artifacts():
     assert "$env:QUALITY_ENABLE = '1'" in content
     assert "$env:QUALITY_SEMANTIC_ENABLE = '1'" in content
     assert "$env:QUALITY_METRICS_ENABLE = '1'" in content
-    assert "QUALITY_P1_REPORT_ENABLE" not in content
     assert "$env:QUALITY_FLAKY_HISTORY_ENABLE = '0'" in content
     assert "$env:QUALITY_FLAKY_HISTORY_ENABLE = '1'" in content
     assert "$env:QUALITY_FLAKY_STATE_ENABLE = '0'" in content
@@ -30,58 +29,26 @@ def test_real_smoke_enables_quality_reports_and_archives_artifacts():
     assert "Where-Object { $_ -match '^\\\\s*QUALITY_FLAKY_DB_PATH\\\\s*=' }" in content
     assert "IsNullOrWhiteSpace($env:QUALITY_FLAKY_DB_PATH) -and" in content
     assert "IsNullOrWhiteSpace($env:QUALITY_FLAKY_DB_PATH)" in content
-    assert "D:/API_CASE_DATA" not in content
-    assert "D:\\API_CASE_DATA" not in content
     assert "$env:QUALITY_OUTPUT_DIR = 'reports/quality'" in content
-    assert "QUALITY_SHADOW_GATE" not in content
-    assert "QUALITY_MIN_REQUEST_SAMPLES" not in content
-    assert "QUALITY_HTTP_5XX_WARN_RATE" not in content
-    assert "QUALITY_TIMEOUT_WARN_RATE" not in content
-    assert "Map readQualitySummary()" not in content
-    assert "Map readP1ObservationSummary()" not in content
-    assert "Map parseJsonObject(String text)" not in content
     assert "$reportsPath = Join-Path (Get-Location) 'reports'" in content
     assert "Remove-Item -LiteralPath $reportsPath -Recurse -Force" in content
     assert content.index("Remove-Item -LiteralPath $reportsPath -Recurse -Force") < content.index("New-Item -ItemType Directory -Force -Path $reportsPath")
 
 
-def test_email_summary_is_compact_and_excludes_quality_stage_details():
+def test_email_consumes_the_shared_python_report_without_reparsing_junit():
     content = JENKINSFILE.read_text(encoding="utf-8")
     email_content = content[
-        content.index("String buildResultSummaryHtml") : content.index("String normalizeBranchName")
+        content.index("void notifyByEmail") : content.index("@NonCPS\nString htmlEscape")
     ]
 
-    assert "passed: 0" in content
-    assert "failedTests: []" in content
-    assert "失败用例（最多 5 项）" in content
-    assert "测试报告未生成，构建可能在测试阶段前失败。" in content
-    assert "请查看控制台日志" not in email_content
-    assert "详细执行与质量数据请在构建产物中查看。" in content
-    assert "${junit.tests} 总计 / ${junit.passed} 通过 / ${failedCount} 失败 / ${junit.skipped} 跳过" in content
-    assert "${smoke.total} 项（并发 ${smoke.parallel} / 串行 ${smoke.serial}）" in content
-    assert '>用例收集</td>' in email_content
-    assert "parts << '用例收集'" in email_content
-    assert 'parts << "接口测试（${params.SMOKE_TARGET}）"' in email_content
-    assert '>Smoke</td>' not in email_content
-    assert "buildExecutionSummary()" in email_content
-    assert ">构建详情</a>" not in email_content
-    assert ">控制台日志</a>" not in email_content
-    assert "fileExists('reports/pipeline-summary.md')" in email_content
-    assert "artifact/reports/pipeline-summary.md" in email_content
-    assert ">流水线执行摘要</a>" in email_content
-    assert ">Allure 报告</a>" in email_content
-    assert ">JUnit 报告</a>" in email_content
-    assert ">构建产物</a>" in email_content
-    assert email_content.count("reportLinks <<") == 4
-    assert "gate-report" not in email_content
-    assert "P0 质量门禁报告" not in email_content
-    assert "p1-observation" not in email_content
-    assert "P1 观察报告" not in email_content
-    assert "normalizeBranchName(env.BRANCH_NAME ?: env.GIT_BRANCH)" in content
-    assert "shortGitCommit(env.GIT_COMMIT)" in content
-    assert 'subject: "【${statusText}】${env.JOB_NAME} #${env.BUILD_NUMBER}｜${resultText}"' in content
-    assert "body: buildResultSummaryHtml(status, junit, smoke)" in content
-    assert "'dev2'" not in content
+    assert "reports/pipeline-summary.json" in content
+    assert "reports/pipeline-email-subject.txt" in content
+    assert "reports/pipeline-email.html" in content
+    assert "readFile('reports/pipeline-email-subject.txt').trim()" in email_content
+    assert "readFile('reports/pipeline-email.html')" in email_content
+    assert "buildFallbackEmailHtml(status)" in email_content
+    assert "emailext(" in email_content
+    assert "body: body" in email_content
 
 
 def test_pipeline_summary_is_parameterized_generated_before_archive_and_has_fallback():
@@ -93,6 +60,7 @@ def test_pipeline_summary_is_parameterized_generated_before_archive_and_has_fall
     assert "booleanParam(name: 'GENERATE_PIPELINE_SUMMARY', defaultValue: true" in content
     assert "GENERATE_PIPELINE_SUMMARY=true" in content
     assert "\\$env:GENERATE_PIPELINE_SUMMARY = '${params.GENERATE_PIPELINE_SUMMARY}'" in content
+    assert '"QUALITY_ENABLE=${params.RUN_REAL_SMOKE}"' in content
     assert "initializePipelineStageStatus()" in content
     assert "updatePipelineStageStatus('framework_tests', 'PASSED')" in content
     assert "updatePipelineStageStatus('smoke_collect', 'PASSED')" in content

@@ -4,10 +4,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable
-import hashlib
 import json
 
 from pydantic import ValidationError
+
+from util.artifact_io import file_sha256
 
 from quality.case_lifecycle import fold_case_status
 from quality.classifier import (
@@ -577,11 +578,7 @@ def _canonical_record(record: Any) -> str:
 
 
 def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return file_sha256(path)
 
 
 def _relative_path(path: Path, root: Path) -> str:

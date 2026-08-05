@@ -11,6 +11,9 @@ from common.base_task import (
     BaseTask,
 )
 from common.polling import DEFAULT_MEDIA_POLLING_POLICY, PollingState, evaluate_polling_response
+from common.task_capabilities import BillingCapability
+from module.image_model.task import ImageTask
+from module.video_model.task import VideoTask
 
 
 class FakeResponse:
@@ -190,9 +193,11 @@ class TestBaseTask:
         response = task.get_account_balance(request_client, "control-key")
 
         assert response.json() == {"data": {"total_balance": "100"}}
-        assert request_client.get_calls == [{"path": "/v1/account/balance", "kwargs": {"data": ""}}]
-        assert request_client.updated_headers[-1]["Authorization"] == "Bearer control-key"
-        assert request_client.reset_headers_count == 1
+        assert request_client.get_calls[0]["path"] == "/v1/account/balance"
+        assert request_client.get_calls[0]["kwargs"]["data"] == ""
+        assert request_client.get_calls[0]["kwargs"]["headers"]["Authorization"] == "Bearer control-key"
+        assert request_client.updated_headers == []
+        assert request_client.reset_headers_count == 0
 
     def test_query_usage_records_by_request_id_uses_control_key_and_resets_headers(self):
         task = BaseTask()
@@ -204,11 +209,14 @@ class TestBaseTask:
         assert request_client.get_calls == [
             {
                 "path": "/v1/account/usage-records",
-                "kwargs": {"params": {"request_id": "request-001", "": ""}},
+                "kwargs": {
+                    "params": {"request_id": "request-001"},
+                    "headers": {"Authorization": "Bearer control-key"},
+                },
             }
         ]
-        assert request_client.updated_headers[-1] == {"Authorization": "Bearer control-key"}
-        assert request_client.reset_headers_count == 1
+        assert request_client.updated_headers == []
+        assert request_client.reset_headers_count == 0
 
     def test_get_usage_records_queries_usage_by_request_id(self):
         task = BaseTask()
@@ -253,20 +261,18 @@ class TestBaseTask:
         response = task.query_usage_records_by_request_id_for_billing(request_client, "request-001")
 
         assert response.json()["data"]["status"] == "success"
-        assert request_client.poll_calls == [
-            {
-                "path": "/v1/account/usage-records",
-                "poll_interval": USAGE_RECORD_SETTLEMENT_POLL_INTERVAL_SECONDS,
-                "poll_timeout": USAGE_RECORD_SETTLEMENT_TIMEOUT_SECONDS,
-                "polling_policy": USAGE_RECORD_SETTLEMENT_POLLING_POLICY,
-                "retry_policy": None,
-                "params": {"request_id": "request-001", "": ""},
-                "_quality_operation_name": "usage_record_settlement",
-                "_quality_traffic_role": "control",
-            }
-        ]
-        assert request_client.updated_headers[-1] == {"Authorization": "Bearer control-key"}
-        assert request_client.reset_headers_count == 1
+        assert len(request_client.poll_calls) == 1
+        call = request_client.poll_calls[0]
+        assert call["path"] == "/v1/account/usage-records"
+        assert call["poll_interval"] == USAGE_RECORD_SETTLEMENT_POLL_INTERVAL_SECONDS
+        assert call["poll_timeout"] == USAGE_RECORD_SETTLEMENT_TIMEOUT_SECONDS
+        assert call["polling_policy"] == USAGE_RECORD_SETTLEMENT_POLLING_POLICY
+        assert call["params"] == {"request_id": "request-001"}
+        assert call["headers"] == {"Authorization": "Bearer control-key"}
+        assert call["runtime_metadata"].name == "usage_record_settlement"
+        assert call["runtime_metadata"].role == "control"
+        assert request_client.updated_headers == []
+        assert request_client.reset_headers_count == 0
 
     @pytest.mark.parametrize(
         ("status", "expected_state"),
@@ -293,3 +299,21 @@ class TestBaseTask:
     def test_get_request_id_from_response_requires_header(self):
         with pytest.raises(AssertionError, match="x-oneapi-request-id"):
             BaseTask.get_request_id_from_response(FakeResponse({}))
+
+    def test_billing_capability_returns_neutral_missing_key_result(self):
+        lookup = BillingCapability().lookup_control_api_key(
+            use_china_environment=False,
+            environ={},
+        )
+
+        assert lookup.environment_variable == "OVERSEAS_CONTROL_API_KEY"
+        assert lookup.value is None
+        assert lookup.is_configured is False
+
+    def test_domain_task_types_keep_real_class_identity_and_mro(self):
+        assert ImageTask.__name__ == "ImageTask"
+        assert VideoTask.__name__ == "VideoTask"
+        assert ImageTask is not BaseTask
+        assert VideoTask is not BaseTask
+        assert BaseTask in ImageTask.__mro__
+        assert BaseTask in VideoTask.__mro__

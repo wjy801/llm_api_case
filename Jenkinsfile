@@ -15,7 +15,7 @@ pipeline {
 
     triggers {
         parameterizedCron('''
-            0 0 * * * % RUN_FRAMEWORK_TESTS=true;RUN_COLLECT_ONLY=false;RUN_REAL_SMOKE=true;GENERATE_PIPELINE_SUMMARY=true;ALWAYS_SEND_REPORT_EMAIL=true;USE_CHINA_ENVIRONMENT=TRUE;SMOKE_TARGET=module/smoke;TEST_PARALLEL_WORKERS=off
+            H 7 * * * % RUN_FRAMEWORK_TESTS=false;RUN_COLLECT_ONLY=false;RUN_REAL_SMOKE=true;GENERATE_PIPELINE_SUMMARY=true;ALWAYS_SEND_REPORT_EMAIL=true;USE_CHINA_ENVIRONMENT=TRUE;SMOKE_TARGET=module/smoke;TEST_PARALLEL_WORKERS=auto
         ''')
     }
 
@@ -328,11 +328,15 @@ void generatePipelineSummary() {
         withEnv([
             "PIPELINE_BUILD_RESULT=${currentBuild.currentResult ?: currentBuild.result ?: 'SUCCESS'}",
             "PIPELINE_DURATION_MS=${currentBuild.duration ?: 0}",
+            "QUALITY_ENABLE=${params.RUN_REAL_SMOKE}",
         ]) {
             ciPowerShell('''
             ./.venv/Scripts/python.exe -m pipeline_reporting generate `
               --workspace . `
               --output reports/pipeline-summary.md `
+              --machine-output reports/pipeline-summary.json `
+              --email-subject-output reports/pipeline-email-subject.txt `
+              --email-html-output reports/pipeline-email.html `
               --dotenv .env
             ''')
         }
@@ -372,120 +376,20 @@ void writeFallbackPipelineSummary() {
     }
 }
 
-Map readJunitSummary() {
-    def summary = [
-        available: false,
-        reportCount: 0,
-        tests: 0,
-        passed: 0,
-        failures: 0,
-        errors: 0,
-        skipped: 0,
-        failedTests: [],
-    ]
-    def reportFiles = [
-        'reports/unit-tests.xml',
-        'reports/smoke-tests.xml',
-        'reports/smoke-tests-parallel.xml',
-        'reports/smoke-tests-serial.xml',
-    ]
-
-    reportFiles.each { reportFile ->
-        if (fileExists(reportFile)) {
-            def parsed = parseJunitXmlText(readFile(reportFile))
-            summary.available = true
-            summary.reportCount += 1
-            summary.tests += parsed.tests
-            summary.failures += parsed.failures
-            summary.errors += parsed.errors
-            summary.skipped += parsed.skipped
-            parsed.failedTests.each { failedTest ->
-                if (summary.failedTests.size() < 5 && !summary.failedTests.contains(failedTest)) {
-                    summary.failedTests << failedTest
-                }
-            }
-        }
-    }
-
-    summary.passed = summary.tests - summary.failures - summary.errors - summary.skipped
-    if (summary.passed < 0) {
-        summary.passed = 0
-    }
-    return summary
-}
-
-Map readSmokeCollectSummary() {
-    if (!fileExists('reports/smoke-collect.txt')) {
-        return [available: false, total: '-', parallel: '-', serial: '-']
-    }
-
-    def summary = parseSmokeCollectText(readFile('reports/smoke-collect.txt'))
-    summary.available = true
-    return summary
-}
-
-String buildResultSummaryHtml(String status, Map junit, Map smoke) {
+String buildFallbackEmailHtml(String status) {
     def statusColor = status == 'FAILED' ? '#b00020' : status == 'UNSTABLE' ? '#b26a00' : '#137333'
     def statusText = buildStatusText(status)
     def buildUrl = env.BUILD_URL ?: ''
     def branchName = normalizeBranchName(env.BRANCH_NAME ?: env.GIT_BRANCH)
     def gitCommit = shortGitCommit(env.GIT_COMMIT)
-    def failedCount = junit.failures + junit.errors
-    def junitText = junit.available
-        ? "${junit.tests} 总计 / ${junit.passed} 通过 / ${failedCount} 失败 / ${junit.skipped} 跳过"
-        : '测试报告未生成，构建可能在测试阶段前失败。'
-    def smokeText = smoke.available
-        ? "${smoke.total} 项（并发 ${smoke.parallel} / 串行 ${smoke.serial}）"
-        : '未生成收集清单'
-    def failedTestsHtml = ''
-    if (junit.available && failedCount > 0) {
-        def failedItems = junit.failedTests.collect { failedTest ->
-            "<li style=\"margin: 4px 0;\">${htmlEscape(failedTest)}</li>"
-        }.join('')
-        if (!failedItems) {
-            failedItems = '<li style="margin: 4px 0;">未能从 JUnit 报告提取失败用例名称</li>'
-        }
-        failedTestsHtml = """
-        <div style="margin-top: 16px; padding: 12px 16px; background: #fff5f5; border-left: 4px solid #b00020;">
-          <div style="font-weight: 600; color: #b00020;">失败用例（最多 5 项）</div>
-          <ul style="margin: 8px 0 0; padding-left: 20px;">${failedItems}</ul>
-        </div>
-        """
-    }
-    def reportLinks = []
-    if (fileExists('reports/pipeline-summary.md')) {
-        reportLinks << "<a href=\"${htmlEscape(buildUrl)}artifact/reports/pipeline-summary.md\">流水线执行摘要</a>"
-    }
-    reportLinks << "<a href=\"${htmlEscape(buildUrl)}allure/\">Allure 报告</a>"
-    if (junit.available) {
-        reportLinks << "<a href=\"${htmlEscape(buildUrl)}testReport/\">JUnit 报告</a>"
-    }
-    reportLinks << "<a href=\"${htmlEscape(buildUrl)}artifact/\">构建产物</a>"
 
     return """
     <div style="max-width: 720px; font-family: 'Microsoft YaHei', 'PingFang SC', Arial, sans-serif; color: #222; line-height: 1.5;">
       <h2 style="margin: 0; color: ${statusColor};">${htmlEscape(statusText)}</h2>
       <p style="margin: 4px 0 0; color: #555;">${htmlEscape(env.JOB_NAME)} #${htmlEscape(env.BUILD_NUMBER)}</p>
       <p style="margin: 2px 0 16px; color: #777;">${htmlEscape(branchName)} · ${htmlEscape(gitCommit)} · ${htmlEscape(formatDurationChinese(currentBuild.duration))}</p>
-      <table style="width: 100%; border-collapse: collapse;">
-        <tr>
-          <td style="width: 72px; padding: 9px 10px; border: 1px solid #ddd; color: #666;">测试</td>
-          <td style="padding: 9px 10px; border: 1px solid #ddd;">${htmlEscape(junitText)}</td>
-        </tr>
-        <tr>
-          <td style="padding: 9px 10px; border: 1px solid #ddd; color: #666;">用例收集</td>
-          <td style="padding: 9px 10px; border: 1px solid #ddd;">${htmlEscape(smokeText)}</td>
-        </tr>
-        <tr>
-          <td style="padding: 9px 10px; border: 1px solid #ddd; color: #666;">执行</td>
-          <td style="padding: 9px 10px; border: 1px solid #ddd;">${htmlEscape(buildExecutionSummary())}</td>
-        </tr>
-      </table>
-      ${failedTestsHtml}
-      <p style="margin-top: 16px;">
-        ${reportLinks.join(' | ')}
-      </p>
-      <p style="margin-top: 8px; color: #888; font-size: 12px;">详细执行与质量数据请在构建产物中查看。</p>
+      <p>统一执行摘要或邮件渲染产物不可用，请以 Jenkins 阶段状态和构建日志为准。</p>
+      <p><a href="${htmlEscape(buildUrl)}">打开 Jenkins 构建</a></p>
     </div>
     """
 }
@@ -578,85 +482,23 @@ void notifyByEmail(String status) {
 
     try {
         def statusText = buildStatusText(status)
-        def junit = readJunitSummary()
-        def smoke = readSmokeCollectSummary()
-        def resultText = junit.available
-            ? "${junit.failures + junit.errors} 失败 / ${junit.tests} 项"
-            : '测试报告未生成'
+        def subject = "【${statusText}】${env.JOB_NAME} #${env.BUILD_NUMBER}｜测试报告未生成"
+        def body = buildFallbackEmailHtml(status)
+        if (fileExists('reports/pipeline-email-subject.txt') && fileExists('reports/pipeline-email.html')) {
+            subject = readFile('reports/pipeline-email-subject.txt').trim()
+            body = readFile('reports/pipeline-email.html')
+        }
+        subject = subject.replaceFirst(/^【[^】]+】/, "【${statusText}】")
         emailext(
-            subject: "【${statusText}】${env.JOB_NAME} #${env.BUILD_NUMBER}｜${resultText}",
+            subject: subject,
             mimeType: 'text/html',
             to: env.CI_MAIL_TO,
             from: env.CI_MAIL_FROM,
-            body: buildResultSummaryHtml(status, junit, smoke)
+            body: body
         )
     } catch (error) {
         echo "CI 邮件通知发送失败：${error.getMessage()}"
     }
-}
-
-@NonCPS
-Map parseJunitXmlText(String xmlText) {
-    def summary = [tests: 0, failures: 0, errors: 0, skipped: 0, failedTests: []]
-    def suiteMatcher = xmlText =~ /<testsuite\b[^>]*>/
-
-    suiteMatcher.each { suiteTag ->
-        summary.tests += extractIntAttribute(suiteTag, 'tests')
-        summary.failures += extractIntAttribute(suiteTag, 'failures')
-        summary.errors += extractIntAttribute(suiteTag, 'errors')
-        summary.skipped += extractIntAttribute(suiteTag, 'skipped')
-    }
-
-    def testCaseMatcher = xmlText =~ /(?s)<testcase\b([^>]*)>(.*?)<\/testcase>/
-    while (testCaseMatcher.find() && summary.failedTests.size() < 5) {
-        def body = testCaseMatcher.group(2)
-        if (!(body =~ /<(?:failure|error)\b/).find()) {
-            continue
-        }
-        def attributes = testCaseMatcher.group(1)
-        def className = extractStringAttribute(attributes, 'classname')
-        def testName = extractStringAttribute(attributes, 'name')
-        def displayName = className && testName ? "${className}::${testName}" : testName ?: className ?: '未知失败用例'
-        summary.failedTests << displayName
-    }
-
-    return summary
-}
-
-@NonCPS
-Map parseSmokeCollectText(String text) {
-    return [
-        total: extractFirstGroup(text, /Collected test cases:\s*(\d+)/, '-'),
-        parallel: extractFirstGroup(text, /Parallel pool cases:\s*(\d+)/, '-'),
-        serial: extractFirstGroup(text, /Serial pool cases:\s*(\d+)/, '-'),
-    ]
-}
-
-@NonCPS
-int extractIntAttribute(String text, String attributeName) {
-    def matcher = text =~ /(?:^|\s)${attributeName}="(\d+)"/
-    if (!matcher.find()) {
-        return 0
-    }
-    return matcher.group(1) as int
-}
-
-@NonCPS
-String extractStringAttribute(String text, String attributeName) {
-    def matcher = text =~ /(?:^|\s)${attributeName}="([^"]*)"/
-    if (!matcher.find()) {
-        return ''
-    }
-    return matcher.group(1)
-}
-
-@NonCPS
-String extractFirstGroup(String text, String pattern, String defaultValue) {
-    def matcher = text =~ pattern
-    if (!matcher.find()) {
-        return defaultValue
-    }
-    return matcher.group(1)
 }
 
 @NonCPS

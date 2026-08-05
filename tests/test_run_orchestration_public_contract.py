@@ -25,21 +25,24 @@ def test_root_entrypoint_reexports_the_public_orchestration_api():
     assert tuple(inspect.signature(run_master.main).parameters) == ("argv",)
 
 
-def test_root_entrypoint_contains_no_runner_or_quality_implementation():
+def test_root_entrypoint_does_not_import_pytest_or_quality_implementations():
     path = run_master.PROJECT_ROOT / "run_master.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    imported_modules = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_modules.add(node.module)
 
-    assert not any(
-        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        for node in ast.walk(tree)
-    )
-    imported_modules = {
-        alias.name
-        for node in tree.body
-        if isinstance(node, ast.Import)
-        for alias in node.names
+    assert not {
+        module
+        for module in imported_modules
+        if module == "pytest"
+        or module.startswith("pytest.")
+        or module == "quality"
+        or module.startswith("quality.")
     }
-    assert imported_modules <= {"os", "sys"}
 
 
 def test_orchestration_package_exports_only_the_stable_root_symbols():

@@ -115,7 +115,14 @@ def test_setup_failure_is_error_and_does_not_synthesize_call(pytester, monkeypat
 
 def test_disabled_and_collect_only_do_not_create_quality_output(pytester, monkeypatch):
     output_dir = _prepare_plugin(pytester, monkeypatch, enabled=False)
-    pytester.makepyfile("def test_ok(): pass")
+    pytester.makepyfile(
+        """
+        import sys
+
+        def test_ok():
+            assert "quality.pytest_plugin_runtime" not in sys.modules
+        """
+    )
 
     disabled = _run_subprocess(pytester, "-q")
 

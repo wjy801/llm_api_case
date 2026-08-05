@@ -36,6 +36,9 @@ def main(argv: list[str] | None = None) -> int:
             args.workspace,
             args.output,
             dotenv_path=args.dotenv,
+            machine_output_path=args.machine_output,
+            email_subject_path=args.email_subject_output,
+            email_html_path=args.email_html_output,
         )
         if report is None:
             print(f"Pipeline summary generation is disabled by {GENERATE_PIPELINE_SUMMARY_ENV}.")
@@ -71,6 +74,9 @@ def _build_parser() -> argparse.ArgumentParser:
     generate = subparsers.add_parser("generate")
     generate.add_argument("--workspace", default=".")
     generate.add_argument("--output", default="reports/pipeline-summary.md")
+    generate.add_argument("--machine-output")
+    generate.add_argument("--email-subject-output")
+    generate.add_argument("--email-html-output")
     generate.add_argument("--dotenv", default=".env")
     return parser
 
