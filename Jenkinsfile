@@ -328,6 +328,7 @@ void generatePipelineSummary() {
         withEnv([
             "PIPELINE_BUILD_RESULT=${currentBuild.currentResult ?: currentBuild.result ?: 'SUCCESS'}",
             "PIPELINE_DURATION_MS=${currentBuild.duration ?: 0}",
+            "QUALITY_ENABLE=${params.RUN_REAL_SMOKE}",
         ]) {
             ciPowerShell('''
             ./.venv/Scripts/python.exe -m pipeline_reporting generate `

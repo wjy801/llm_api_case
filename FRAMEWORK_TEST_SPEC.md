@@ -42,7 +42,9 @@ test_*.py
 | 工具层 | `util/` | 脱敏、日志、cURL、配置校验、媒体附件 | 持有业务状态 |
 | 质量适配层 | `quality/runtime_adapter.py` | 将 Runtime Hooks 映射到质量采集器 | 被业务用例直接调用 |
 | 质量聚合层 | `quality/metrics/`、`quality/flaky_store/` | Metrics 聚合和 Flaky 状态存储 | 被业务用例直接调用或复制算法 |
+| 可选扩展边界 | `quality/pytest_plugin.py`、`run_orchestration/quality_lifecycle.py` | 轻量插件入口、Noop/Enabled 生命周期和按开关加载 | 在关闭路径导入 Collector、Semantic、Metrics、Flaky |
 | 执行编排层 | `run_master.py`、`run_orchestration/` | 稳定入口、pytest 调度、产物和质量阶段顺序 | 在业务用例中导入内部 stage |
+| 报告数据源层 | `pipeline_reporting/sources.py`、`quality_sources.py` | 核心事实常驻、质量事实按需加载 | 用陈旧质量产物推断本轮已启用 |
 | 模块请求层 | `module/<模块>/request.py` | 模块路径、请求参数、中性 runtime metadata | 写业务流程和复杂断言 |
 | 模块任务层 | `module/<模块>/task.py` | payload builder、业务动作组合 | 重复实现 BaseTask 已有能力 |
 | 模块断言层 | `module/<模块>/assertions.py` | 模块专用断言和字段解析 | 发请求、修改共享状态 |
@@ -163,6 +165,8 @@ class ExampleModelAssertions(BaseAssertions):
 要求：
 
 - 通用断言直接调用 `BaseAssertions`，不要重复实现。
+- `BaseAssertions` 同步方法是通用断言唯一实现源；异步方法、模块级函数和领域子类通过委托或继承复用，不复制算法。
+- 模块 Assertions 必须保留真实类身份、MRO、`__name__` 和导入路径，不得改成简单别名。
 - 模块断言应返回响应对象，便于链式使用。
 - 错误信息说明字段路径、期望和实际值。
 - 敏感字段不得原样拼接到错误信息；需要输出响应时确认已有脱敏边界。
@@ -223,6 +227,8 @@ class ExampleModelTask(BaseTask):
 - payload builder 返回新字典，不能复用并修改模块级可变对象。
 - 现有媒体/账单流程继续复用 `BaseTask` 兼容入口或对应 task capability；新领域逻辑进入模块 Task，不再向 `BaseTask` 增加方法。
 - 一个 Task 方法内组合多次请求时，必须考虑逻辑调用语义，见“质量语义规范”。
+- 独立 CLI 调用本模块业务时，端点必须来自 Request，payload/流程/轮询必须来自 Task，响应规则必须来自 Assertions；CLI 只负责参数、展示和退出码。
+- `--insecure` 等传输选项只能调整当前 Request Session，`--quiet` 等展示选项只能影响当前 CLI，不能修改框架全局状态。
 
 ### 5.5 `response_schemas.py`（推荐）
 
@@ -661,6 +667,8 @@ API_TIMEOUT
 - payload 使用 `True/False/None`，不是 JSON 的 `true/false/null`。
 - 新的配置/策略/状态机模型优先使用 Pydantic frozen model。
 - 日志、异常、cURL、Allure 附件都经过统一脱敏。
+- 环境选择、布尔/正数解析、当前环境 URL/Key 校验和错误聚合只在 `util.config_validation.validate_settings_values()` 编排；`config.py` 仅构造 frozen `Settings`。
+- 新增配置规则时修改规范实现源，并为默认值、错误文本、错误顺序和导入时机增加离线测试，不在调用方重复校验。
 
 ## 17. Allure 步骤规范
 
@@ -703,10 +711,12 @@ polling_responses
 重构后的框架改动还必须按职责补充以下保护：
 
 - 修改 `common/runtime_hooks/`：验证 Noop、Hook 故障 fail-open、线程 ContextVar 和 `common` 独立导入。
-- 修改 `quality/metrics/`、`quality/flaky_store/`：验证公开契约、依赖 DAG、产物等价或数据库事务边界。
+- 修改 `quality/metrics/`、`quality/flaky_store/`：验证公开契约、依赖方向、产物等价或数据库事务边界。
 - 修改 `run_orchestration/`：验证根入口兼容、collect-only 无副作用、并串行顺序、退出码、环境恢复和质量阶段顺序。
+- 修改 Quality 可选加载边界：验证 `quality.__all__` 对象身份、disabled 导入预算、Noop 零文件副作用、enabled pytest/xdist 等价和报告 `NOT_RUN/NO_DATA` 四象限。
 - 修改下载/Allure 生命周期：验证 Capture 关闭零网络、多池 raw 隔离、最终一次合并/生成和自定义 `--alluredir`。
 - 新增架构边界测试时必须确保文件进入 Git，不能只在本地未跟踪状态下通过。
+- 架构测试不得断言 Python 文件集合与白名单完全相等，也不得冻结完整模块 DAG；应验证公共行为、禁止反向依赖和单一所有权。
 
 ### 18.1 唯一执行事实规范
 
@@ -743,6 +753,14 @@ collect-only：不清理、不创建、不生成制品
 
 必须保持默认 `allure-results/`、`allure-report/`、`history_report/` 和自定义 `--alluredir`；Allure 清理、合并或 CLI 失败采用 fail-open，不改写 pytest 原始退出码。`module/conftest.py` 只负责 Hook 适配，不复制文件和 subprocess 实现。
 
+### 18.3 可选 Quality 加载规范
+
+`quality/__init__.py` 必须保留全部公共名称、顺序和对象身份，并通过静态映射按首次访问加载定义模块。`quality.pytest_plugin` 保持稳定注册路径，但关闭或 collect-only 时不得加载 `pytest_plugin_runtime`。
+
+Runner 只能依赖中性的 `QualityRunLifecycle` 和 `RunLifecycleStatus`：关闭时工厂返回 Noop，不创建 run_id、目录、JUnit 或质量产物；开启时才局部加载 environment、run record 和既有 Quality Pipeline。`pytest_execution.py` 继续唯一拥有统一预收集和各池执行，隔离可选扩展不得形成第二个 pytest 生命周期所有者。
+
+Reporting 核心 Source 不得顶层导入 Quality 实现。只有接口测试与 `QUALITY_ENABLE` 同时开启时才加载 `pipeline_reporting/quality_sources.py`；未开启显示 `NOT_RUN`，即使目录中存在陈旧质量产物也不得读取；已开启但本轮产物缺失、损坏、Hash/Schema/版本不可信时显示 `NO_DATA`。两种状态都不得覆盖 pytest 或 Jenkins 事实。
+
 报告事实优先级：
 
 ```text
@@ -754,6 +772,17 @@ Pipeline Conclusion：关注等级
 ```
 
 显式 FAILED/BLOCKED 不得被可解析、全绿或陈旧 JUnit 覆盖。Python Reporting 只解析一次 JUnit，并从同一个 `PipelineReport` 生成 Markdown、机器摘要和邮件内容。
+
+### 18.4 Artifact 信任边界规范
+
+`util/artifact_io.py` 只拥有 UTF-8 JSON/JSONL 读取、原始文件字节 SHA256 和纯字段比较。Metrics、Flaky、Reporting、Aggregator 可复用这些原语，但必须由各自消费者翻译领域错误：
+
+- Metrics 保持既有 `MetricsSourceError` code 和关系校验；
+- Flaky 保持既有 `FlakyImportError` code、可导入规则和数据库边界；
+- Reporting 保持中文 warning、局部降级及 `NOT_RUN/NO_DATA`；
+- Schema、Manifest、版本、状态机和规范 JSON 内容 Hash 不得迁入通用 I/O 原语。
+
+文件 Hash 始终按原始 bytes 计算，不能解析 JSON 后重新序列化。迁移 Artifact 读取实现时必须用相同夹具验证 Hash、错误码、warning 和产物格式完全等价。
 
 ## 19. 本地执行与验收
 
@@ -810,7 +839,7 @@ Pipeline Conclusion：关注等级
 5. `reports/quality/semantic/merged/manifest.json`、`reports/quality/semantic/merged/*.jsonl`、`reports/quality/metrics/manifest.json` 和 `reports/quality/metrics/run-metrics.json`：核对逻辑调用语义、指标来源和完整数据。
 6. 启用 Flaky 历史与状态机后，使用 `reports/quality/flaky-import.json`、`reports/quality/flaky-evaluation.json` 和 CLI 核对样本导入、状态迁移及治理信息。
 
-`pipeline-summary.md` 适用于框架测试、用例收集、接口测试及其组合。报告不暴露 Smoke 专属参数名，未选择的阶段显示“未执行”，不能解释为失败或数据缺失。其生成由 `GENERATE_PIPELINE_SUMMARY` 控制，Jenkins 参数/进程环境优先于 `.env`，默认开启。
+`pipeline-summary.md` 适用于框架测试、用例收集、接口测试及其组合。报告不暴露 Smoke 专属参数名，未选择的阶段显示“未执行”，不能解释为失败或数据缺失。其生成由 `GENERATE_PIPELINE_SUMMARY` 控制；质量数据源由 `QUALITY_ENABLE` 独立控制。两者均遵循 Jenkins 参数/进程环境优先于 `.env`，摘要默认开启、Quality 默认关闭。
 
 `pipeline-summary.md` 是唯一人工质量报告。第 4～6 项均为机器证据，只用于来源审计和问题下钻；新用例或框架改动不得再创建并行的人工汇总报告，也不得把可选机器产物缺失解释为零值或测试失败。
 
@@ -853,5 +882,6 @@ Pipeline Conclusion：关注等级
 [ ] collect-only 通过
 [ ] 相关离线框架测试通过
 [ ] 启用 Pipeline Summary 时无来源告警，或告警已明确定位到对应机器数据
+[ ] Quality 关闭路径未加载重实现、未创建质量身份或产物，陈旧产物未污染本轮报告
 [ ] 没有新增并行人工质量报告，也没有把可选机器产物缺失按零值处理
 ```

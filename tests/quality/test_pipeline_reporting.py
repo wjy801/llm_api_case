@@ -168,6 +168,18 @@ def test_report_switch_false_removes_stale_summary_and_skips_generation(tmp_path
     assert not target.exists()
 
 
+def test_report_switch_false_short_circuits_invalid_quality_setting(tmp_path):
+    report = generate_pipeline_summary(
+        tmp_path,
+        environment={
+            "GENERATE_PIPELINE_SUMMARY": "FALSE",
+            "QUALITY_ENABLE": "not-a-boolean",
+        },
+    )
+
+    assert report is None
+
+
 def test_report_config_prefers_process_environment_over_dotenv(tmp_path):
     dotenv = tmp_path / ".env"
     dotenv.write_text("GENERATE_PIPELINE_SUMMARY=FALSE\n", encoding="utf-8")
@@ -329,6 +341,7 @@ def test_pipeline_report_cleanup_fixture_freezes_current_summary(tmp_path):
         ("run_id", "foreign-run", "run_id 不一致"),
         ("status", "merging", "尚未完整提交"),
         ("schema_version", "quality.v999", "Schema 不受支持"),
+        ("manifest_version", "quality.manifest.v999", "清单版本不受支持"),
     ),
 )
 def test_pipeline_summary_rejects_invalid_quality_manifest(
@@ -352,6 +365,29 @@ def test_pipeline_summary_rejects_invalid_quality_manifest(
     assert any(warning in item for item in report.warnings)
     stage_status = {item.name: item.status.value for item in report.stages}
     assert stage_status["质量观测"] == "NO_DATA"
+
+
+def test_pipeline_summary_preserves_quality_manifest_first_error_priority(tmp_path):
+    reports = _install_cleanup_fixture(tmp_path)
+    manifest_path = reports / "quality" / "merged" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update(
+        {
+            "run_id": "foreign-run",
+            "manifest_version": "quality.manifest.v999",
+            "schema_version": "quality.v999",
+            "status": "merging",
+        }
+    )
+    _write_json(manifest_path, manifest)
+
+    report = generate_pipeline_summary(
+        tmp_path,
+        environment=_environment(RUN_REAL_SMOKE="true"),
+    )
+
+    assert report is not None
+    assert "run_id 不一致" in report.warnings[0]
 
 
 @pytest.mark.parametrize(
@@ -425,6 +461,38 @@ def test_pipeline_summary_rejects_untrusted_metrics(tmp_path, mutation):
     assert report.flaky.available is True
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "warning"),
+    (
+        ("run_id", "foreign-run", "Metrics 清单 run_id 与本轮不一致"),
+        ("manifest_version", "metrics.manifest.v999", "Metrics 清单版本不受支持"),
+        ("schema_version", "metrics.schema.v999", "Metrics 清单 Schema 不受支持"),
+        ("aggregation_version", "metrics.aggregation.v999", "Metrics 聚合版本不受支持"),
+        ("write_status", "writing", "Metrics 产物尚未完整写入"),
+    ),
+)
+def test_pipeline_summary_preserves_metrics_manifest_field_warnings(
+    tmp_path,
+    field,
+    value,
+    warning,
+):
+    reports = _install_cleanup_fixture(tmp_path)
+    manifest_path = reports / "quality" / "metrics" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest[field] = value
+    _write_json(manifest_path, manifest)
+
+    report = generate_pipeline_summary(
+        tmp_path,
+        environment=_environment(RUN_REAL_SMOKE="true"),
+    )
+
+    assert report is not None
+    assert warning in report.warnings
+    assert report.retry_health.available is False
+
+
 def test_pipeline_summary_degrades_only_metrics_when_manifest_is_missing(tmp_path):
     reports = _install_cleanup_fixture(tmp_path)
     (reports / "quality" / "metrics" / "manifest.json").unlink()
@@ -441,8 +509,19 @@ def test_pipeline_summary_degrades_only_metrics_when_manifest_is_missing(tmp_pat
     assert report.flaky.available is True
 
 
-@pytest.mark.parametrize("mutation", ("run_id", "schema_version", "status"))
-def test_pipeline_summary_rejects_untrusted_flaky_evaluation(tmp_path, mutation):
+@pytest.mark.parametrize(
+    ("mutation", "warning"),
+    (
+        ("run_id", "Flaky 评估 run_id 与本轮不一致"),
+        ("schema_version", "Flaky 评估 Schema 不受支持"),
+        ("status", "Flaky 本轮没有可用评估结果"),
+    ),
+)
+def test_pipeline_summary_rejects_untrusted_flaky_evaluation(
+    tmp_path,
+    mutation,
+    warning,
+):
     reports = _install_cleanup_fixture(tmp_path)
     flaky_path = reports / "quality" / "flaky-evaluation.json"
     flaky = json.loads(flaky_path.read_text(encoding="utf-8"))
@@ -462,6 +541,7 @@ def test_pipeline_summary_rejects_untrusted_flaky_evaluation(tmp_path, mutation)
     assert report.request_health.available is True
     assert report.retry_health.available is True
     assert report.flaky.available is False
+    assert warning in report.warnings
 
 
 def test_pipeline_summary_treats_missing_flaky_as_not_enabled(tmp_path):
@@ -522,6 +602,46 @@ def test_pipeline_summary_does_not_read_stale_quality_when_interface_tests_disab
 
     assert report is not None
     assert not report.warnings
+
+
+def test_quality_disabled_ignores_stale_artifacts_and_reports_not_run(tmp_path):
+    reports = tmp_path / "reports"
+    quality = reports / "quality"
+    quality.mkdir(parents=True)
+    (quality / "run.json").write_text("not-json", encoding="utf-8")
+
+    report = generate_pipeline_summary(
+        tmp_path,
+        environment=_environment(
+            RUN_REAL_SMOKE="true",
+            QUALITY_ENABLE="false",
+        ),
+    )
+
+    assert report is not None
+    quality_stage = next(item for item in report.stages if item.name == "质量观测")
+    assert quality_stage.status.value == "NOT_RUN"
+    assert not report.warnings
+    markdown = (reports / "pipeline-summary.md").read_text(encoding="utf-8")
+    assert "## 请求质量" not in markdown
+    assert "## Flaky 状态迁移" not in markdown
+
+
+def test_quality_enabled_without_core_artifacts_reports_no_data(tmp_path):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+
+    report = generate_pipeline_summary(
+        tmp_path,
+        environment=_environment(
+            RUN_REAL_SMOKE="true",
+            QUALITY_ENABLE="true",
+        ),
+    )
+
+    assert report is not None
+    quality_stage = next(item for item in report.stages if item.name == "质量观测")
+    assert quality_stage.status.value == "NO_DATA"
 
 
 def test_selected_stage_without_artifact_is_not_reported_as_zero_tests(tmp_path):
@@ -675,6 +795,7 @@ def _environment(**updates: str) -> dict[str, str]:
         "RUN_FRAMEWORK_TESTS": "false",
         "RUN_COLLECT_ONLY": "false",
         "RUN_REAL_SMOKE": "false",
+        "QUALITY_ENABLE": "true",
         "SMOKE_TARGET": "module/smoke",
         "TEST_PARALLEL_WORKERS": "off",
     }

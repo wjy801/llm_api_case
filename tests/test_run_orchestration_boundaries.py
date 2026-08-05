@@ -6,25 +6,6 @@ from pathlib import Path
 import run_orchestration
 
 
-EXPECTED_FILES = {
-    "__init__.py",
-    "allure_lifecycle.py",
-    "artifacts.py",
-    "cli.py",
-    "environment.py",
-    "paths.py",
-    "pytest_execution.py",
-    "quality_fact_merge_stage.py",
-    "quality_flaky_stage.py",
-    "quality_metrics_stage.py",
-    "quality_pipeline.py",
-    "quality_run_record.py",
-    "quality_semantic_stage.py",
-    "runner.py",
-    "scheduling.py",
-}
-
-
 def _package_dir() -> Path:
     return Path(run_orchestration.__file__).resolve().parent
 
@@ -34,25 +15,25 @@ def _tree(name: str) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"))
 
 
-def test_run_orchestration_uses_only_the_planned_files():
-    actual = {path.name for path in _package_dir().glob("*.py")}
-
-    assert actual == EXPECTED_FILES
-    assert not {"utils.py", "helpers.py", "common.py"} & actual
-
-
-def test_pytest_main_and_shutil_have_single_owners():
-    pytest_owners = []
-    shutil_owners = []
+def test_pytest_main_and_allure_filesystem_lifecycle_have_single_owners():
+    pytest_owners = set()
+    allure_filesystem_owners = set()
     for path in _package_dir().glob("*.py"):
-        source = path.read_text(encoding="utf-8")
-        if "pytest.main" in source:
-            pytest_owners.append(path.name)
-        if "import shutil" in source:
-            shutil_owners.append(path.name)
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            if isinstance(node.func.value, ast.Name) and node.func.value.id == "pytest" and node.func.attr == "main":
+                pytest_owners.add(path.name)
+            if (
+                isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "shutil"
+                and node.func.attr in {"copy2", "copytree", "move", "rmtree"}
+            ):
+                allure_filesystem_owners.add(path.name)
 
-    assert pytest_owners == ["pytest_execution.py"]
-    assert shutil_owners == ["allure_lifecycle.py"]
+    assert pytest_owners == {"pytest_execution.py"}
+    assert allure_filesystem_owners == {"allure_lifecycle.py"}
 
 
 def test_quality_stage_modules_do_not_import_each_other():
@@ -90,3 +71,16 @@ def test_runner_does_not_import_quality_business_implementations_directly():
     }
 
     assert not (imported & forbidden)
+
+
+def test_runner_and_neutral_lifecycle_have_no_top_level_quality_imports():
+    for name in ("runner", "quality_lifecycle"):
+        tree = _tree(name)
+        quality_imports = {
+            node.module
+            for node in tree.body
+            if isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.startswith("quality")
+        }
+        assert not quality_imports

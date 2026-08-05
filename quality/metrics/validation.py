@@ -6,6 +6,8 @@ from typing import Any, NoReturn, TypeVar
 
 from pydantic import BaseModel
 
+from util.artifact_io import exact_field_mismatches
+
 from .contracts import MetricsSourceError, MetricsSources
 from .request_event import event_transport_outcome
 
@@ -236,22 +238,30 @@ def require_manifest(
     versions: dict[str, str],
     code_prefix: str,
 ) -> None:
-    if manifest.get("run_id") != run_id:
+    expected_fields = {
+        "run_id": run_id,
+        "status": status,
+        **versions,
+    }
+    mismatches = exact_field_mismatches(manifest, expected_fields)
+    if not mismatches:
+        return
+
+    field = mismatches[0]
+    if field == "run_id":
         raise_source_error(
             f"{code_prefix}_manifest_run_id_mismatch",
             f"{code_prefix} manifest belongs to a different run",
         )
-    if manifest.get("status") != status:
+    if field == "status":
         raise_source_error(
             f"{code_prefix}_manifest_not_complete",
             f"{code_prefix} manifest is not committed",
         )
-    for field, expected in versions.items():
-        if manifest.get(field) != expected:
-            raise_source_error(
-                f"{code_prefix}_{field}_unsupported",
-                f"{code_prefix} manifest uses an unsupported {field}",
-            )
+    raise_source_error(
+        f"{code_prefix}_{field}_unsupported",
+        f"{code_prefix} manifest uses an unsupported {field}",
+    )
 
 
 def validated_output_hash(

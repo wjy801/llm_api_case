@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-import hashlib
 from pathlib import Path
 
 from quality.metrics_models import (
@@ -15,6 +14,7 @@ from quality.metrics_models import (
     SourceEvidence,
 )
 from quality.storage import write_json_atomic
+from util.artifact_io import file_sha256
 
 
 def write_run_metrics(path: Path, metrics: RunMetricsResult) -> str:
@@ -55,8 +55,4 @@ def write_metrics_manifest(
 
 
 def output_file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return file_sha256(path)

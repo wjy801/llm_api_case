@@ -12,7 +12,6 @@ from typing import Sequence
 import pytest
 
 from master_service import CollectedTestCase
-from quality.config import QualityRuntimeConfig
 
 from . import artifacts
 from .allure_lifecycle import (
@@ -229,7 +228,7 @@ def build_parallel_args(
 
 def ensure_quality_junit_args(
     pytest_args: Sequence[str],
-    quality_config: QualityRuntimeConfig,
+    quality_config,
 ) -> list[str]:
     args = list(pytest_args)
     if not quality_config.enabled or artifacts.extract_junit_path(args) is not None:

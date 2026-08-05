@@ -65,6 +65,45 @@ class MaterialLibraryAssertions(BaseAssertions):
         )
         return response
 
+    def assert_asset_list_contains(
+        self,
+        response: requests.Response,
+        *,
+        asset_id: str,
+    ) -> requests.Response:
+        asset_ids = {str(item.get("Id")) for item in self.get_result_items(response)}
+        assert asset_id in asset_ids, (
+            f"Result.Items should contain asset id {asset_id!r}, actual ids: {asset_ids!r}. "
+            f"Response body: {response.text}"
+        )
+        return response
+
+    def assert_asset_name(
+        self,
+        response: requests.Response,
+        *,
+        asset_id: str,
+        name: str,
+    ) -> requests.Response:
+        result = self.get_required_result_object(response)
+        assert str(result.get("Id")) == asset_id, (
+            f"Result.Id mismatch, expected {asset_id!r}, actual {result.get('Id')!r}. "
+            f"Response body: {response.text}"
+        )
+        assert result.get("Name") == name, (
+            f"Result.Name mismatch, expected {name!r}, actual {result.get('Name')!r}. "
+            f"Response body: {response.text}"
+        )
+        return response
+
+    def assert_error_code_present(self, response: requests.Response) -> requests.Response:
+        body = self.json_body(response)
+        error = body.get("error") or body.get("Error")
+        assert isinstance(error, dict) and (error.get("code") or error.get("Code")), (
+            f"Response should contain an error code. Response body: {response.text}"
+        )
+        return response
+
     def assert_group_list_contains(
         self,
         response: requests.Response,

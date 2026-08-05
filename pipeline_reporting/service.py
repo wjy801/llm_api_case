@@ -18,6 +18,8 @@ from pipeline_reporting.sources import load_pipeline_sources
 
 def context_from_environment(
     environment: Mapping[str, str] | None = None,
+    *,
+    quality_enabled: bool | None = None,
 ) -> PipelineContext:
     values = environment if environment is not None else os.environ
     return PipelineContext(
@@ -36,6 +38,11 @@ def context_from_environment(
         framework_tests_enabled=_bool_value(values.get("RUN_FRAMEWORK_TESTS")),
         smoke_collect_enabled=_bool_value(values.get("RUN_COLLECT_ONLY")),
         real_smoke_enabled=_bool_value(values.get("RUN_REAL_SMOKE")),
+        quality_enabled=(
+            _bool_value(values.get("QUALITY_ENABLE"))
+            if quality_enabled is None
+            else quality_enabled
+        ),
         smoke_target=_value(values, "SMOKE_TARGET", "module/smoke"),
         parallel_workers=_value(values, "TEST_PARALLEL_WORKERS", "off"),
     )
@@ -67,10 +74,18 @@ def generate_pipeline_summary(
             if optional_path is not None:
                 _resolve_output_path(root, optional_path).unlink(missing_ok=True)
         return None
-    context = context_from_environment(environment)
+    context = context_from_environment(
+        environment,
+        quality_enabled=config.quality_enabled,
+    )
     report = build_pipeline_report(
         context,
-        load_pipeline_sources(root, include_quality=context.real_smoke_enabled),
+        load_pipeline_sources(
+            root,
+            include_quality=(
+                context.real_smoke_enabled and context.quality_enabled
+            ),
+        ),
     )
     _write_text_atomic(target, render_pipeline_summary(report))
     if machine_output_path is not None:

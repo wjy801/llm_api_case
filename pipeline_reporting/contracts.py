@@ -37,6 +37,7 @@ class PipelineContext:
     real_smoke_enabled: bool = False
     smoke_target: str = "module/smoke"
     parallel_workers: str = "off"
+    quality_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -147,6 +148,16 @@ class FlakySummary:
             + self.newly_quarantined_count
             + self.overdue_count
         )
+
+
+@dataclass(frozen=True)
+class LoadedQualitySources:
+    facts_available: bool = False
+    run_id: str | None = None
+    request_health: RequestHealth = RequestHealth()
+    retry_health: RetryHealth = RetryHealth()
+    interface_timings: tuple[InterfaceTiming, ...] = ()
+    flaky: FlakySummary = FlakySummary()
 
 
 @dataclass(frozen=True)

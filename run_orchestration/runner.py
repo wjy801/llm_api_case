@@ -6,14 +6,11 @@ from typing import Sequence
 
 from config import settings
 from master_service import DEFAULT_SERIAL_MARKER, DEFAULT_TEST_PATH
-from quality.models import RunStatus
 
 from . import (
     artifacts,
-    environment,
     pytest_execution,
-    quality_pipeline,
-    quality_run_record,
+    quality_lifecycle,
     scheduling,
 )
 
@@ -92,21 +89,19 @@ def run(
     )
     allure_lifecycle.prepare()
 
-    quality_config = environment.resolve_parent_quality_config()
+    quality_run_lifecycle = quality_lifecycle.create_quality_run_lifecycle()
     quality_start_time = datetime.now(UTC)
-    _initialize_quality_run(quality_config, quality_start_time)
+    quality_run_lifecycle.prepare(quality_start_time)
 
     pool_results: list[pytest_execution.PoolExecutionResult] = []
-    final_status = RunStatus.FINISHED
+    final_status = quality_lifecycle.RunLifecycleStatus.FINISHED
     try:
         if not numprocesses:
             print("Parallel test execution disabled. Running all cases serially.")
-            serial_args = pytest_execution.ensure_quality_junit_args(
-                argument_plan.execution_args, quality_config
+            serial_args = quality_run_lifecycle.ensure_junit_args(
+                argument_plan.execution_args
             )
-            with environment.quality_stage_environment(
-                quality_config, "serial-pool"
-            ):
+            with quality_run_lifecycle.stage_environment("serial-pool"):
                 pool_results.append(
                     pytest_execution.execute_pool(
                         "serial-pool",
@@ -121,8 +116,8 @@ def run(
                 f"workers={numprocesses}, parallel_cases={len(parallel_cases)}, "
                 f"serial_cases={len(serial_cases)}"
             )
-            parallel_args = pytest_execution.ensure_quality_junit_args(
-                argument_plan.execution_args, quality_config
+            parallel_args = quality_run_lifecycle.ensure_junit_args(
+                argument_plan.execution_args
             )
             parallel_args = pytest_execution.build_parallel_args(
                 parallel_args,
@@ -132,9 +127,7 @@ def run(
             )
             if parallel_cases:
                 print(f"Running parallel pool: {len(parallel_cases)} cases")
-                with environment.quality_stage_environment(
-                    quality_config, "parallel-pool"
-                ):
+                with quality_run_lifecycle.stage_environment("parallel-pool"):
                     parallel_result = pytest_execution.execute_pool(
                         "parallel-pool",
                         parallel_cases,
@@ -154,8 +147,8 @@ def run(
                     parallel_result.raw_pytest_exit_code
                 )
             )
-            serial_args = pytest_execution.ensure_quality_junit_args(
-                argument_plan.execution_args, quality_config
+            serial_args = quality_run_lifecycle.ensure_junit_args(
+                argument_plan.execution_args
             )
             serial_args = pytest_execution.build_serial_args(
                 serial_args, junit_suffix="serial"
@@ -170,9 +163,7 @@ def run(
                 )
             elif serial_cases:
                 print(f"Running serial pool: {len(serial_cases)} cases")
-                with environment.quality_stage_environment(
-                    quality_config, "serial-pool"
-                ):
+                with quality_run_lifecycle.stage_environment("serial-pool"):
                     serial_result = pytest_execution.execute_pool(
                         "serial-pool",
                         serial_cases,
@@ -191,7 +182,7 @@ def run(
             result.status is pytest_execution.PoolExecutionStatus.ERROR
             for result in pool_results
         ):
-            final_status = RunStatus.PARTIAL
+            final_status = quality_lifecycle.RunLifecycleStatus.PARTIAL
         final_exit_code = _write_execution_result(
             test_path=test_path,
             argument_plan=argument_plan,
@@ -201,10 +192,10 @@ def run(
         )
         return final_exit_code
     except (KeyboardInterrupt, SystemExit):
-        final_status = RunStatus.INTERRUPTED
+        final_status = quality_lifecycle.RunLifecycleStatus.INTERRUPTED
         raise
     except Exception as error:
-        final_status = RunStatus.PARTIAL
+        final_status = quality_lifecycle.RunLifecycleStatus.PARTIAL
         print(
             f"Runner execution failed: {type(error).__name__}: {error}",
             file=sys.stderr,
@@ -212,8 +203,7 @@ def run(
         return pytest_execution.PYTEST_EXIT_TESTS_FAILED
     finally:
         allure_lifecycle.finalize()
-        _finalize_quality_run(
-            quality_config,
+        quality_run_lifecycle.finalize(
             start_time=quality_start_time,
             expected_case_count=len(case_nodeids),
             pool_results=tuple(pool_results),
@@ -249,49 +239,6 @@ def _final_exit_code(
             if result.raw_pytest_exit_code is not None
         ]
     )
-
-
-def _initialize_quality_run(quality_config, start_time: datetime) -> None:
-    if not quality_config.enabled:
-        return
-    try:
-        quality_run_record.write_initial_run_record(
-            quality_config, start_time
-        )
-    except Exception as error:
-        print(
-            f"Quality initialization failed open: "
-            f"{type(error).__name__}: {error}"
-        )
-
-
-def _finalize_quality_run(
-    quality_config,
-    *,
-    start_time: datetime,
-    expected_case_count: int,
-    pool_results: tuple[pytest_execution.PoolExecutionResult, ...],
-    status: RunStatus,
-) -> None:
-    executed = tuple(
-        result
-        for result in pool_results
-        if result.status is not pytest_execution.PoolExecutionStatus.NOT_RUN
-    )
-    try:
-        quality_pipeline.finalize_quality_run(
-            quality_config,
-            start_time=start_time,
-            expected_execution_ids=tuple(result.stage_id for result in executed),
-            expected_case_count=expected_case_count,
-            junit_files=tuple(result.junit_path for result in executed),
-            status=status,
-        )
-    except Exception as error:
-        print(
-            f"Quality finalization failed open: "
-            f"{type(error).__name__}: {error}"
-        )
 
 
 def _write_execution_result(
