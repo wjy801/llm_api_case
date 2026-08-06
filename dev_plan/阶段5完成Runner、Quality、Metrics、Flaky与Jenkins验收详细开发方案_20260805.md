@@ -1,6 +1,7 @@
 # 阶段5完成Runner、Quality、Metrics、Flaky与Jenkins验收详细开发方案
 
 > 生成日期：2026-08-05
+> 对齐复审：2026-08-06
 
 > 上位方案：`dev_plan/离线框架能力分类用例与黄金路径详细执行方案_20260805.md`
 > 前置阶段：阶段0～4已经完成协议、本地服务、四件套、能力分类、并发分类与黄金路径
@@ -123,7 +124,7 @@ Flaky不是单轮标签，而是同一Case身份在相同环境和执行画像�
 
 ### 2.6 网络边界澄清
 
-阶段5冻结的“无外部网络”是业务测试网络合同：离线模块发出的业务HTTP请求只能访问`127.0.0.1`随机端口。
+阶段5冻结的“离线”与总方案统一为业务测试网络合同：离线模块发出的业务HTTP请求只能访问`127.0.0.1`随机端口，不访问任何真实业务接口。
 
 现有Jenkins `Prepare Python Env`仍可能访问pip/npm镜像源，`Check Runtime Env`仍要求`.env`存在，因此当前Pipeline不能无条件证明“从Checkout到Post全流程物理零egress”。若用户要求整条CI严格断网，必须停止并为依赖缓存与环境准备另立方案，阶段5不得偷偷修改Jenkinsfile扩大范围。
 
@@ -279,21 +280,21 @@ TEST_PARALLEL_WORKERS=2
 
 `Real Smoke`阶段自动开启Quality、Semantic和Metrics；只有配置有效的绝对`QUALITY_FLAKY_DB_PATH`时才开启Flaky历史和状态。
 
-### 3.9 当前回归基线与未决债务
+### 3.9 当前回归基线
 
 阶段5执行时对冻结工作区重新复验后的权威事实：
 
 ```text
 离线模块：23 passed
 Smoke collect-only：40 total / 15 parallel / 25 serial
-完整tests：686 collected / 682 passed / 4 failed
+完整tests：686 collected / 686 passed
 ```
 
-方案初稿引用的`691 passed / 16 failed / 6 xfailed`来自包含临时Stage0测试文件的历史工作区；这些文件在本次执行冻结时不存在、未被Git跟踪，也未被阶段5删除，因此不能继续作为当前回归基线。
+上述事实为2026-08-06对当前`dev3`工作区的复审快照。方案初稿引用的`691 passed / 16 failed / 6 xfailed`，以及后续出现过的`686 collected / 682 passed / 4 failed`，均属于历史工作区事实，不能继续作为当前允许失败集合。
 
-当前4项失败全部位于既有仓库边界合同，未指向阶段4新增用例。阶段5不得通过排除这些文件、修改`.gitignore`或改变收集条件制造“全绿”。
+阶段5完整回归必须再次执行原命令并记录真实结果。任何失败都会阻止阶段5整体关闭；不得通过排除文件、修改`.gitignore`、改变收集条件、增加xfail或更新快照制造“全绿”。
 
-阶段5完整回归必须再次执行原命令并记录真实结果。若失败集合与执行前基线完全相同，可判定“阶段5无新增回归”，但总体发布状态仍为阻塞，直到旧基线被用户单独处理或明确接受。
+“增量是否新增失败”只保留为问题归因信息，不能替代总方案要求的完整回归全绿门禁。
 
 ## 4. 对总方案的收敛修订
 
@@ -330,18 +331,18 @@ fail-open只表示Quality、Semantic、Metrics或Flaky附加能力失败时不�
 
 执行前从`quality.flaky_models.FlakyRuleConfig`读取`stable_min_samples`，总轮数为阈值加1。当前默认阈值3只作为2026-08-05的已验证事实，后续规则变化时应自动调整轮数，不得永久硬编码四轮。
 
-### 4.6 收窄Jenkins断网表述
+### 4.6 统一Jenkins业务离线表述
 
 本地业务服务与测试请求必须只访问`127.0.0.1`。现有Pipeline的Python/npm准备阶段可能访问配置镜像，因此阶段5只能证明“业务接口测试零外部请求”，不能宣称整个Pipeline物理零出口。
 
-### 4.7 将完整回归改为双门禁
+### 4.7 保留诊断性增量结论，不降低完整回归门禁
 
-阶段5采用两个独立结论：
+阶段5记录两个不同层次的结论：
 
-- **增量门禁**：本阶段不得新增失败；
-- **发布门禁**：`tests`完整回归必须全绿。
+- **增量结论**：用于判断失败是否由本阶段引入，只承担归因职责；
+- **阶段5关闭门禁**：`tests`完整回归必须全绿，同时实际Jenkins门禁必须通过。
 
-当前4项既有失败可满足“无新增回归”，但不能满足“发布可放行”。二者不得合并成一个绿色结论。
+即使失败完全来自历史债务，也只能记录“本阶段未新增失败”，不能把阶段5或整体发布标记为完成。
 
 ## 5. 阶段边界与文件范围
 
@@ -350,10 +351,10 @@ fail-open只表示Quality、Semantic、Metrics或Flaky附加能力失败时不�
 只有以下验收记录允许进入仓库：
 
 ```text
-code_history/20260805_阶段5Runner与质量链验收记录.md
+code_history/<实际执行日期>_阶段5Runner与质量链验收记录.md
 ```
 
-该文件只有在实际执行阶段5后创建，记录命令、退出码、产物Hash、Jenkins Build URL或编号、未决债务和最终门禁结论。本次“编写开发方案”不提前创建该验收记录。
+该文件只有在实际执行阶段5后创建，记录命令、退出码、产物Hash、Jenkins Build URL或编号、阻塞项和最终门禁结论。本记录属于项目规则要求的阶段执行证据；阶段6只汇总最终发布历史，不重复伪造或覆盖阶段5原始事实。本次“编写开发方案”不提前创建该验收记录。
 
 ### 5.2 禁止修改范围
 
@@ -428,7 +429,7 @@ PIPELINE_DURATION_MS
 
 ### 5.6 工作树保护合同
 
-执行前后分别保存`git status --short`和目标文件Hash。阶段5不得清理、还原、暂存或格式化用户已有改动；尤其不得触碰当前已修改的`.gitignore`和阶段4两个未跟踪测试文件。
+执行前后分别保存`git status --short`和目标文件Hash。阶段5不得清理、还原、暂存或格式化执行时已经存在的任何用户改动。保护清单必须以执行开始时的真实工作树为准，不在方案中永久绑定某个历史未提交文件集合。
 
 范围判断采用“前后状态差集”，不能把执行前已有未跟踪文件归因给阶段5。
 
@@ -1140,7 +1141,7 @@ Markdown必须包含：执行参数、阶段结果、接口测试、请求质量
 - Flaky数据库路径按Job隔离，不放在会被`deleteDir()`清理的Workspace内；
 - 验收构建使用空数据库或记录清晰的初始样本数。
 
-当前阶段4两个测试文件若仍仅存在于本机未跟踪工作树，则Jenkins门禁保持阻塞；阶段5不得自行提交或绕过Checkout复制文件。
+截至2026-08-06，阶段4两个测试文件已经进入`c0954ba`并可被Jenkins Checkout取得，原SCM可见性阻塞已经解除。现有Jenkins构建#73虽然Checkout了该提交，但执行目标仍为`module/smoke`，不能作为离线模块验收证据；仍需按第15.2节参数实际运行`module/offline_framework_example`。
 
 ### 15.2 构建参数
 
@@ -1186,13 +1187,15 @@ Markdown必须包含：执行参数、阶段结果、接口测试、请求质量
 
 ### 15.6 邮件边界
 
-`ALWAYS_SEND_REPORT_EMAIL=false`只关闭普通成功邮件。现有Pipeline在失败、UNSTABLE或从失败恢复为FIXED时仍可能发信。为避免验收产生邮件副作用，优先使用无失败历史的隔离Job；邮件验收只检查生成的主题与HTML，不要求真实投递。
+`ALWAYS_SEND_REPORT_EMAIL=false`只关闭普通成功邮件。现有Pipeline在失败、UNSTABLE或从失败恢复为FIXED时仍可能发信。为避免验收产生非预期外部副作用，优先使用无失败历史的隔离Job。
+
+本方案中“邮件继续消费现有报告”指Pipeline使用同一机器摘要成功生成邮件主题与HTML，并且Jenkins邮件步骤引用这两项同轮产物；默认不要求真实SMTP投递。若用户明确要求验证真实投递，必须单独确认收件人、邮件服务和副作用后再执行，不能把未授权投递作为阶段5默认动作。
 
 ### 15.7 外部证据记录
 
 阶段5验收记录至少保存：Job名称、Build编号、Build URL、Git commit、参数快照、Agent标签、构建结果、Pipeline Summary结论、归档入口、Flaky数据库标识与业务网络边界结论。无法访问Jenkins时，本地验收可以完成，但阶段5整体状态必须写为“Jenkins门禁待外部执行”，不能宣称完成。
 
-## 16. 完整回归与既有债务判定
+## 16. 完整回归与失败归因
 
 ### 16.1 框架完整回归命令
 
@@ -1209,26 +1212,25 @@ $testsExit = $LASTEXITCODE
 $testsOutput | Set-Content -LiteralPath $testsLog -Encoding UTF8
 ```
 
-不得因为当前存在已知失败就追加`--ignore`、`-k not`、修改xfail或更新快照。
+不得因为出现失败就追加`--ignore`、`-k not`、修改xfail或更新快照。
 
-### 16.2 当前4项已知失败集合
+### 16.2 当前权威全绿基线
 
 ```text
-tests/quality/test_repository_test_boundaries.py::test_tests_directory_is_not_controlled_by_an_allowlist
-tests/quality/test_repository_test_boundaries.py::test_new_test_file_is_not_ignored_by_default
-tests/quality/test_repository_test_boundaries.py::test_current_test_modules_are_not_ignored
-tests/quality/test_repository_test_boundaries.py::test_quality_fixture_worktree_bytes_use_lf
+2026-08-06复审：686 collected / 686 passed / 0 failed
 ```
 
-### 16.3 双门禁判定
+该数字是执行快照，不是永久数量合同。永久合同是权威收集成功、测试集合可解释且完整回归零失败。历史4项仓库边界失败已经不再出现，不得继续将其作为允许失败集合。
+
+### 16.3 判定规则
 
 从日志中提取`FAILED `后的nodeid集合：
 
-- 实际失败为空：增量门禁与发布门禁均通过；
-- 实际失败是上述集合的子集且收集数量不低于686：增量门禁通过，发布门禁仍阻塞；
-- 实际失败与上述4项完全相同：记录当前快照`686 collected / 682 passed / 4 failed`，增量门禁通过，发布门禁阻塞；
-- 出现任何集合外失败、测试收集异常或退出码2/3/4/5：阶段5失败；
-- 不能只比较失败数量，必须比较完整nodeid集合。
+- 实际失败为空且收集成功：完整回归门禁通过；
+- 出现任何失败：记录完整nodeid集合用于归因，但阶段5关闭门禁和整体发布门禁均阻塞；
+- 出现测试收集异常或退出码2/3/4/5：阶段5失败；
+- 收集数量变化时必须解释集合差异，不能只比较统计数字；
+- “没有新增失败”只能作为诊断结论，不能替代零失败门禁。
 
 ### 16.4 Smoke收集回归
 
@@ -1301,7 +1303,7 @@ git status --short
 
 ### 17.11 任务5.10：写入阶段5验收记录
 
-只在实际执行后创建`code_history/20260805_阶段5Runner与质量链验收记录.md`。记录事实，不复制大体量机器产物，不把未执行的Jenkins写成通过。
+只在实际执行后创建`code_history/<实际执行日期>_阶段5Runner与质量链验收记录.md`。记录事实，不复制大体量机器产物，不把未执行的Jenkins写成通过。
 
 ## 18. 权威命令索引
 
@@ -1340,8 +1342,8 @@ git status --short
 | Flaky状态 | evaluation与公开CLI | OBSERVING→STABLE符合动态阈值 |
 | Pipeline本地模拟 | summary JSON/Markdown | 同轮来源，WARN仅因Retry挽救 |
 | Jenkins | Build与归档入口 | SUCCESS、报告可访问、业务仅loopback |
-| 完整回归 | pytest日志/JUnit | 无已知集合外新增失败 |
-| 发布门禁 | 完整回归结论 | 任何剩余失败均保持阻塞 |
+| 完整回归 | pytest日志/JUnit | 权威收集成功且零失败 |
+| 阶段5关闭门禁 | 完整回归与实际Jenkins | 两者均通过才允许关闭阶段5 |
 | 工作树保护 | 前后状态与Hash | 只增加允许的验收记录 |
 
 任何一行缺少原始证据时不得用口头确认或截图摘要替代机器产物。
@@ -1438,7 +1440,7 @@ pytest返回0不代表Quality验收通过。控制：业务与观测双结论，
 20. Pipeline Summary WARN来源不是预期Retry/Flaky事实；
 21. Jenkins Checkout不包含阶段0～4文件；
 22. Jenkins业务请求出现外部域名、真实凭证或费用风险；
-23. 完整回归出现已知集合外失败；
+23. 完整回归出现任何失败或收集异常；
 24. Smoke收集分池发生无法解释的回退；
 25. `execution-result.json`无法按原Hash恢复；
 26. 用户已有工作树文件Hash变化；
@@ -1488,8 +1490,8 @@ pytest返回0不代表Quality验收通过。控制：业务与观测双结论，
 - [ ] 实际Jenkins Build成功；
 - [ ] Jenkins JUnit、Allure、Quality和Summary入口可访问；
 - [ ] Jenkins业务接口请求只访问loopback；
-- [ ] 完整回归无已知集合外新增失败；
-- [ ] 任何剩余完整回归失败均使发布门禁保持阻塞；
+- [ ] 完整回归权威收集成功且零失败；
+- [ ] 任何完整回归失败均阻止阶段5关闭和整体发布；
 - [ ] Smoke收集集合与分池不退化；
 - [ ] Runner共享产物恢复原Hash；
 - [ ] 环境变量恢复；
@@ -1528,7 +1530,7 @@ Runner collect-only与Quality关闭证据
 2. **外部门禁状态**：实际Jenkins是否执行并通过；
 3. **发布状态**：完整`tests`是否零失败。
 
-禁止因本地门禁通过就把Jenkins或发布状态写成通过，也禁止因既有债务阻塞发布就抹掉阶段5无新增回归的事实。
+禁止因本地门禁通过就把Jenkins或发布状态写成通过；若出现历史债务，可以记录增量归因结论，但不得据此降低阶段5关闭或发布门禁。
 
 ### 23.3 阶段6可执行内容
 
@@ -1538,7 +1540,7 @@ Runner collect-only与Quality关闭证据
 
 ### 23.4 未决债务交接
 
-若完整回归仍保留当前4项仓库边界失败，阶段6必须明确列出“阶段5无新增回归、整体发布仍阻塞”，并把仓库边界债务交给独立任务处理；不得在文档阶段顺手更新基线。
+若阶段5执行时重新出现任何完整回归失败，阶段6必须明确记录失败nodeid、增量归因和阻塞状态，并把债务交给独立任务处理；不得在文档阶段顺手修改测试、忽略规则或更新基线制造通过。
 
 ## 24. 本阶段最终交付
 
@@ -1552,7 +1554,7 @@ Runner collect-only与Quality关闭证据
 + stable_min_samples + 1轮真实Flaky历史与状态证据
 + 1套同源Pipeline Summary本地模拟证据
 + 1次实际Jenkins参数化构建与归档证据
-+ 1份完整回归增量/发布双门禁结论
++ 1份完整回归失败归因与阶段5关闭结论
 + 1份阶段5验收记录
 + 0个生产、测试、Quality、Runner和Jenkins代码改动
 ```
