@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="接口测试框架四周学习课程第5天：离线测试分层与分类用例">
+  <title>第05天｜离线测试分层与分类用例</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #5e6a7c;
+      --line: #dce4ef;
+      --paper: #fff;
+      --canvas: #f3f6fb;
+      --blue: #2358d5;
+      --blue-strong: #173f9e;
+      --blue-soft: #eaf1ff;
+      --cyan: #0e7490;
+      --cyan-soft: #e3f8fc;
+      --green: #16794a;
+      --green-soft: #e7f8ef;
+      --amber: #985b0b;
+      --amber-soft: #fff5dd;
+      --red: #b4233e;
+      --red-soft: #fff0f2;
+      --violet: #7047b8;
+      --violet-soft: #f3edff;
+      --nav-width: 280px;
+      --shadow: 0 18px 50px rgba(33,50,84,.10);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 28px; }
+    body { margin: 0; background: var(--canvas); color: var(--ink); font: 16px/1.75 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; }
+    button, select, textarea { font: inherit; }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code { border-radius: 5px; padding: .12em .38em; background: #edf2f8; color: #a52150; font: .9em/1.5 "Cascadia Code",Consolas,monospace; }
+    pre { margin: 0; overflow: auto; border-radius: 12px; padding: 20px; background: #111827; color: #e7edf7; line-height: 1.65; }
+    pre code { padding: 0; background: transparent; color: inherit; }
+
+    .page-progress { position: fixed; inset: 0 0 auto 0; z-index: 60; height: 4px; background: #dbe5f5; }
+    .page-progress > span { display: block; width: 0; height: 100%; background: linear-gradient(90deg,#0e7490,#16a34a); transition: width .1s linear; }
+    .layout { min-height: 100vh; }
+    .side-nav { position: fixed; inset: 4px auto 0 0; z-index: 30; width: var(--nav-width); padding: 24px 18px 36px; overflow-y: auto; background: #101a30; color: #dbe6f7; }
+    .course-mark { padding: 0 10px 18px; border-bottom: 1px solid #293753; }
+    .course-mark small { color: #6ee7b7; letter-spacing: .12em; }
+    .course-mark h2 { margin: 5px 0 7px; color: #fff; font-size: 20px; line-height: 1.35; }
+    .course-mark p { margin: 0; color: #9eb0c9; font-size: 13px; }
+    .nav-list { display: grid; gap: 3px; margin-top: 18px; }
+    .nav-list a { display: grid; grid-template-columns: 24px minmax(0,1fr); gap: 8px; align-items: start; border-radius: 8px; padding: 9px 10px; color: #c9d5e7; font-size: 13px; line-height: 1.35; }
+    .nav-list a:hover { background: #1c2943; color: #fff; text-decoration: none; }
+    .nav-list a.active { background: #147a59; color: #fff; }
+    .nav-number { color: #81e6c0; font-variant-numeric: tabular-nums; }
+    .nav-list a.active .nav-number { color: #fff; }
+    .side-progress { margin: 22px 10px 0; }
+    .side-progress-row { display: flex; justify-content: space-between; margin-bottom: 7px; color: #a9b8ce; font-size: 12px; }
+    .side-progress-track { height: 7px; overflow: hidden; border-radius: 99px; background: #32415d; }
+    .side-progress-value { width: 0; height: 100%; border-radius: inherit; background: #34d399; transition: width .2s ease; }
+
+    .main { margin-left: var(--nav-width); padding: 34px 42px 80px; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; max-width: 1100px; margin: 0 auto 18px; }
+    .crumbs { color: var(--muted); font-size: 14px; }
+    .crumbs span { margin: 0 7px; color: #9aa7b8; }
+    .toolbar { display: flex; gap: 8px; }
+    .outline-button, .menu-button, .ghost-button { border: 1px solid var(--line); border-radius: 9px; padding: 8px 12px; background: var(--paper); color: var(--muted); cursor: pointer; box-shadow: 0 3px 12px rgba(31,48,79,.05); }
+    .menu-button { display: none; }
+    .outline-button:hover, .ghost-button:hover { border-color: #a8bad7; color: var(--blue); text-decoration: none; }
+    .lesson { max-width: 1100px; margin: 0 auto; border: 1px solid #e4eaf2; border-radius: 20px; background: var(--paper); box-shadow: var(--shadow); }
+    .hero { position: relative; overflow: hidden; padding: 68px 72px 58px; border-radius: 20px 20px 0 0; background: radial-gradient(circle at 87% 18%,rgba(52,211,153,.22),transparent 27%),linear-gradient(135deg,#10263b,#125a69 58%,#16794a); color: #fff; }
+    .hero::after { content: "05"; position: absolute; right: 38px; bottom: -54px; color: rgba(255,255,255,.08); font: 800 210px/1 system-ui,sans-serif; }
+    .eyebrow { margin: 0 0 10px; color: #a7f3d0; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    .hero h1 { position: relative; z-index: 1; max-width: 880px; margin: 0; font-size: clamp(36px,5vw,58px); line-height: 1.16; letter-spacing: -.035em; }
+    .hero-lead { position: relative; z-index: 1; max-width: 820px; margin: 20px 0 0; color: #dcfce7; font-size: 18px; }
+    .hero-meta { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+    .pill { border: 1px solid rgba(255,255,255,.25); border-radius: 99px; padding: 6px 11px; background: rgba(255,255,255,.10); color: #fff; font-size: 13px; }
+    .hero-outcome { position: relative; z-index: 1; max-width: 820px; margin-top: 30px; border-left: 4px solid #6ee7b7; border-radius: 0 10px 10px 0; padding: 14px 18px; background: rgba(7,24,55,.35); }
+
+    section { padding: 58px 72px; border-top: 1px solid var(--line); }
+    section:first-of-type { border-top: 0; }
+    .section-kicker { margin: 0 0 4px; color: var(--green); font-size: 13px; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }
+    section h2 { margin: 0 0 13px; font-size: 31px; line-height: 1.3; letter-spacing: -.02em; }
+    section h3 { margin: 1.7em 0 .65em; font-size: 21px; }
+    .section-lead { max-width: 890px; margin: 0 0 28px; color: var(--muted); font-size: 17px; }
+    .callout { border-radius: 12px; padding: 17px 19px; }
+    .callout strong { display: block; margin-bottom: 3px; }
+    .callout.blue { border-left: 4px solid var(--blue); background: var(--blue-soft); }
+    .callout.amber { border-left: 4px solid #e59a22; background: var(--amber-soft); }
+    .callout.green { border-left: 4px solid var(--green); background: var(--green-soft); }
+    .callout.red { border-left: 4px solid var(--red); background: var(--red-soft); }
+
+    .objective-grid, .snapshot-grid, .reading-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+    .objective-card, .snapshot-card, .reading-card { border: 1px solid var(--line); border-radius: 14px; padding: 20px; background: #fff; }
+    .objective-card { display: grid; grid-template-columns: 34px minmax(0,1fr); gap: 12px; }
+    .objective-index { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: var(--green-soft); color: var(--green); font-weight: 800; }
+    .objective-card h3, .snapshot-card h3, .reading-card h3 { margin: 0 0 6px; font-size: 17px; }
+    .objective-card p, .snapshot-card p, .reading-card p { margin: 0; color: var(--muted); font-size: 14px; }
+    .path-stack { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+    .path-chip { border-radius: 7px; padding: 5px 8px; background: #f0f4f9; color: #334155; font: 12px/1.4 "Cascadia Code",Consolas,monospace; }
+
+    .week-flow, .cause-flow { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 24px; margin: 24px 0; }
+    .flow-node { position: relative; border: 1px solid var(--line); border-radius: 11px; padding: 14px 10px; background: #fff; text-align: center; font-size: 13px; font-weight: 700; }
+    .flow-node:not(:last-child)::after { content: "→"; position: absolute; left: calc(100% + 6px); top: 50%; color: var(--green); font-size: 21px; transform: translateY(-50%); }
+
+    .pyramid-shell { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: #f8fafd; }
+    .pyramid-board { display: grid; gap: 10px; justify-items: center; padding: 24px; }
+    .layer-button { border: 1px solid var(--line); border-radius: 12px; padding: 15px 20px; background: #fff; color: var(--ink); cursor: pointer; text-align: left; box-shadow: 0 6px 18px rgba(34,53,87,.06); transition: transform .15s ease; }
+    .layer-button:hover { transform: translateY(-2px); }
+    .layer-button.active { border-color: var(--green); box-shadow: 0 0 0 3px rgba(22,121,74,.1); }
+    .layer-button strong { display: block; font-size: 17px; }
+    .layer-button span { color: var(--muted); font-size: 12px; }
+    .layer-button.l3 { width: 56%; background: var(--green-soft); }
+    .layer-button.l2 { width: 76%; background: var(--cyan-soft); }
+    .layer-button.l1 { width: 96%; background: var(--blue-soft); }
+    .layer-detail { min-height: 300px; border-top: 1px solid var(--line); padding: 24px; background: #fff; }
+    .layer-detail h3 { margin: 0 0 7px; }
+    .layer-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-top: 17px; }
+    .layer-fact { border-radius: 10px; padding: 14px; background: #f5f8fc; }
+    .layer-fact b { display: block; margin-bottom: 3px; }
+    .layer-fact span { color: var(--muted); font-size: 13px; }
+    .cost-meter { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; margin-top: 18px; color: var(--muted); font-size: 12px; }
+    .meter-track { height: 8px; border-radius: 99px; background: linear-gradient(90deg,#bfdbfe,#99f6e4,#86efac); }
+
+    .decision-rule { border: 1px solid #b9ddca; border-radius: 14px; padding: 22px; background: #f1fbf5; }
+    .decision-steps { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 18px; margin-top: 18px; }
+    .decision-step { position: relative; border-radius: 11px; padding: 16px; background: #fff; }
+    .decision-step:not(:last-child)::after { content: "→"; position: absolute; left: calc(100% + 5px); top: 50%; color: var(--green); font-size: 22px; transform: translateY(-50%); }
+    .decision-step b { display: block; color: var(--green); }
+    .decision-step span { color: var(--muted); font-size: 13px; }
+
+    .guardrail-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+    .guardrail-card { display: grid; grid-template-columns: 38px minmax(0,1fr); gap: 11px; border: 1px solid var(--line); border-radius: 13px; padding: 17px; }
+    .guardrail-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--cyan-soft); color: var(--cyan); font-weight: 800; }
+    .guardrail-card h3 { margin: 0 0 4px; font-size: 16px; }
+    .guardrail-card p { margin: 0; color: var(--muted); font-size: 13px; }
+    .scenario-strip { display: grid; grid-template-columns: repeat(9,minmax(0,1fr)); gap: 6px; margin-top: 22px; }
+    .scenario-item { border: 1px solid var(--line); border-radius: 9px; padding: 9px 5px; background: #fff; text-align: center; color: var(--muted); font-size: 10px; }
+    .scenario-item b { display: block; color: var(--ink); font-size: 11px; }
+
+    .atlas-shell { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: #f8fafd; }
+    .atlas-tabs { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; padding: 18px; }
+    .atlas-button { border: 1px solid var(--line); border-radius: 10px; padding: 11px 8px; background: #fff; color: var(--muted); cursor: pointer; font-size: 12px; }
+    .atlas-button b { display: block; color: var(--ink); font-size: 14px; }
+    .atlas-button.active { border-color: var(--green); background: var(--green-soft); color: var(--green); }
+    .atlas-detail { min-height: 310px; border-top: 1px solid var(--line); padding: 24px; background: #fff; }
+    .atlas-detail h3 { margin: 0 0 7px; }
+    .atlas-head { display: flex; justify-content: space-between; gap: 16px; align-items: start; }
+    .count-badge { flex: 0 0 auto; border-radius: 99px; padding: 5px 10px; background: var(--blue-soft); color: var(--blue); font-size: 12px; font-weight: 700; }
+    .atlas-grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 16px; margin-top: 18px; }
+    .atlas-cell { border-radius: 10px; padding: 15px; background: #f5f8fc; }
+    .atlas-cell.no { background: var(--red-soft); }
+    .atlas-cell strong { display: block; margin-bottom: 4px; }
+    .atlas-cell.no strong { color: var(--red); }
+    .atlas-cell ul { margin: 4px 0 0; padding-left: 1.2em; color: var(--muted); font-size: 13px; }
+
+    .comparison { display: grid; grid-template-columns: 1fr 80px 1fr; gap: 16px; align-items: stretch; }
+    .comparison-card { border: 1px solid var(--line); border-radius: 14px; padding: 20px; background: #fff; }
+    .comparison-card.classified { border-top: 4px solid var(--blue); }
+    .comparison-card.golden { border-top: 4px solid var(--green); }
+    .comparison-card h3 { margin: 0 0 7px; }
+    .comparison-card p { color: var(--muted); }
+    .comparison-card ul { margin-bottom: 0; }
+    .not-equal { display: grid; place-items: center; color: var(--red); font-size: 28px; font-weight: 800; }
+    .routing-flow { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 20px; margin-top: 24px; }
+    .routing-node { position: relative; border: 1px solid var(--line); border-radius: 12px; padding: 16px; background: #f8fafd; text-align: center; }
+    .routing-node:not(:last-child)::after { content: "→"; position: absolute; left: calc(100% + 6px); top: 50%; color: var(--green); font-size: 22px; transform: translateY(-50%); }
+    .routing-node b { display: block; }
+    .routing-node span { color: var(--muted); font-size: 13px; }
+
+    .reading-stepper { display: grid; grid-template-columns: repeat(9,minmax(0,1fr)); gap: 6px; margin: 22px 0 12px; }
+    .reading-button { border: 1px solid var(--line); border-radius: 9px; padding: 10px 5px; background: #fff; color: var(--muted); cursor: pointer; font-size: 11px; }
+    .reading-button b { display: block; color: var(--ink); }
+    .reading-button.active { border-color: var(--green); background: var(--green-soft); color: var(--green); }
+    .reading-detail { min-height: 200px; border: 1px solid var(--line); border-radius: 13px; padding: 22px; background: #f8fafd; }
+    .reading-detail h3 { margin: 0 0 7px; }
+
+    .command-card { position: relative; margin: 14px 0; }
+    .copy-button { position: absolute; top: 10px; right: 10px; z-index: 2; border: 1px solid #3b4a63; border-radius: 7px; padding: 5px 9px; background: #1f2937; color: #dbeafe; cursor: pointer; font-size: 12px; }
+    .copy-button:hover { background: #334155; }
+    .lab-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .lab-card { border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+    .lab-card h3 { margin: 0 0 7px; }
+    .lab-card p { color: var(--muted); font-size: 13px; }
+    .note-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin-top: 20px; }
+    .note-field label { display: block; margin-bottom: 6px; font-weight: 700; }
+    .note-field textarea { width: 100%; min-height: 105px; resize: vertical; border: 1px solid var(--line); border-radius: 10px; padding: 11px; color: var(--ink); }
+    .note-field textarea:focus { outline: 3px solid rgba(22,121,74,.12); border-color: var(--green); }
+    .save-state { margin-top: 8px; color: var(--green); font-size: 12px; }
+
+    .toc-focus { border: 1px solid #ead7a7; border-radius: 14px; padding: 22px; background: #fffaf0; }
+    .layer-exercise { margin-top: 25px; }
+    .exercise-row { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(220px,.7fr) 34px; gap: 12px; align-items: center; border-top: 1px solid var(--line); padding: 13px 0; }
+    .exercise-row:first-of-type { border-top: 0; }
+    .exercise-row select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: #fff; }
+    .exercise-result { font-size: 20px; text-align: center; }
+    .primary-button { border: 0; border-radius: 9px; padding: 10px 16px; background: var(--green); color: #fff; cursor: pointer; font-weight: 700; }
+    .primary-button:hover { background: #10643d; }
+    .exercise-feedback { margin-top: 12px; min-height: 28px; font-weight: 700; }
+
+    .quiz-list { display: grid; gap: 16px; }
+    .quiz-card { border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+    .quiz-card legend { padding: 0 5px; font-weight: 750; }
+    .quiz-options { display: grid; gap: 8px; margin-top: 10px; }
+    .quiz-options label { display: flex; gap: 8px; align-items: flex-start; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+    .quiz-options label:hover { background: #f5f8fc; }
+    .quiz-explanation { display: none; margin-top: 10px; border-radius: 8px; padding: 10px 12px; font-size: 14px; }
+    .quiz-card.correct { border-color: #8dd9b3; }
+    .quiz-card.correct .quiz-explanation { display: block; background: var(--green-soft); color: #155e3b; }
+    .quiz-card.wrong { border-color: #f0a9b7; }
+    .quiz-card.wrong .quiz-explanation { display: block; background: var(--red-soft); color: #8c1d34; }
+    .quiz-summary { margin-top: 16px; min-height: 42px; border-radius: 10px; padding: 11px 14px; background: #f5f8fc; }
+
+    .week-gate { border: 1px solid #b9ddca; border-radius: 16px; overflow: hidden; }
+    .week-gate-head { padding: 22px; background: #123d2b; color: #fff; }
+    .week-gate-head h3 { margin: 0 0 4px; }
+    .week-gate-head p { margin: 0; color: #b9e8d1; }
+    .exit-list { display: grid; gap: 9px; padding: 20px; }
+    .exit-item { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; cursor: pointer; }
+    .exit-item input { margin-top: .45em; accent-color: var(--green); }
+    .exit-item input:checked + span { color: var(--muted); text-decoration: line-through; }
+    .lesson-footer { display: flex; justify-content: space-between; gap: 14px; align-items: center; margin-top: 30px; border-top: 1px solid var(--line); padding-top: 24px; }
+    .footer-links { display: flex; flex-wrap: wrap; gap: 8px; }
+    .next-pending { border: 1px dashed #aab7ca; border-radius: 10px; padding: 10px 14px; color: var(--muted); }
+
+    @media (max-width: 1050px) {
+      .week-flow, .cause-flow, .evidence-flow { grid-template-columns: 1fr; gap: 10px; }
+      .flow-node:not(:last-child)::after { content: "↓"; left: 50%; top: calc(100% - 1px); transform: translateX(-50%); }
+      .scenario-strip { grid-template-columns: repeat(3,minmax(0,1fr)); }
+      .atlas-tabs { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .reading-stepper { grid-template-columns: repeat(3,minmax(0,1fr)); }
+    }
+    @media (max-width: 900px) {
+      .side-nav { transform: translateX(-105%); transition: transform .2s ease; }
+      body.nav-open .side-nav { transform: translateX(0); }
+      .main { margin-left: 0; padding: 18px 18px 56px; }
+      .menu-button { display: inline-block; }
+      .hero, section { padding-left: 34px; padding-right: 34px; }
+      .layer-grid, .decision-steps, .atlas-grid, .lab-grid { grid-template-columns: 1fr; }
+      .decision-step:not(:last-child)::after { content: "↓"; left: 50%; top: calc(100% - 1px); transform: translateX(-50%); }
+      .comparison { grid-template-columns: 1fr; }
+      .not-equal { transform: rotate(90deg); }
+      .routing-flow { grid-template-columns: 1fr; }
+      .routing-node:not(:last-child)::after { content: "↓"; left: 50%; top: calc(100% - 1px); transform: translateX(-50%); }
+    }
+    @media (max-width: 650px) {
+      .topbar { align-items: flex-start; }
+      .crumbs { display: none; }
+      .toolbar { width: 100%; justify-content: space-between; }
+      .lesson { border-radius: 12px; }
+      .hero { padding: 48px 22px 42px; border-radius: 12px 12px 0 0; }
+      section { padding: 44px 22px; }
+      .objective-grid, .snapshot-grid, .reading-grid, .guardrail-grid, .note-grid, .atlas-tabs, .scenario-strip, .reading-stepper { grid-template-columns: 1fr; }
+      .layer-button { width: 100% !important; }
+      .exercise-row { grid-template-columns: 1fr; }
+      .exercise-result { text-align: left; }
+      .lesson-footer { align-items: stretch; flex-direction: column; }
+      .footer-links { flex-direction: column; }
+    }
+    @media print {
+      .side-nav, .topbar, .page-progress, .copy-button { display: none !important; }
+      .main { margin: 0; padding: 0; }
+      .lesson { max-width: none; border: 0; box-shadow: none; }
+      .hero { color: #111827; background: #eef4ff; }
+      .hero-lead, .eyebrow { color: #334155; }
+      section { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-progress" aria-hidden="true"><span id="page-progress-value"></span></div>
+  <div class="layout">
+    <aside class="side-nav" id="side-nav" aria-label="本课目录">
+      <div class="course-mark"><small>接口测试框架课程</small><h2>第05天</h2><p>离线测试分层与分类用例</p></div>
+      <nav class="nav-list" id="nav-list">
+        <a href="#learning-goals"><span class="nav-number">01</span><span>目标与周总结</span></a>
+        <a href="#three-layers"><span class="nav-number">02</span><span>离线测试三层</span></a>
+        <a href="#selection-rule"><span class="nav-number">03</span><span>最低成本决策</span></a>
+        <a href="#loopback-gate"><span class="nav-number">04</span><span>Loopback门禁</span></a>
+        <a href="#classification-atlas"><span class="nav-number">05</span><span>分类用例地图</span></a>
+        <a href="#golden-boundary"><span class="nav-number">06</span><span>分类与黄金路径</span></a>
+        <a href="#reading-route"><span class="nav-number">07</span><span>阅读路线播放器</span></a>
+        <a href="#offline-lab"><span class="nav-number">08</span><span>离线实践</span></a>
+        <a href="#constraint-exercise"><span class="nav-number">09</span><span>层级选择练习</span></a>
+        <a href="#knowledge-check"><span class="nav-number">10</span><span>综合自测</span></a>
+        <a href="#week-gate"><span class="nav-number">11</span><span>第1周门禁</span></a>
+      </nav>
+      <div class="side-progress"><div class="side-progress-row"><span>周门禁完成度</span><span id="gate-progress-text">0/5</span></div><div class="side-progress-track"><div class="side-progress-value" id="gate-progress-value"></div></div></div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar"><div class="crumbs"><a href="../接口测试框架四周学习课程.html">课程大纲</a><span>/</span>第05天</div><div class="toolbar"><button class="menu-button" id="menu-button" type="button" aria-controls="side-nav" aria-expanded="false">☰ 本课目录</button><a class="outline-button" href="../接口测试框架四周学习课程.html">返回课程大纲</a><button class="ghost-button" id="reset-button" type="button">重置本课记录</button></div></div>
+
+      <article class="lesson">
+        <header class="hero" id="top">
+          <p class="eyebrow">Week 1 · Day 5</p>
+          <h1>离线测试分层与分类用例</h1>
+          <p class="hero-lead">第1周最后一天，不再增加新的框架组件。今天建立一套选择测试层级的方法：既让故障尽可能快、准地暴露，又用必要的真实HTTP生命周期证明组件能够组合。</p>
+          <div class="hero-meta"><span class="pill">建议用时 130～160分钟</span><span class="pill">难度：进阶入门</span><span class="pill">实践：全离线回归</span><span class="pill">里程碑：第1周门禁</span></div>
+          <div class="hero-outcome"><strong>本课结果：</strong>你将能为一个框架变化选择单元模拟、loopback门禁或业务分类层，并解释为什么分类反例不能塞入黄金路径、离线模块也不是第二套框架。</div>
+        </header>
+
+        <section id="learning-goals" data-section>
+          <p class="section-kicker">01 · 目标与周总结</p>
+          <h2>把已经学会的内容组织成验证策略</h2>
+          <p class="section-lead">框架能力越多，越不能只靠一条“全都跑一遍”的用例。测试分层让不同故障在最适合的位置暴露。</p>
+          <div class="objective-grid">
+            <div class="objective-card"><span class="objective-index">1</span><div><h3>区分三层证明力</h3><p>单元模拟、loopback服务门禁、业务分类与黄金路径分别证明什么。</p></div></div>
+            <div class="objective-card"><span class="objective-index">2</span><div><h3>选择最低成本层</h3><p>从目标故障出发，而不是默认启动完整服务或完整Runner。</p></div></div>
+            <div class="objective-card"><span class="objective-index">3</span><div><h3>建立分类索引</h3><p>知道七个业务文件各自保护的能力与禁止吸收的反例。</p></div></div>
+            <div class="objective-card"><span class="objective-index">4</span><div><h3>通过第1周门禁</h3><p>能画架构、判断变化位置、运行离线集合并解释黄金边界。</p></div></div>
+          </div>
+
+          <h3>第1周五天形成一条能力链</h3>
+          <div class="week-flow">
+            <div class="flow-node">项目边界</div><div class="flow-node">四件套调用</div><div class="flow-node">模块扩展</div><div class="flow-node">生命周期与证据</div><div class="flow-node">分层验证策略</div>
+          </div>
+          <div class="callout green"><strong>今天的控制点</strong>每次新增测试前先写一句“它要暴露什么故障”。如果这句话无法唯一指向一个分类或层级，测试目标还没有被定义清楚。</div>
+        </section>
+
+        <section id="three-layers" data-section>
+          <p class="section-kicker">02 · 离线测试三层</p>
+          <h2>层级越高组合越真实，定位成本也越高</h2>
+          <p class="section-lead">点击金字塔。三层不是成熟度排名，而是三种不同证明工具；上层不能替代下层，下层也无法证明上层组合。</p>
+
+          <div class="pyramid-shell">
+            <div class="pyramid-board" role="tablist" aria-label="离线测试三层">
+              <button class="layer-button l3" type="button" data-layer="business" role="tab" aria-selected="false"><strong>L3 业务分类与黄金路径</strong><span>真实四件套与请求生命周期</span></button>
+              <button class="layer-button l2" type="button" data-layer="loopback" role="tab" aria-selected="false"><strong>L2 Loopback基础设施门禁</strong><span>真实本地HTTP协议与服务生命周期</span></button>
+              <button class="layer-button l1 active" type="button" data-layer="unit" role="tab" aria-selected="true"><strong>L1 单元级故障模拟</strong><span>无网络、精确算法分支与异常</span></button>
+            </div>
+            <div class="layer-detail" id="layer-detail" role="tabpanel" aria-live="polite"></div>
+          </div>
+
+          <div class="snapshot-grid" style="margin-top:20px">
+            <div class="snapshot-card"><h3>当前快照</h3><p>9个确定性服务场景、18项基础设施门禁、23条业务用例；业务分类分布为3/4/4/4/4/3，另有1条黄金路径。</p></div>
+            <div class="snapshot-card"><h3>长期合同</h3><p>数量会变化。稳定原则是职责互斥、黄金路径只保留成功主链，以及Runner最终计划满足并发池与串行池集合守恒。</p></div>
+          </div>
+        </section>
+
+        <section id="selection-rule" data-section>
+          <p class="section-kicker">03 · 最低成本决策</p>
+          <h2>选择能暴露目标故障的最低成本层级</h2>
+          <p class="section-lead">“最低成本”不是最少代码，而是在足够证明力下，拥有最快反馈与最清晰归因。</p>
+
+          <div class="decision-rule">
+            <strong>三问决策</strong>
+            <div class="decision-steps">
+              <div class="decision-step"><b>1. 只涉及纯算法分支吗？</b><span>是：用FakeResponse、SequenceTransport、SleepRecorder等单元模拟。</span></div>
+              <div class="decision-step"><b>2. 必须经过真实HTTP协议吗？</b><span>是：先用loopback基础设施门禁证明服务合同与生命周期。</span></div>
+              <div class="decision-step"><b>3. 必须证明四件套组合吗？</b><span>是：进入对应业务分类；稳定成功组合才考虑黄金路径。</span></div>
+            </div>
+          </div>
+
+          <h3>层级选得过高的因果链</h3>
+          <div class="cause-flow">
+            <div class="flow-node">一个算法反例</div><div class="flow-node">塞入完整业务流</div><div class="flow-node">依赖与证据增多</div><div class="flow-node">失败归因变慢</div><div class="flow-node">维护成本放大</div>
+          </div>
+
+          <div class="callout red"><strong>反方向也不成立</strong>FakeResponse能精确制造异常，但不能证明真实Session、Middleware、HTTP服务器、线程与文件资源会正确协作。需要真实生命周期时必须升级层级。</div>
+        </section>
+
+        <section id="loopback-gate" data-section>
+          <p class="section-kicker">04 · Loopback基础设施门禁</p>
+          <h2>确定性本地服务本身也需要独立验收</h2>
+          <p class="section-lead">L2测试的对象是离线服务合同，不是业务四件套。因此它可以直接使用关闭系统代理的本地Session，把服务与框架客户端解耦验证。</p>
+
+          <div class="guardrail-grid">
+            <div class="guardrail-card"><span class="guardrail-icon">1</span><div><h3>只绑定127.0.0.1随机端口</h3><p>守卫拒绝非合同目标，所有收到的请求都记录为IPv4 loopback。</p></div></div>
+            <div class="guardrail-card"><span class="guardrail-icon">2</span><div><h3>状态按服务实例隔离</h3><p>两个实例的调用计数、任务和线程生命周期互不污染。</p></div></div>
+            <div class="guardrail-card"><span class="guardrail-icon">3</span><div><h3>时序由锁、计数器和Event控制</h3><p>不使用随机sleep制造先后关系，失败可以稳定复现。</p></div></div>
+            <div class="guardrail-card"><span class="guardrail-icon">4</span><div><h3>协议与资源合同固定</h3><p>状态序列、Header、Cookie、JSON错误、PNG长度和哈希都有门禁。</p></div></div>
+            <div class="guardrail-card"><span class="guardrail-icon">5</span><div><h3>启动失败与重复停止安全</h3><p>测试异常、start失败和多次stop都不能遗留服务线程。</p></div></div>
+            <div class="guardrail-card"><span class="guardrail-icon">6</span><div><h3>不读取真实业务目标完成请求</h3><p>离线请求使用本轮服务URL和离线Key，不连接真实付费接口。</p></div></div>
+          </div>
+
+          <div class="scenario-strip" aria-label="九个离线场景">
+            <div class="scenario-item"><b>DEFAULT</b>稳定成功</div><div class="scenario-item"><b>GET 503→200</b>瞬时故障</div><div class="scenario-item"><b>GET 429→200</b>Retry-After</div><div class="scenario-item"><b>POST 503→200</b>幂等写</div><div class="scenario-item"><b>POLL SUCCESS</b>重试后成功</div><div class="scenario-item"><b>POLL FAILURE</b>业务失败</div><div class="scenario-item"><b>POLL UNKNOWN</b>未知状态</div><div class="scenario-item"><b>POLL TIMEOUT</b>总deadline</div><div class="scenario-item"><b>OVERSIZED</b>捕获超限</div>
+          </div>
+          <div class="callout amber" style="margin-top:20px"><strong>边界说明</strong>L2中的原生Session是测试本地服务协议的探针；L3业务用例不得照搬这种方式绕过BaseRequest。测试对象不同，所以允许的入口也不同。</div>
+        </section>
+
+        <section id="classification-atlas" data-section>
+          <p class="section-kicker">05 · 分类用例地图</p>
+          <h2>每个文件只保护一个主要故障域</h2>
+          <p class="section-lead">点击文件查看允许职责、当前用例和禁止扩张方向。分类边界让失败文件名本身就提供第一层归因。</p>
+
+          <div class="atlas-shell">
+            <div class="atlas-tabs" role="tablist" aria-label="业务分类用例">
+              <button class="atlas-button active" type="button" data-category="request" role="tab" aria-selected="true"><b>Request Pipeline</b>3条</button>
+              <button class="atlas-button" type="button" data-category="retry" role="tab" aria-selected="false"><b>Retry</b>4条</button>
+              <button class="atlas-button" type="button" data-category="polling" role="tab" aria-selected="false"><b>Polling</b>4条</button>
+              <button class="atlas-button" type="button" data-category="context" role="tab" aria-selected="false"><b>Context Cleanup</b>4条</button>
+              <button class="atlas-button" type="button" data-category="capture" role="tab" aria-selected="false"><b>Capture Assertions</b>4条</button>
+              <button class="atlas-button" type="button" data-category="concurrency" role="tab" aria-selected="false"><b>Concurrency</b>3条</button>
+              <button class="atlas-button" type="button" data-category="golden" role="tab" aria-selected="false"><b>Full Flow</b>1条</button>
+            </div>
+            <div class="atlas-detail" id="atlas-detail" role="tabpanel" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <section id="golden-boundary" data-section>
+          <p class="section-kicker">06 · 分类与黄金路径</p>
+          <h2>一个负责精确暴露故障，一个负责证明稳定组合</h2>
+          <p class="section-lead">黄金路径不是“最全用例”，而是最稳定的成功主链。异常排列越多，越会削弱它作为健康信号的价值。</p>
+
+          <div class="comparison">
+            <div class="comparison-card classified"><h3>分类用例</h3><p>回答“某一能力失效时，能否精确定位”。</p><ul><li>一个主要故障域</li><li>包含成功与互斥反例</li><li>边界和异常优先完整</li><li>失败后直接定位分类</li></ul></div>
+            <div class="not-equal">≠</div>
+            <div class="comparison-card golden"><h3>黄金路径</h3><p>回答“多个已验证能力能否在稳定成功主链中组合”。</p><ul><li>只有1条稳定nodeid</li><li>组合创建、轮询、上下文、并发、捕获与清理</li><li>不吸收互斥异常</li><li>提供框架整体健康信号</li></ul></div>
+          </div>
+
+          <div class="routing-flow">
+            <div class="routing-node"><b>能力失效需精确定位？</b><span>进入对应分类文件</span></div><div class="routing-node"><b>多个能力稳定成功组合？</b><span>评估加入黄金主链</span></div><div class="routing-node"><b>与成功主链互斥？</b><span>必须留在分类用例</span></div>
+          </div>
+
+          <h3>这些反例不进入黄金路径</h3>
+          <div class="path-stack"><span class="path-chip">Polling failure</span><span class="path-chip">unknown</span><span class="path-chip">timeout</span><span class="path-chip">非幂等POST禁止重试</span><span class="path-chip">Capture超限</span><span class="path-chip">cleanup多错误</span><span class="path-chip">Header泄漏</span></div>
+          <div class="callout blue" style="margin-top:20px"><strong>离线模块不是第二套框架</strong>它没有复制BaseRequest、Retry、Polling、Capture或Runtime Hooks，而是用确定性服务、场景和fixture驱动同一套公共实现。它是框架的离线业务试验场，不是平行实现。</div>
+        </section>
+
+        <section id="reading-route" data-section>
+          <p class="section-kicker">07 · 阅读路线播放器</p>
+          <h2>从测试工具走到完整黄金路径</h2>
+          <p class="section-lead">按顺序点击。每一步只回答“它负责暴露什么故障”，不要在今天深挖Retry或Polling算法。</p>
+
+          <div class="reading-stepper" role="tablist" aria-label="第5天阅读顺序">
+            <button class="reading-button active" type="button" data-reading="0"><b>1</b>Mock Helpers</button><button class="reading-button" type="button" data-reading="1"><b>2</b>Service Gate</button><button class="reading-button" type="button" data-reading="2"><b>3</b>Request</button><button class="reading-button" type="button" data-reading="3"><b>4</b>Retry</button><button class="reading-button" type="button" data-reading="4"><b>5</b>Polling</button><button class="reading-button" type="button" data-reading="5"><b>6</b>Context</button><button class="reading-button" type="button" data-reading="6"><b>7</b>Capture</button><button class="reading-button" type="button" data-reading="7"><b>8</b>Concurrency</button><button class="reading-button" type="button" data-reading="8"><b>9</b>Full Flow</button>
+          </div>
+          <div class="reading-detail" id="reading-detail" role="tabpanel" aria-live="polite"></div>
+
+          <div class="callout green" style="margin-top:20px"><strong>阅读完成标准</strong>你不需要记住所有断言，只需要为9个入口各写一句“它能暴露什么故障，以及它不能替代哪一层”。</div>
+        </section>
+
+        <section id="offline-lab" data-section>
+          <p class="section-kicker">08 · 离线实践</p>
+          <h2>先验收服务，再运行全部业务分类</h2>
+          <p class="section-lead">两条命令分别验证L2与L3。不要合并成一个模糊结果；分开运行才能判断故障发生在服务基础设施还是框架业务组合。</p>
+
+          <div class="lab-grid">
+            <div class="lab-card"><h3>步骤1：Loopback基础设施门禁</h3><p>当前快照应收集18项，验证协议、实例隔离、并发计数、线程回收和网络边界。</p><div class="command-card"><button class="copy-button" type="button">复制</button><pre><code>.\.venv\Scripts\python.exe -m pytest `
+  tests/test_offline_service.py -q</code></pre></div></div>
+            <div class="lab-card"><h3>步骤2：业务分类与黄金路径</h3><p>当前快照应收集23条，分布为3/4/4/4/4/3/1；数量是快照，职责边界才是合同。</p><div class="command-card"><button class="copy-button" type="button">复制</button><pre><code>.\.venv\Scripts\python.exe -m pytest `
+  module/offline_framework_example -q</code></pre></div></div>
+          </div>
+
+          <h3>为每个分类写一句故障说明</h3>
+          <div class="note-grid">
+            <div class="note-field"><label for="note-request">Request Pipeline暴露什么故障？</label><textarea id="note-request" data-note="request" placeholder="Middleware、runtime metadata、Header/payload不变性……"></textarea></div>
+            <div class="note-field"><label for="note-retry">Retry暴露什么故障？</label><textarea id="note-retry" data-note="retry" placeholder="资格、Retry-After、幂等性……"></textarea></div>
+            <div class="note-field"><label for="note-polling">Polling暴露什么故障？</label><textarea id="note-polling" data-note="polling" placeholder="状态转换、失败、未知、deadline……"></textarea></div>
+            <div class="note-field"><label for="note-context">Context Cleanup暴露什么故障？</label><textarea id="note-context" data-note="context" placeholder="提取、转换、LIFO、多错误……"></textarea></div>
+            <div class="note-field"><label for="note-capture">Capture Assertions暴露什么故障？</label><textarea id="note-capture" data-note="capture" placeholder="输入/输出边界、超限、Schema诊断……"></textarea></div>
+            <div class="note-field"><label for="note-concurrency">Concurrency暴露什么故障？</label><textarea id="note-concurrency" data-note="concurrency" placeholder="ContextVar、Session和Header隔离……"></textarea></div>
+            <div class="note-field"><label for="note-golden">Full Flow证明什么组合？</label><textarea id="note-golden" data-note="golden" placeholder="稳定成功主链中的能力组合……"></textarea></div>
+            <div class="note-field"><label for="note-exclusions">哪些反例必须留在分类用例？</label><textarea id="note-exclusions" data-note="exclusions" placeholder="列出至少4个与成功主链互斥的反例"></textarea></div>
+          </div>
+          <p class="save-state" id="save-state">观察记录保存在浏览器本地。</p>
+        </section>
+
+        <section id="constraint-exercise" data-section>
+          <p class="section-kicker">09 · TOC层级选择练习</p>
+          <h2>不要用最完整的测试解决最局部的问题</h2>
+          <p class="section-lead">为每个变化选择能暴露目标故障的最低成本层级或分类。选择后再解释为什么更低层证明力不足。</p>
+
+          <div class="toc-focus"><strong>当前系统约束</strong><p>反馈速度和故障归因被“过度集成测试”限制。解除约束的方法不是减少保护，而是把算法、基础设施、业务组合放回各自最有效的验证层。</p></div>
+          <div class="layer-exercise">
+            <div class="exercise-row" data-answer="unit"><span>验证Retry backoff计算与sleep调用次数</span><select aria-label="Retry算法层级"><option value="">请选择</option><option value="unit">L1 单元故障模拟</option><option value="loopback">L2 Loopback门禁</option><option value="retry">L3 Retry分类</option><option value="golden">L3 黄金路径</option></select><span class="exercise-result"></span></div>
+            <div class="exercise-row" data-answer="loopback"><span>验证服务启动20次后没有线程泄漏</span><select aria-label="服务线程层级"><option value="">请选择</option><option value="unit">L1 单元故障模拟</option><option value="loopback">L2 Loopback门禁</option><option value="concurrency">L3 Concurrency分类</option><option value="golden">L3 黄金路径</option></select><span class="exercise-result"></span></div>
+            <div class="exercise-row" data-answer="retry"><span>验证真实Request对带幂等键POST进行重试</span><select aria-label="幂等POST层级"><option value="">请选择</option><option value="unit">L1 单元故障模拟</option><option value="loopback">L2 Loopback门禁</option><option value="retry">L3 Retry分类</option><option value="golden">L3 黄金路径</option></select><span class="exercise-result"></span></div>
+            <div class="exercise-row" data-answer="polling"><span>验证Polling遇到paused时抛未知状态异常</span><select aria-label="未知状态分类"><option value="">请选择</option><option value="unit">L1 单元故障模拟</option><option value="polling">L3 Polling分类</option><option value="context">L3 Context分类</option><option value="golden">L3 黄金路径</option></select><span class="exercise-result"></span></div>
+            <div class="exercise-row" data-answer="concurrency"><span>验证两个worker的单次Header互不泄漏</span><select aria-label="Header隔离分类"><option value="">请选择</option><option value="loopback">L2 Loopback门禁</option><option value="request">L3 Request分类</option><option value="concurrency">L3 Concurrency分类</option><option value="golden">L3 黄金路径</option></select><span class="exercise-result"></span></div>
+            <div class="exercise-row" data-answer="golden"><span>验证创建、轮询、上下文、并发审计、捕获和幂等清理能稳定组合</span><select aria-label="稳定组合层级"><option value="">请选择</option><option value="unit">L1 单元故障模拟</option><option value="loopback">L2 Loopback门禁</option><option value="capture">L3 Capture分类</option><option value="golden">L3 黄金路径</option></select><span class="exercise-result"></span></div>
+            <button class="primary-button" id="check-layers" type="button">检查选择</button>
+            <div class="exercise-feedback" id="layer-feedback" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <section id="knowledge-check" data-section>
+          <p class="section-kicker">10 · 第1周综合自测</p>
+          <h2>用框架边界解释测试策略</h2>
+          <p class="section-lead">建议达到5/6再进入周门禁。这组题会连接前四课，而不仅是今天的文件分类。</p>
+          <div class="quiz-list">
+            <fieldset class="quiz-card" data-answer="b"><legend>1. 选择离线验证层级的首要原则是什么？</legend><div class="quiz-options"><label><input type="radio" name="q1" value="a">始终选择最完整的黄金路径</label><label><input type="radio" name="q1" value="b">选择能暴露目标故障的最低成本层级</label><label><input type="radio" name="q1" value="c">哪个文件最短就选哪个</label></div><div class="quiz-explanation">正确答案是B。证明力足够后，反馈速度和归因清晰度优先。</div></fieldset>
+            <fieldset class="quiz-card" data-answer="c"><legend>2. L1的SequenceTransport最适合证明什么？</legend><div class="quiz-options"><label><input type="radio" name="q2" value="a">真实HTTP服务器线程回收</label><label><input type="radio" name="q2" value="b">四件套端到端组合</label><label><input type="radio" name="q2" value="c">确定响应/异常序列下的单一算法分支与调用事实</label></div><div class="quiz-explanation">正确答案是C。它记录调用并按序返回Response或异常，不启动网络。</div></fieldset>
+            <fieldset class="quiz-card" data-answer="a"><legend>3. 为什么test_offline_service可以直接使用本地requests.Session？</legend><div class="quiz-options"><label><input type="radio" name="q3" value="a">它测试的是离线服务基础设施合同，需要与业务BaseRequest解耦</label><label><input type="radio" name="q3" value="b">业务用例都应该绕过框架</label><label><input type="radio" name="q3" value="c">BaseRequest不能访问loopback</label></div><div class="quiz-explanation">正确答案是A。L3业务分类仍必须使用框架公开入口。</div></fieldset>
+            <fieldset class="quiz-card" data-answer="b"><legend>4. 哪个场景不应加入黄金路径？</legend><div class="quiz-options"><label><input type="radio" name="q4" value="a">创建后成功轮询并清理资源</label><label><input type="radio" name="q4" value="b">Polling failure、unknown与timeout全部排列</label><label><input type="radio" name="q4" value="c">稳定成功时验证输出捕获</label></div><div class="quiz-explanation">正确答案是B。与成功主链互斥的状态留在Polling分类。</div></fieldset>
+            <fieldset class="quiz-card" data-answer="c"><legend>5. 为什么离线模块不是第二套框架？</legend><div class="quiz-options"><label><input type="radio" name="q5" value="a">因为它没有任何测试代码</label><label><input type="radio" name="q5" value="b">因为它连接真实生产接口</label><label><input type="radio" name="q5" value="c">它用确定性服务驱动同一套公共Request、Retry、Polling、Capture与Hooks实现</label></div><div class="quiz-explanation">正确答案是C。离线层提供场景与边界，不复制核心机制。</div></fieldset>
+            <fieldset class="quiz-card" data-answer="a"><legend>6. 新增一个只验证Header不变性的业务反例，应优先放哪里？</legend><div class="quiz-options"><label><input type="radio" name="q6" value="a">职责匹配的Request Pipeline分类</label><label><input type="radio" name="q6" value="b">黄金路径</label><label><input type="radio" name="q6" value="c">Pipeline Summary</label></div><div class="quiz-explanation">正确答案是A。先归入现有单一职责分类，再判断是否需要稳定成功步骤。</div></fieldset>
+          </div>
+          <button class="primary-button" id="submit-quiz" type="button" style="margin-top:16px">提交综合自测</button>
+          <div class="quiz-summary" id="quiz-summary" aria-live="polite">尚未提交。</div>
+        </section>
+
+        <section id="week-gate" data-section>
+          <p class="section-kicker">11 · 第1周门禁</p>
+          <h2>完成这些任务，再进入请求内核</h2>
+          <p class="section-lead">第2周会深入BaseRequest、Middleware、Retry、Polling和并发隔离。若第1周边界尚不稳定，继续深入只会增加名词负担。</p>
+
+          <div class="week-gate">
+            <div class="week-gate-head"><h3>Week 1 · Framework Map</h3><p>以下5项全部能独立完成，才算真正通过。</p></div>
+            <div class="exit-list">
+              <label class="exit-item"><input type="checkbox" data-gate="diagram"><span>不看文档画出Test → Task → Request → BaseRequest → Response → Assertions调用关系。</span></label>
+              <label class="exit-item"><input type="checkbox" data-gate="changes"><span>能给出至少5个需求，并判断它们应修改模块层、common、Runner、Quality还是Reporting。</span></label>
+              <label class="exit-item"><input type="checkbox" data-gate="classification"><span>能解释三层离线测试、分类用例与黄金路径各自的证明内容和不可替代性。</span></label>
+              <label class="exit-item"><input type="checkbox" data-gate="one-framework"><span>能解释离线模块为何复用同一公共实现，而不是第二套框架。</span></label>
+              <label class="exit-item"><input type="checkbox" data-gate="run"><span>已独立运行单条黄金nodeid、18项基础设施门禁和全部离线业务模块。</span></label>
+            </div>
+          </div>
+
+          <div class="callout green" style="margin-top:20px"><strong>第1周最终产出</strong>一张框架层级图、一张四件套调用图、一份模块蓝图、一张生命周期/证据图，以及一份“故障目标 → 最低成本验证层”索引。</div>
+          <div class="lesson-footer"><div class="footer-links"><a class="outline-button" href="第04天-测试生命周期断言与报告步骤.html">← 上一课</a><a class="outline-button" href="../接口测试框架四周学习课程.html">返回课程大纲</a></div><span class="next-pending">下一课：基础请求与请求上下文（待生成）</span></div>
+        </section>
+      </article>
+    </main>
+  </div>
+
+  <script>
+    (() => {
+      const storagePrefix = "api-case-course-day05:";
+
+      const layerDetails = {
+        unit: {
+          title: "L1 单元级故障模拟",
+          summary: "不启动网络，通过可编排Response、异常、时钟和日志替身，精确验证一个算法分支与错误语义。",
+          location: "tests/ + tests/mock_helpers.py",
+          proves: "Retry/Polling/SSE/日志等单一分支、调用次数、等待与异常",
+          cannot: "不能证明真实Session、HTTP服务器、线程或Middleware组合",
+          cost: "反馈最快，归因最精确",
+          tools: ["make_response", "SequenceTransport", "SleepRecorder", "FakeApiCallLogger", "FakeStreamResponse", "polling_responses"],
+        },
+        loopback: {
+          title: "L2 Loopback基础设施门禁",
+          summary: "启动127.0.0.1随机端口服务，用真实本地HTTP验证协议、实例隔离、并发计数、线程回收和网络边界。",
+          location: "tests/test_offline_service.py",
+          proves: "离线服务可作为稳定测试基础设施，合同和生命周期确定",
+          cannot: "不直接证明模块四件套与BaseRequest组合正确",
+          cost: "真实HTTP，成本中等",
+          tools: ["OfflineService", "requests.Session", "RLock/Event", "固定Header/Cookie", "9个Scenario", "18项门禁"],
+        },
+        business: {
+          title: "L3 业务分类与黄金路径",
+          summary: "使用离线服务、模块四件套和公共Request执行真实业务生命周期；分类精确保护能力，黄金路径验证稳定成功组合。",
+          location: "module/offline_framework_example/test_*.py",
+          proves: "Request、Middleware、Retry、Polling、Context、Capture、并发和清理的业务组合",
+          cannot: "不适合穷举所有纯算法排列，也不能替代服务自身门禁",
+          cost: "组合最真实，定位成本最高",
+          tools: ["四件套", "yield fixtures", "runtime hooks", "分类文件", "稳定黄金nodeid", "23条业务用例"],
+        },
+      };
+
+      const categories = {
+        request: { file: "test_request_pipeline.py", count: 3, scope: "Request、Middleware、payload和Header不变性", tests: ["默认Middleware与runtime metadata", "敏感Header不改变业务请求", "Middleware不修改原始payload"], forbid: "Retry资格、Polling终态与并发Session隔离" },
+        retry: { file: "test_retry.py", count: 4, scope: "重试资格、等待、Retry-After和瞬时失败挽救", tests: ["GET 503后恢复", "遵守Retry-After", "带幂等键POST可重试", "非幂等POST不重试"], forbid: "Polling业务状态、Context提取与Capture文件" },
+        polling: { file: "test_polling.py", count: 4, scope: "状态转换、成功、业务失败、未知状态和总deadline", tests: ["完整成功迁移", "业务failure异常", "unknown拒绝", "总deadline强制执行"], forbid: "Context、Capture、并发所有权和全部Retry算法排列" },
+        context: { file: "test_context_cleanup.py", count: 4, scope: "变量提取、类型/转换、LIFO清理和多错误归并", tests: ["JSON/Header/Cookie/Regex提取", "类型与transform合同", "LIFO清理", "继续清理并报告多错误"], forbid: "网络Retry、Polling状态与媒体捕获" },
+        capture: { file: "test_capture_assertions.py", count: 4, scope: "输入/输出Artifact边界、超限fail-open、Schema路径与脱敏诊断", tests: ["输出捕获与合同", "输入仅loopback", "超限不覆盖业务响应", "Schema双路径和脱敏"], forbid: "并发Session所有权、Header隔离和Retry资格" },
+        concurrency: { file: "test_concurrency_context.py", count: 3, scope: "ContextVar传播、Session独立和请求级Header隔离", tests: ["submit_with_context保留case所有权", "并发Request使用独立Session", "单次Header不在线程间泄漏"], forbid: "完整黄金业务链、Polling所有终态和Capture边界" },
+        golden: { file: "test_full_framework_flow.py", count: 1, scope: "多个已分类能力的稳定成功主链", tests: ["创建与重试轮询成功", "上下文提取与并发审计", "输出捕获与runtime metadata", "幂等资源清理"], forbid: "failure、unknown、timeout、非幂等POST、Capture超限、cleanup多错误、Header泄漏" },
+      };
+
+      const readingItems = [
+        { title: "1. tests/mock_helpers.py", goal: "认识无网络的可编排替身：Response、异常序列、sleep记录器、Fake Logger和Fake Stream。", question: "它怎样让一个算法分支确定发生？" },
+        { title: "2. tests/test_offline_service.py", goal: "确认本地服务协议、实例隔离、并发、线程和loopback边界本身可信。", question: "为什么这里允许直接使用本地Session？" },
+        { title: "3. test_request_pipeline.py", goal: "观察真实Request如何经过默认Middleware，同时保持Header和payload业务语义不变。", question: "中间件修改了什么，又必须不修改什么？" },
+        { title: "4. test_retry.py", goal: "把可重试资格、等待与幂等性反例留在单一分类。", question: "为什么非幂等POST反例不进入黄金路径？" },
+        { title: "5. test_polling.py", goal: "区分成功、failure、unknown和deadline，并观察状态迁移证据。", question: "哪三类终态与黄金成功主链互斥？" },
+        { title: "6. test_context_cleanup.py", goal: "理解提取、转换、LIFO与清理错误聚合，不引入网络噪声。", question: "为什么cleanup多错误需要专门分类？" },
+        { title: "7. test_capture_assertions.py", goal: "观察输入/输出捕获边界、超限fail-open与Schema脱敏诊断。", question: "Artifact失败为什么不能覆盖业务Response？" },
+        { title: "8. test_concurrency_context.py", goal: "确认逻辑上下文传播，但Session和单次Header保持线程隔离。", question: "哪些状态可以传播，哪些资源必须独立？" },
+        { title: "9. test_full_framework_flow.py", goal: "最后读取稳定成功组合，识别它复用了哪些已分类证明。", question: "删掉互斥异常后，黄金路径还证明了什么？" },
+      ];
+
+      function renderLayer(name) {
+        const item = layerDetails[name];
+        document.getElementById("layer-detail").innerHTML = `<h3>${item.title}</h3><p style="color:var(--muted)">${item.summary}</p><div class="layer-grid"><div class="layer-fact"><b>位置</b><span>${item.location}</span></div><div class="layer-fact"><b>能证明</b><span>${item.proves}</span></div><div class="layer-fact"><b>不能替代</b><span>${item.cannot}</span></div></div><div class="path-stack">${item.tools.map((tool)=>`<span class="path-chip">${tool}</span>`).join("")}</div><div class="cost-meter"><span>低成本 / 高定位</span><div class="meter-track"></div><span>高组合 / 高保真</span></div>`;
+      }
+      const layerButtons=[...document.querySelectorAll(".layer-button")];
+      for(const button of layerButtons) button.addEventListener("click",()=>{for(const item of layerButtons){const active=item===button;item.classList.toggle("active",active);item.setAttribute("aria-selected",String(active));}renderLayer(button.dataset.layer);});
+      renderLayer("unit");
+
+      function renderCategory(name){const item=categories[name];document.getElementById("atlas-detail").innerHTML=`<div class="atlas-head"><div><h3>${item.file}</h3><p style="margin:0;color:var(--muted)">${item.scope}</p></div><span class="count-badge">${item.count}条</span></div><div class="atlas-grid"><div class="atlas-cell"><strong>当前保护点</strong><ul>${item.tests.map((test)=>`<li>${test}</li>`).join("")}</ul></div><div class="atlas-cell no"><strong>不应继续加入</strong><span style="color:var(--muted);font-size:13px">${item.forbid}</span></div></div>`;}
+      const atlasButtons=[...document.querySelectorAll(".atlas-button")];
+      for(const button of atlasButtons) button.addEventListener("click",()=>{for(const item of atlasButtons){const active=item===button;item.classList.toggle("active",active);item.setAttribute("aria-selected",String(active));}renderCategory(button.dataset.category);});
+      renderCategory("request");
+
+      function renderReading(index){const item=readingItems[index];document.getElementById("reading-detail").innerHTML=`<h3>${item.title}</h3><p>${item.goal}</p><div class="callout blue"><strong>阅读问题</strong>${item.question}</div>`;}
+      const readingButtons=[...document.querySelectorAll(".reading-button")];
+      for(const button of readingButtons) button.addEventListener("click",()=>{for(const item of readingButtons)item.classList.toggle("active",item===button);renderReading(Number(button.dataset.reading));});
+      renderReading(0);
+
+      for(const button of document.querySelectorAll(".copy-button")) button.addEventListener("click",async()=>{const text=button.parentElement.querySelector("pre").innerText;try{await navigator.clipboard.writeText(text);button.textContent="已复制";}catch(_){button.textContent="请手动复制";}setTimeout(()=>{button.textContent="复制";},1600);});
+
+      const noteFields=[...document.querySelectorAll("[data-note]")];
+      for(const field of noteFields){const key=storagePrefix+"note:"+field.dataset.note;field.value=localStorage.getItem(key)||"";field.addEventListener("input",()=>{localStorage.setItem(key,field.value);const state=document.getElementById("save-state");state.textContent="已自动保存。";clearTimeout(field._saveTimer);field._saveTimer=setTimeout(()=>{state.textContent="观察记录保存在浏览器本地。";},1200);});}
+
+      document.getElementById("check-layers").addEventListener("click",()=>{const rows=[...document.querySelectorAll(".exercise-row")];let correct=0;for(const row of rows){const ok=row.querySelector("select").value===row.dataset.answer;const result=row.querySelector(".exercise-result");result.textContent=ok?"✓":"✕";result.style.color=ok?"var(--green)":"var(--red)";if(ok)correct+=1;}const feedback=document.getElementById("layer-feedback");feedback.textContent=correct===rows.length?"6/6：层级与分类选择正确。":`${correct}/6：先写目标故障，再选择能证明它的最低成本层。`;feedback.style.color=correct===rows.length?"var(--green)":"var(--amber)";});
+
+      document.getElementById("submit-quiz").addEventListener("click",()=>{const cards=[...document.querySelectorAll(".quiz-card")];let correct=0;for(const card of cards){const selected=card.querySelector("input:checked")?.value;const ok=selected===card.dataset.answer;card.classList.toggle("correct",ok);card.classList.toggle("wrong",!ok);if(ok)correct+=1;}const summary=document.getElementById("quiz-summary");summary.textContent=correct>=5?`${correct}/6：达标。请完成第1周门禁。`:`${correct}/6：未达标。建议回看三层金字塔、分类地图与黄金边界。`;summary.style.background=correct>=5?"var(--green-soft)":"var(--amber-soft)";summary.style.color=correct>=5?"var(--green)":"var(--amber)";localStorage.setItem(storagePrefix+"quiz-score",String(correct));});
+
+      const gateChecks=[...document.querySelectorAll("[data-gate]")];
+      function updateGateProgress(){const done=gateChecks.filter((item)=>item.checked).length;document.getElementById("gate-progress-text").textContent=`${done}/${gateChecks.length}`;document.getElementById("gate-progress-value").style.width=`${done/gateChecks.length*100}%`;}
+      for(const check of gateChecks){const key=storagePrefix+"gate:"+check.dataset.gate;check.checked=localStorage.getItem(key)==="true";check.addEventListener("change",()=>{localStorage.setItem(key,String(check.checked));updateGateProgress();});}
+      updateGateProgress();
+
+      document.getElementById("reset-button").addEventListener("click",()=>{if(!confirm("确认清除第5课的观察记录、第1周门禁和自测分数？"))return;for(const key of Object.keys(localStorage)){if(key.startsWith(storagePrefix))localStorage.removeItem(key);}for(const field of noteFields)field.value="";for(const check of gateChecks)check.checked=false;for(const card of document.querySelectorAll(".quiz-card"))card.classList.remove("correct","wrong");document.getElementById("quiz-summary").textContent="尚未提交。";document.getElementById("quiz-summary").removeAttribute("style");updateGateProgress();});
+
+      const menuButton=document.getElementById("menu-button");
+      menuButton.addEventListener("click",()=>{const open=document.body.classList.toggle("nav-open");menuButton.setAttribute("aria-expanded",String(open));});
+      document.getElementById("nav-list").addEventListener("click",()=>{document.body.classList.remove("nav-open");menuButton.setAttribute("aria-expanded","false");});
+
+      const navLinks=[...document.querySelectorAll(".nav-list a")];
+      const navById=new Map(navLinks.map((link)=>[link.getAttribute("href").slice(1),link]));
+      const sections=[...document.querySelectorAll("[data-section]")];
+      const observer=new IntersectionObserver((entries)=>{const visible=entries.filter((entry)=>entry.isIntersecting).sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top);if(!visible.length)return;for(const link of navLinks)link.classList.remove("active");navById.get(visible[0].target.id)?.classList.add("active");},{rootMargin:"-8% 0px -78% 0px",threshold:[0,1]});
+      for(const section of sections)observer.observe(section);
+
+      const pageProgress=document.getElementById("page-progress-value");
+      function updatePageProgress(){const max=document.documentElement.scrollHeight-window.innerHeight;pageProgress.style.width=`${max>0?window.scrollY/max*100:0}%`;}
+      window.addEventListener("scroll",updatePageProgress,{passive:true});
+      updatePageProgress();
+    })();
+  </script>
+</body>
+</html>
