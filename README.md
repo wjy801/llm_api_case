@@ -11,8 +11,8 @@
 - 协议与业务层已覆盖 OpenAI Chat Completions、Responses、Anthropic Messages，以及图片、视频和真实 Smoke 链路。
 - 质量链已实现事实归并、完整性校验、失败分类、请求指标和机器可读产物。
 - 语义与指标链已实现逻辑调用、HTTP/SSE/异步耗时、Token/媒体用量覆盖；Flaky 历史、状态机与治理命令完整保留。
-- 已建立确定性离线学习模块：标准库 loopback 服务提供 9 个固定场景，18 项基础设施门禁验证协议、隔离、并发计数和线程回收；截至 2026-08-05，23 条业务用例覆盖 6 组能力分类和 1 条黄金路径，Runner 计划为 23 条并发、0 条串行。
-- 当前离线模块本地 Runner、Quality、Metrics 与 Flaky 验收已通过；实际 Jenkins 因阶段4核心文件尚未进入可 Checkout 的 SCM 提交而阻塞，完整框架回归仍有 4 项仓库边界失败，因此整体发布状态为 `BLOCKED`。
+- 已建立确定性离线学习模块：标准库 loopback 服务提供 9 个固定场景，18 项基础设施门禁验证协议、隔离、并发计数和线程回收；截至 2026-08-06，23 条业务用例覆盖 6 组能力分类和 1 条黄金路径，Runner 计划为 23 条并发、0 条串行。23 条是日期化快照，长期合同是最终计划与并发/串行池集合守恒。
+- 截至 2026-08-06，本地 Runner、Quality、Metrics、Flaky 和完整框架回归均已通过；Jenkins Build #76 从提交 `c0954ba` Checkout 并通过 23 条离线用例，阶段5发布门禁为 `PASS`，离线框架能力总方案为 `COMPLETE`。详细证据见“本地验收”和 Build #76，不以本段替代后续实际验收。
 - Jenkins 已支持参数化执行、并发优先与串行收尾、每轮 Pipeline 执行摘要、JUnit/Allure、邮件直达链接和构建产物自动清理。
 - `reports/pipeline-summary.md` 是唯一人工质量报告；缺失的 Metrics 或 Flaky 数据只降级对应章节，不按零计算，也不覆盖 pytest/Jenkins 结果。
 
@@ -96,7 +96,7 @@ tests/
 
 dev/                       # 架构审查、协议合同与开发思路
 dev_plan/                  # 可执行的阶段开发方案
-code_history/              # 历史存量变更记录；当前不再新增
+code_history/              # 分阶段代码变更与验收记录
 config.py                  # Settings 与环境配置加载
 master_service.py          # 收集与分池公共导入的稳定兼容门面
 run_master.py              # 本地与 Jenkins 共用的稳定执行入口
@@ -192,7 +192,7 @@ common -X-> quality
 
 ## 安装依赖
 
-Python 最低版本为 3.11（框架使用 `datetime.UTC` 等 Python 3.11 标准库能力）；截至 2026-08-05，本轮阶段6本地验收使用 Python 3.12.10。
+Python 最低版本为 3.11（框架使用 `datetime.UTC` 等 Python 3.11 标准库能力）；截至 2026-08-06，本轮阶段6本地验收使用 Python 3.14.6。
 
 从仓库根目录创建独立虚拟环境：
 
@@ -476,7 +476,7 @@ def test_chain(self, test_context):
 
 第二层位于 `module/offline_framework_example/offline_service.py`，使用 Python 标准库在 `127.0.0.1` 随机端口启动确定性 HTTP 服务。它冻结 9 个场景，覆盖 Echo、瞬时 429/503、幂等 POST、Polling 成功/失败/未知/超时和超限下载；`tests/test_offline_service.py` 的 18 项门禁验证协议、实例隔离、并发计数、线程回收和 IPv4 loopback 边界。
 
-第三层是 `module/offline_framework_example/test_*.py` 的真实四件套业务验证。截至 2026-08-05，共 23 条用例：Request/Middleware 3 条、Retry 4 条、Polling 4 条、TestContext/cleanup 4 条、Capture/Assertions 4 条、并发隔离 3 条、黄金路径 1 条；它们全部属于并发池，不依赖真实服务、账号或凭据。
+第三层是 `module/offline_framework_example/test_*.py` 的真实四件套业务验证。截至 2026-08-06，共 23 条用例：Request/Middleware 3 条、Retry 4 条、Polling 4 条、TestContext/cleanup 4 条、Capture/Assertions 4 条、并发隔离 3 条、黄金路径 1 条；它们全部属于并发池，不依赖真实服务、账号或凭据。
 
 三层能力用于框架核心回归和学习，不替代真实环境业务用例。推荐按以下顺序阅读：
 
@@ -492,7 +492,14 @@ offline_service.py 与 conftest.py
 -> test_full_framework_flow.py
 ```
 
-分类用例回答“哪项能力或边界失效”，并发分类回答“Context、Session 与请求级状态是否隔离”，黄金路径只回答“已验证能力能否沿稳定成功主链组合成立”。Polling failure、unknown、timeout、非幂等 POST 禁止重试、Capture 超限和 cleanup 多错误等互斥异常继续保留在分类用例，不扩张黄金路径。
+| 类型 | 回答的问题 | 不承担的职责 |
+| --- | --- | --- |
+| 分类用例 | 哪一项能力或边界失效 | 不证明全部能力组合 |
+| 并发分类 | Context、Session 和请求级状态是否隔离 | 不验证全部业务异常 |
+| 黄金路径 | 已验证能力能否沿稳定成功主链组合成立 | 不容纳互斥 failure/unknown/timeout |
+| Runner/Quality 验收 | 同一执行事实能否被可信消费 | 不替代业务断言 |
+
+Polling failure、unknown、timeout、非幂等 POST 禁止重试、Capture 超限和 cleanup 多错误等互斥异常继续保留在分类用例，不扩张黄金路径。
 
 ## 分层规范
 
@@ -630,9 +637,17 @@ $evidenceRoot = Join-Path `
   ('offline-example-disabled-' + [guid]::NewGuid().ToString('N'))
 $junitPath = Join-Path $evidenceRoot 'offline-disabled.xml'
 $allurePath = Join-Path $evidenceRoot 'allure'
-New-Item -ItemType Directory -Path $evidenceRoot -Force | Out-Null
+$qualityRoot = Join-Path $evidenceRoot 'quality'
+$runnerResult = 'reports/execution-result.json'
+$runnerBackup = Join-Path $evidenceRoot 'execution-result.original'
+$runnerExisted = Test-Path -LiteralPath $runnerResult
+New-Item -ItemType Directory -Path $evidenceRoot,$qualityRoot -Force | Out-Null
+if ($runnerExisted) {
+  Copy-Item -LiteralPath $runnerResult -Destination $runnerBackup
+}
 
 $env:QUALITY_ENABLE = '0'
+$env:QUALITY_OUTPUT_DIR = $qualityRoot
 $env:GENERATE_ALLURE_REPORT = 'FALSE'
 $env:GENERATE_HISTORY_REPORT = 'FALSE'
 try {
@@ -644,8 +659,15 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Offline example failed.' }
 }
 finally {
+  if ($runnerExisted) {
+    Copy-Item -LiteralPath $runnerBackup -Destination $runnerResult -Force
+  }
+  elseif (Test-Path -LiteralPath $runnerResult) {
+    Remove-Item -LiteralPath $runnerResult -Force
+  }
   @(
     'QUALITY_ENABLE',
+    'QUALITY_OUTPUT_DIR',
     'GENERATE_ALLURE_REPORT',
     'GENERATE_HISTORY_REPORT'
   ) | ForEach-Object {
@@ -665,7 +687,13 @@ $evidenceRoot = Join-Path ([System.IO.Path]::GetTempPath()) $runId
 $qualityRoot = Join-Path $evidenceRoot 'quality'
 $junitPath = Join-Path $evidenceRoot 'offline-quality.xml'
 $allurePath = Join-Path $evidenceRoot 'allure'
+$runnerResult = 'reports/execution-result.json'
+$runnerBackup = Join-Path $evidenceRoot 'execution-result.original'
+$runnerExisted = Test-Path -LiteralPath $runnerResult
 New-Item -ItemType Directory -Path $qualityRoot -Force | Out-Null
+if ($runnerExisted) {
+  Copy-Item -LiteralPath $runnerResult -Destination $runnerBackup
+}
 
 $env:QUALITY_ENABLE = '1'
 $env:QUALITY_SEMANTIC_ENABLE = '1'
@@ -674,7 +702,7 @@ $env:QUALITY_FLAKY_HISTORY_ENABLE = '0'
 $env:QUALITY_FLAKY_STATE_ENABLE = '0'
 $env:QUALITY_OUTPUT_DIR = $qualityRoot
 $env:QUALITY_RUN_ID = $runId
-$env:QUALITY_EXECUTION_ID = $runId
+Remove-Item Env:QUALITY_EXECUTION_ID -ErrorAction SilentlyContinue
 $env:USE_CHINA_ENVIRONMENT = 'FALSE'
 $env:GENERATE_ALLURE_REPORT = 'FALSE'
 $env:GENERATE_HISTORY_REPORT = 'FALSE'
@@ -687,6 +715,12 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Offline Quality example failed.' }
 }
 finally {
+  if ($runnerExisted) {
+    Copy-Item -LiteralPath $runnerBackup -Destination $runnerResult -Force
+  }
+  elseif (Test-Path -LiteralPath $runnerResult) {
+    Remove-Item -LiteralPath $runnerResult -Force
+  }
   @(
     'QUALITY_ENABLE',
     'QUALITY_SEMANTIC_ENABLE',
@@ -695,7 +729,6 @@ finally {
     'QUALITY_FLAKY_STATE_ENABLE',
     'QUALITY_OUTPUT_DIR',
     'QUALITY_RUN_ID',
-    'QUALITY_EXECUTION_ID',
     'USE_CHINA_ENVIRONMENT',
     'GENERATE_ALLURE_REPORT',
     'GENERATE_HISTORY_REPORT'
@@ -943,7 +976,7 @@ Checkout
 
 `QUALITY_ENABLE` 独立控制质量采集和报告质量数据源。Jenkins 的真实接口阶段会显式开启它，并在生成摘要时传递同一执行事实；本地未开启时，报告中的“质量观测”为 `NOT_RUN`，且不会读取上轮遗留的 `reports/quality`。已开启但本轮核心质量产物缺失、损坏或版本不匹配时才显示 `NO_DATA`。
 
-`Jenkinsfile` 还配置了每日 `00:00` 的参数化真实 Smoke。真实接口会产生模型调用和账单数据；不需要定时执行时，应在 Jenkins Job 的 Build Triggers 中停用对应触发器。
+`Jenkinsfile` 还配置了每日 7 点时段的参数化真实 Smoke，使用 `H 7 * * *` 分散同一小时内的节点负载。真实接口会产生模型调用和账单数据；不需要定时执行时，应在 Jenkins Job 的 Build Triggers 中停用对应触发器。
 
 ### 推荐构建模式
 
@@ -981,7 +1014,7 @@ SMOKE_TARGET=module/offline_framework_example
 TEST_PARALLEL_WORKERS=2
 ```
 
-该构建要求阶段4并发分类和黄金路径文件已经进入 Jenkins 实际 Checkout 的提交。业务测试 HTTP 只访问本轮 fixture 提供的 `127.0.0.1` 地址；`Prepare Python Env` 仍可能访问 pip/npm 镜像，因此这里证明的是“业务接口零外部请求”，不是整个构建物理断网。
+阶段4并发分类和黄金路径文件已经进入提交 `c0954ba707dba258a08d7cfdd623e5628acf5ea8`。Jenkins Build #76 使用上述参数 Checkout 同一提交并以 `SUCCESS` 结束，JUnit 为 23 passed，Allure、Quality、Flaky、Pipeline Summary 和归档入口均可用。业务测试 HTTP 只访问本轮 fixture 提供的 `127.0.0.1` 地址；`Prepare Python Env` 仍可能访问 pip/npm 镜像，因此这里证明的是“业务接口零外部请求”，不是整个构建物理断网。目标提交或关键文件变化后必须重新验收，不能自动沿用 Build #76。
 
 只执行指定业务文件：
 
@@ -1091,14 +1124,16 @@ CI 变更前建议按“确定性离线门禁 → 全部框架回归 → 真实�
 .\.venv\Scripts\python.exe run_master.py module/smoke --collect-only -q
 ```
 
-截至 2026-08-05，当前工作树使用 Python 3.12.10，验收快照如下。数量用于识别意外丢失，不替代集合守恒和零失败发布合同：
+截至 2026-08-06，当前工作树使用 Python 3.14.6，验收快照如下。数量用于识别意外丢失，不替代集合守恒和零失败发布合同：
 
 - 离线服务合同：`18 passed`。
 - 离线业务模块：`23 passed`（并发池 `23`、串行池 `0`）。
 - Quality、Semantic、Metrics 与 Flaky：本地运行级门禁通过；完整模块 Metrics 唯一受控降级原因为 `usage_incomplete`。
 - 黄金路径：`4 operations / 7 request groups / 1 polling session / 8 request events`。
 - Smoke collect-only：`40` 项（并发池 `15`、串行池 `25`），只验证收集和分池。
-- 完整框架回归：收集 `686` 项，`682 passed / 4 failed`；阶段5无集合外新增失败，但发布门禁仍为 `BLOCKED`。
-- 实际 Jenkins：`BLOCKED`，因为 `test_concurrency_context.py` 和 `test_full_framework_flow.py` 尚未进入当前 HEAD，不能被 `checkout scm`取得。
-- 整体发布：`BLOCKED`。本地门禁通过不能替代实际 Jenkins 和完整回归零失败。
+- 完整框架回归：`686 passed / 0 failed / 0 errors / 0 skipped`。
+- 实际 Jenkins：Build #76 `SUCCESS`，Checkout `c0954ba`，JUnit 23 passed，Allure、Quality、Flaky、Pipeline Summary 与归档完整。
+- 阶段5发布门禁：`PASS`。
+- 阶段6文档与发布基线：`PASS`。
+- 整体发布：`PASS`；离线框架能力分类用例与黄金路径总方案为 `COMPLETE`。
 
