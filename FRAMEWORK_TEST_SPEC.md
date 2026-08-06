@@ -722,9 +722,17 @@ def create_example_generation(self, request_client, payload):
 
 ## 18. 框架能力的离线测试
 
-离线验证分为两层，选择能够暴露目标故障的最低成本层级。
+离线验证分为三层，选择能够暴露目标故障的最低成本层级。三层不得互相替代，也不得为了离线验证复制公共实现。
 
-第一层是无网络的隔离单测。修改纯算法、异常分支、日志或观察适配时，在 `tests/` 增加回归并优先使用：
+### 18.1 离线测试三层结构
+
+| 层级 | 位置 | 证明内容 |
+| --- | --- | --- |
+| 单元级故障模拟 | `tests/` 中的 FakeResponse、SequenceTransport 等 | 单一算法分支、异常和日志语义 |
+| loopback 基础设施门禁 | `tests/test_offline_service.py` | 协议、实例隔离、并发计数、线程回收和网络边界 |
+| 业务分类与黄金路径 | `module/offline_framework_example/test_*.py` | 四件套、真实请求生命周期、能力分类和稳定成功组合 |
+
+第一层不启动网络服务，修改纯算法、异常分支、日志或观察适配时优先使用：
 
 ```text
 tests/mock_helpers.py
@@ -737,7 +745,7 @@ polling_responses
 连接/超时异常工厂
 ```
 
-第二层是真实 HTTP 生命周期的 loopback 集成验证。需要验证 `requests.Session`、Request、Middleware、Retry、Polling、Capture 或 Runtime Hooks 的组合行为时，复用：
+第二层和第三层共享真实 HTTP 生命周期的 loopback 服务。需要验证 `requests.Session`、Request、Middleware、Retry、Polling、Capture 或 Runtime Hooks 的组合行为时，复用：
 
 ```text
 module/offline_framework_example/offline_service.py  # 127.0.0.1 随机端口服务
@@ -746,11 +754,67 @@ tests/test_offline_service.py                        # 协议、隔离、并发�
 module/offline_framework_example/test_*.py           # 四件套业务分类用例
 ```
 
-离线服务当前冻结 9 个场景，`tests/test_offline_service.py` 包含 18 项基础设施门禁；业务分类当前只有 7 项，覆盖 Request、默认 Middleware 与 Retry。Polling、TestContext、Capture、并发和黄金路径虽然已有服务端协议端点，但对应业务分类用例尚未实现，不能计入当前验收能力。
+截至 2026-08-06，离线服务冻结 9 个确定性场景，`tests/test_offline_service.py` 包含 18 项基础设施门禁；业务模块包含 23 条用例，分布为 `3/4/4/4/4/3/1`，Runner 计划为 23 项并发、0 项串行。该数量是当前快照，长期合同是最终计划等于并发池与串行池的互斥并集。
 
-loopback 用例必须使用随机端口、禁止读取系统代理、通过守卫拒绝合同外地址，并由 fixture 确保 Request、Server 和线程回收。不得为了离线测试复制一套 BaseRequest、Retry 或 Polling 实现。
+### 18.2 分类与黄金路径职责
+
+| 文件 | 允许职责 | 不应继续加入 |
+| --- | --- | --- |
+| `test_request_pipeline.py` | Request、Middleware、payload 和 Header 不变性 | Retry、Polling 终态 |
+| `test_retry.py` | 重试资格、等待和挽救 | Polling 业务状态 |
+| `test_polling.py` | 状态转换、失败、未知和总 deadline | Context、Capture |
+| `test_context_cleanup.py` | 提取、转换、LIFO 清理和错误归并 | 网络重试 |
+| `test_capture_assertions.py` | Artifact 边界、Schema 路径和脱敏诊断 | 并发所有权 |
+| `test_concurrency_context.py` | ContextVar、Session 和请求级 Header 隔离 | 黄金业务全链 |
+| `test_full_framework_flow.py` | 稳定成功主链 | 互斥异常和全部边界排列 |
+
+判断顺序：
+
+```text
+某一能力失效时能否精确定位 -> 分类用例
+多个已验证能力在稳定成功主链中能否组合 -> 黄金路径
+场景与黄金成功主链互斥 -> 保留在分类用例
+```
+
+黄金路径不得吸收 Polling failure、unknown、timeout、非幂等 POST 禁止重试、Capture 超限、cleanup 多错误和 Header 泄漏反例。当前稳定 nodeid 为：
+
+```text
+module/offline_framework_example/test_full_framework_flow.py::TestFullFrameworkFlow::test_offline_async_media_flow
+```
+
+### 18.3 确定性本地服务要求
+
+- 服务只绑定 `127.0.0.1` 随机端口，客户端禁止读取系统代理；
+- 请求守卫拒绝合同外目标，状态按服务实例隔离；
+- 使用锁、计数器和 Event 协调时序，不使用随机 sleep 制造先后关系；
+- fixture 负责服务启动与关闭，Request、Session、线程和临时文件在 `finally` 或 teardown 回收；
+- Retry 和 Polling 使用公共实现，资源 URL 由本轮服务生成并校验为 loopback；
+- 不读取真实 `.env` 服务 URL 或密钥完成业务请求；
+- 不复制 BaseRequest、Retry、Polling、Capture、Runner 或 Quality 实现。
 
 框架单测和离线分类用例都不得调用真实付费接口。需要测试文件内容、Jenkinsfile 或报告结构时使用结构测试和临时目录。
+
+### 18.4 Quality边界
+
+业务分类只能通过 `common.runtime_hooks`、Request `runtime_metadata`、逻辑调用作用域和 pytest/Runner 公开入口产生中性事实。禁止业务示例：
+
+- 导入 `quality.metrics.*` 内部 builder；
+- 导入 `quality.flaky_store.*` 内部 repository 或 projection；
+- 读取 Quality 内部数据库表断言业务行为；
+- 为 Metrics 修改业务断言；
+- 把 Quality fail-open 解释为 Quality 成功。
+
+Quality、Metrics 和 Flaky 只在运行级验收中通过机器产物和公开 CLI 验证，不能替代分类用例的业务断言。
+
+### 18.5 新增能力归类算法
+
+1. 优先归入现有单一职责分类；
+2. 无法归入时判断是否存在新的独立框架职责；
+3. 只有职责独立且具有稳定合同才新增分类文件；
+4. 先写分类用例，再判断黄金路径是否需要增加稳定成功步骤；
+5. 不因黄金路径已存在就把新能力全部塞入；
+6. 新增后同步更新数量快照、学习顺序和验收记录；
+7. 复验 Runner 集合守恒、Quality 事实和完整框架回归。
 
 框架改动必须按职责补充以下保护：
 
@@ -762,7 +826,7 @@ loopback 用例必须使用随机端口、禁止读取系统代理、通过守�
 - 新增架构边界测试时必须确保文件进入 Git，不能只在本地未跟踪状态下通过。
 - 架构测试不得断言 Python 文件集合与白名单完全相等，也不得冻结完整模块 DAG；应验证公共行为、禁止反向依赖和单一所有权。
 
-### 18.1 唯一执行事实规范
+### 18.6 唯一执行事实规范
 
 Runner 必须先完成一次权威 pytest 收集，再执行最终 nodeid 计划：
 
@@ -785,7 +849,7 @@ target / -k / -m / --ignore
 - `reports/execution-result.json` 只记录权威计划、池级原始退出事实和最终退出码，不推导 Jenkins 最终状态；
 - Quality、Metrics、Flaky、JUnit 和 Allure 不得改写 pytest 原始退出码。
 
-### 18.2 Allure 单一生命周期规范
+### 18.7 Allure 单一生命周期规范
 
 Runner 与直接 pytest 共用 `run_orchestration/allure_lifecycle.py`：
 
@@ -797,7 +861,7 @@ collect-only：不清理、不创建、不生成制品
 
 必须保持默认 `allure-results/`、`allure-report/`、`history_report/` 和自定义 `--alluredir`；Allure 清理、合并或 CLI 失败采用 fail-open，不改写 pytest 原始退出码。`module/conftest.py` 只负责 Hook 适配，不复制文件和 subprocess 实现。
 
-### 18.3 可选 Quality 加载规范
+### 18.8 可选 Quality 加载规范
 
 `quality/__init__.py` 必须保留全部公共名称、顺序和对象身份，并通过静态映射按首次访问加载定义模块。`quality.pytest_plugin` 保持稳定注册路径，但关闭或 collect-only 时不得加载 `pytest_plugin_runtime`。
 
@@ -817,7 +881,7 @@ Pipeline Conclusion：关注等级
 
 显式 FAILED/BLOCKED 不得被可解析、全绿或陈旧 JUnit 覆盖。Python Reporting 只解析一次 JUnit，并从同一个 `PipelineReport` 生成 Markdown、机器摘要和邮件内容。
 
-### 18.4 Artifact 信任边界规范
+### 18.9 Artifact 信任边界规范
 
 `util/artifact_io.py` 只拥有 UTF-8 JSON/JSONL 读取、原始文件字节 SHA256 和纯字段比较。Metrics、Flaky、Reporting、Aggregator 可复用这些原语，但必须由各自消费者翻译领域错误：
 
@@ -833,7 +897,9 @@ Pipeline Conclusion：关注等级
 离线用例只访问 `127.0.0.1`，但导入 `config.py` 时仍会校验环境变量。首次运行先复制语法合法的模板；离线 Request 不会使用其中的真实 URL 或 Key：
 
 ```powershell
-Copy-Item .env.example .env
+if (-not (Test-Path -LiteralPath '.env')) {
+  Copy-Item -LiteralPath '.env.example' -Destination '.env'
+}
 ```
 
 ### 19.1 确定性离线门禁
@@ -851,7 +917,7 @@ Copy-Item .env.example .env
 .\.venv\Scripts\python.exe run_master.py module/offline_framework_example -n 2
 ```
 
-当前收集事实应为 7 项并发、0 项串行。该数量用于确认当前 Request/Middleware/Retry 分类边界，不是后续新增分类时不可改变的永久合同。
+截至 2026-08-06，当前收集事实为 23 项并发、0 项串行，黄金 nodeid 只出现一次。该数量用于发现意外丢失，不是后续新增分类时不可改变的永久合同；长期门禁是集合守恒和职责边界不退化。
 
 ### 19.2 新模块收集检查
 
@@ -949,6 +1015,13 @@ Copy-Item .env.example .env
 [ ] 用例 nodeid 和参数 ID 稳定，适合 Flaky 历史比较
 [ ] collect-only 通过
 [ ] 能离线验证的请求生命周期优先复用 offline_framework_example，不复制公共实现
+[ ] 新能力先归入职责明确的分类文件
+[ ] 黄金路径只包含稳定成功主链，互斥异常仍留在分类用例
+[ ] 离线服务状态按实例隔离且不依赖随机 sleep
+[ ] 分类用例不导入 Quality、Metrics 或 Flaky 内部实现
+[ ] 当前离线收集快照与 README 已同步
+[ ] SCM Checkout 能够取得新增分类和黄金路径文件
+[ ] 本地、Jenkins、阶段发布和总方案状态分别记录
 [ ] 相关离线框架测试通过
 [ ] 启用 Pipeline Summary 时无来源告警，或告警已明确定位到对应机器数据
 [ ] Quality 关闭路径未加载重实现、未创建质量身份或产物，陈旧产物未污染本轮报告
