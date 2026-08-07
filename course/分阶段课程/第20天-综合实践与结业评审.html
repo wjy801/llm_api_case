@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang=zh-CN>
+<head>
+  <meta charset=utf-8>
+  <meta name='viewport' content='width=device-width, initial-scale=1'>
+  <meta name='description' content='接口测试框架四周学习课程第20天：小而完整的离线扩展、分类决策、证据链、默认门禁与结业评审'>
+  <title>第20天｜综合实践与结业评审</title>
+  <style>
+    :root{--ink:#172033;--muted:#5e6a7d;--line:#d9e3eb;--bg:#f3f7f9;--blue:#185fa5;--soft:#e8f3ff;--green:#17784a;--green-soft:#e7f8ef;--amber:#9a5b09;--amber-soft:#fff4d9;--red:#b4233e;--red-soft:#fff0f2;--slate:#40516a;--slate-soft:#edf2f8;--purple:#6f42c1;--purple-soft:#f1ebff;--nav:292px}
+    *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:26px}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.75 system-ui,-apple-system,'Segoe UI','Microsoft YaHei',sans-serif}a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}button,input,select,textarea{font:inherit}code{border-radius:5px;padding:.12em .38em;background:#edf2f8;color:#a52150;font:.9em/1.5 Consolas,monospace}pre{overflow:auto;border-radius:12px;padding:19px;background:#101827;color:#e7edf7;line-height:1.65}pre code{padding:0;background:none;color:inherit}h2{margin:0 0 14px;font-size:clamp(27px,3vw,38px);line-height:1.25}h3{margin:22px 0 8px}p{margin:9px 0}ul,ol{padding-left:1.4em}table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid var(--line);padding:12px;text-align:left;vertical-align:top}th{background:#f1f7fb}
+    .page-progress{position:fixed;inset:0 0 auto;z-index:60;height:4px;background:#dce8ef}.page-progress span{display:block;width:0;height:100%;background:linear-gradient(90deg,#06b6d4,#2563eb,#22c55e,#f59e0b)}.side{position:fixed;inset:4px auto 0 0;z-index:30;width:var(--nav);height:calc(100vh - 4px);padding:24px 18px;overflow:auto;background:#10283c;color:#e5f3ff}.mark{padding:0 10px 18px;border-bottom:1px solid #31516a}.mark small{color:#7dd3fc;letter-spacing:.12em}.mark h2{margin:5px 0;color:#fff;font-size:20px}.mark p{color:#adc5d7;font-size:13px}.nav{display:grid;gap:3px;margin-top:18px}.nav a{display:grid;grid-template-columns:25px 1fr;gap:8px;border-radius:8px;padding:9px 10px;color:#ccdeea;font-size:13px}.nav a:hover,.nav a.active{background:var(--blue);color:#fff;text-decoration:none}.num{color:#7dd3fc}.meter{margin:22px 10px}.meter-row{display:flex;justify-content:space-between;color:#b6ccd9;font-size:12px}.meter-track{height:7px;margin-top:7px;overflow:hidden;border-radius:9px;background:#365368}.meter-value{width:0;height:100%;background:#38bdf8}
+    .main{margin-left:var(--nav);padding:34px 42px 80px}.topbar{display:flex;justify-content:space-between;max-width:1140px;margin:0 auto 18px;color:var(--muted);font-size:14px}.toolbar,.footer-links{display:flex;gap:8px;flex-wrap:wrap}.button,.menu,.primary{border-radius:9px;padding:8px 12px;cursor:pointer}.button,.menu{border:1px solid var(--line);background:#fff;color:var(--muted)}.menu{display:none}.primary{border:0;background:var(--blue);color:#fff;font-weight:750}.lesson{max-width:1140px;margin:auto;overflow:hidden;border:1px solid #dfe8ee;border-radius:20px;background:#fff;box-shadow:0 18px 52px rgba(31,49,74,.1)}
+    .hero{position:relative;overflow:hidden;padding:66px 72px 57px;background:radial-gradient(circle at 86% 16%,rgba(196,181,253,.28),transparent 29%),linear-gradient(135deg,#102d4a,#185fa5 48%,#5b3294);color:#fff}.hero:after{content:'20';position:absolute;right:22px;bottom:-55px;color:rgba(255,255,255,.08);font:800 210px/1 system-ui}.eyebrow{color:#bae6fd;font-weight:800;letter-spacing:.12em}.hero h1{position:relative;z-index:1;max-width:940px;margin:0;font-size:clamp(38px,5vw,59px);line-height:1.14}.hero-lead{position:relative;z-index:1;max-width:930px;margin-top:18px;color:#e6f7ff;font-size:18px}.pills{position:relative;z-index:1;display:flex;flex-wrap:wrap;gap:9px;margin-top:25px}.pill{border:1px solid rgba(255,255,255,.3);border-radius:99px;padding:5px 10px;background:rgba(255,255,255,.1);font-size:13px}.outcome{position:relative;z-index:1;margin-top:25px;border-left:4px solid #c4b5fd;padding:13px 17px;background:rgba(8,39,59,.36)}
+    section{padding:52px 72px;border-top:1px solid var(--line)}.kicker{color:var(--blue);font-size:13px;font-weight:800;letter-spacing:.12em}.lead{color:var(--muted);font-size:17px}.grid2,.grid3,.notes,.result-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px;margin-top:20px}.grid3{grid-template-columns:repeat(3,minmax(0,1fr))}.card{border:1px solid var(--line);border-radius:14px;padding:18px;background:#fff}.card h3{margin:0 0 7px;font-size:17px}.card p{color:var(--muted)}.goal{display:flex;gap:13px}.goal b{display:grid;place-items:center;flex:0 0 34px;height:34px;border-radius:50%;background:var(--soft);color:var(--blue)}.callout{margin:18px 0;border-radius:12px;padding:16px 18px;border-left:4px solid var(--blue);background:var(--soft)}.callout.good{border-color:var(--green);background:var(--green-soft)}.callout.warn{border-color:var(--amber);background:var(--amber-soft)}.callout.bad{border-color:var(--red);background:var(--red-soft)}.callout.purple{border-color:var(--purple);background:var(--purple-soft)}
+    .flow{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;margin:20px 0}.flow span{display:flex;align-items:center;justify-content:center;min-height:54px;flex:1 1 128px;border:1px solid var(--line);border-radius:11px;padding:10px;text-align:center;background:#fff;font-weight:700}.flow i{align-self:center;color:#087a8f;font-style:normal;font-weight:900}.tree{margin:18px 0;border-radius:14px;padding:20px;background:#101827;color:#e7edf7;font:14px/1.75 Consolas,monospace;white-space:pre-wrap}.tag{display:inline-block;border-radius:99px;padding:2px 8px;background:var(--slate-soft);color:var(--slate);font-size:12px;font-weight:700}.tag.green{background:var(--green-soft);color:var(--green)}.tag.amber{background:var(--amber-soft);color:var(--amber)}.tag.red{background:var(--red-soft);color:var(--red)}.tag.purple{background:var(--purple-soft);color:var(--purple)}.matrix td:first-child{font-weight:750}
+    .steps{counter-reset:steps;display:grid;gap:14px;margin-top:18px}.step{position:relative;border:1px solid var(--line);border-radius:14px;padding:18px 18px 18px 62px;background:#fff}.step:before{counter-increment:steps;content:counter(steps);position:absolute;left:18px;top:18px;display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--blue);color:#fff;font-weight:800}.simulator{border:1px solid #cbd9e5;border-radius:16px;padding:20px;background:#f8fbfd}.sim-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.sim-controls select{min-width:330px;border:1px solid var(--line);border-radius:9px;padding:9px;background:#fff}.result{border:1px solid var(--line);border-radius:12px;padding:14px;background:#fff}.result small{display:block;color:var(--muted)}.result strong{display:block;margin-top:5px;color:var(--blue)}.verdict{margin-top:15px;border-radius:10px;padding:13px;background:var(--purple-soft);color:#4c2a85}.note{display:grid;gap:7px}.note textarea{min-height:112px;resize:vertical;border:1px solid var(--line);border-radius:10px;padding:11px;background:#fbfdff}
+    .rubric{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:20px 0}.rubric div{border:1px solid var(--line);border-radius:13px;padding:15px;text-align:center;background:#fff}.rubric strong{display:block;color:var(--blue);font-size:24px}.check-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.check-card{border:1px solid var(--line);border-radius:12px;padding:15px;background:#fff}.check-card strong{display:block;margin-bottom:4px}.chain{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:20px 0}.chain div{display:grid;place-items:center;min-height:74px;border:1px solid var(--line);border-radius:12px;padding:10px;text-align:center;font-weight:750;background:#fff}.chain .core{background:var(--soft);color:var(--blue)}.chain .evidence{background:var(--green-soft);color:var(--green)}
+    .quiz{margin:14px 0;border:1px solid var(--line);border-radius:14px;padding:18px}.quiz.correct{border-color:#79c99f;background:var(--green-soft)}.quiz.wrong{border-color:#e4aa75;background:var(--amber-soft)}.quiz label{display:block;margin:8px 0}.quiz-summary{margin-top:14px;border-radius:10px;padding:13px;background:var(--slate-soft)}.gate-list{display:grid;gap:10px}.gate-item{display:flex;gap:11px;border:1px solid var(--line);border-radius:11px;padding:13px;background:#fff}.gate-item input{margin-top:6px}.footer{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:30px;padding-top:20px;border-top:1px solid var(--line)}
+    @media(max-width:980px){:root{--nav:0px}.side{transform:translateX(-100%);width:292px;transition:.2s}.nav-open .side{transform:none}.main{margin-left:0;padding:20px}.menu{display:inline-block}.hero,section{padding:42px 28px}.grid3{grid-template-columns:1fr 1fr}.rubric{grid-template-columns:repeat(3,1fr)}}@media(max-width:680px){.topbar,.footer{align-items:flex-start;flex-direction:column}.hero{padding:45px 23px}.hero:after{font-size:150px}.hero h1{font-size:38px}section{padding:38px 22px}.grid2,.grid3,.notes,.result-grid,.check-grid,.chain,.rubric{grid-template-columns:1fr}.flow i{display:none}.sim-controls select{min-width:0;width:100%}th,td{padding:9px;font-size:14px}}
+  </style>
+</head>
+<body>
+  <div class='page-progress'><span id='page-progress'></span></div>
+  <aside class='side'><div class='mark'><small>接口测试框架课程</small><h2>第20天 · 用证据完成结业</h2><p>第4周 / 综合实践与结业评审</p></div><nav class='nav' id='nav'>
+    <a href='#contract'><span class='num'>01</span><span>结业合同与约束</span></a><a href='#scope'><span class='num'>02</span><span>选择最小扩展</span></a><a href='#chain'><span class='num'>03</span><span>完整调用链</span></a><a href='#classification'><span class='num'>04</span><span>分层与分类决策</span></a><a href='#determinism'><span class='num'>05</span><span>确定性场景设计</span></a><a href='#implementation'><span class='num'>06</span><span>实现与依赖边界</span></a><a href='#collection'><span class='num'>07</span><span>收集与分池计划</span></a><a href='#evidence'><span class='num'>08</span><span>证据栈与下钻</span></a><a href='#review'><span class='num'>09</span><span>结业评审量表</span></a><a href='#commands'><span class='num'>10</span><span>默认验收命令</span></a><a href='#quiz'><span class='num'>11</span><span>最终知识答辩</span></a><a href='#gate'><span class='num'>12</span><span>结业门禁</span></a>
+  </nav><div class='meter'><div class='meter-row'><span>结业门禁</span><span id='gate-text'>0/8</span></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div></aside>
+  <main class='main'><div class='topbar'><div><button class='menu' id='menu'>课程目录</button> 第20天 · 建议学习 3～4 小时</div><div class='toolbar'><a class='button' href='../接口测试框架四周学习课程.html'>课程大纲</a><button class='button' id='reset'>清除本课记录</button></div></div><article class='lesson'>
+    <header class='hero'><p class='eyebrow'>WEEK 4 · DAY 20</p><h1>综合实践与结业评审</h1><p class='hero-lead'>结业项目只做一个小而完整的离线扩展：范围可控、职责归位、结果确定、资源可回收，并能用collect、Runner、JUnit、Allure、Quality与Pipeline Summary组成证据闭环。</p><div class='pills'><span class='pill'>Small complete change</span><span class='pill'>Deterministic offline</span><span class='pill'>Correct classification</span><span class='pill'>Evidence chain</span><span class='pill'>Architecture gate</span></div><div class='outcome'><strong>最终交付：</strong>不是“写了多少代码”，而是能证明扩展没有复制核心实现、没有污染黄金路径、没有越过依赖边界，并在离线门禁中稳定通过。</div></header>
+
+    <section id='contract' data-section><p class='kicker'>01 · Graduation contract</p><h2>结业合同：一个扩展，七份成果，六组门禁</h2><p class='lead'>第一性原理：框架能力的价值来自可重复验证，而不是代码存在。结业项目必须同时证明需求、设计、实现、执行和证据都闭环。</p><div class='grid3'><div class='card goal'><b>1</b><div><h3>范围小</h3><p>只选择一个独立场景或一个缺失边界，不把结业项目变成框架重写。</p></div></div><div class='card goal'><b>2</b><div><h3>链路完整</h3><p>从测试数据、Task、Request、本地服务、断言到Runner和报告都能解释。</p></div></div><div class='card goal'><b>3</b><div><h3>证据可审计</h3><p>每个结论都有命令输出或机器产物，不用“我认为应该通过”代替验证。</p></div></div></div><div class='callout purple'><strong>TOC约束：</strong>范围过大 → 修改所有权扩散 → 分类与黄金路径混乱 → 门禁失败难以定位 → 结业证据无法闭环。最优策略不是增加功能，而是缩小到一个能完整证明的变化。</div><h3>必须提交的七项成果</h3><div class='check-grid'><div class='check-card'><strong>① 完整调用链图</strong>标出同步主链和Quality旁路。</div><div class='check-card'><strong>② 修改位置与原因</strong>每个文件都能对应一个单一职责。</div><div class='check-card'><strong>③ 对应分类用例</strong>互斥边界不塞入黄金路径。</div><div class='check-card'><strong>④ collect与分池说明</strong>证明nodeid唯一及并串行理由。</div><div class='check-card'><strong>⑤ 离线执行结果</strong>本地服务、Runner与回归有真实结果。</div><div class='check-card'><strong>⑥ 多层证据解释</strong>区分JUnit、Allure、Quality和Summary。</div><div class='check-card'><strong>⑦ 安全与架构自检</strong>脱敏、关闭、依赖方向和无重复实现。</div></div><div class='callout bad'><strong>明确禁止：</strong>不得新增第二套Request、Retry、Polling、Runner或Quality实现；不得为了展示“综合”而把失败、未知、超时等互斥场景全部塞进黄金路径。</div></section>
+
+    <section id='scope' data-section><p class='kicker'>02 · Scope selection</p><h2>先选最小可验证问题，再决定写代码</h2><p class='lead'>推荐优先级由高到低：现有确定性服务的新稳定场景、现有能力的缺失边界、复用公共实现的新模块骨架。越靠后，变更面和验证成本越高。</p><h3>项目范围选择器</h3><div class='simulator'><div class='sim-controls'><select id='scope-mode'><option value='scenario'>为现有确定性服务增加独立稳定场景</option><option value='boundary'>补充一个现有能力缺失的边界用例</option><option value='module'>设计规范化新模块骨架并复用公共实现</option><option value='second-request'>重新实现一套Request和Retry</option><option value='golden-errors'>把failure、unknown、timeout全部加入黄金路径</option><option value='real-api'>直接以真实付费接口作为结业项目</option></select><button class='primary' id='run-scope'>评估范围</button></div><div class='result-grid'><div class='result'><small>推荐等级</small><strong id='scope-rank'></strong></div><div class='result'><small>最小写入范围</small><strong id='scope-files'></strong></div><div class='result'><small>核心证据</small><strong id='scope-proof'></strong></div><div class='result'><small>风险</small><strong id='scope-risk'></strong></div></div><div class='verdict' id='scope-verdict'></div></div><h3>选题问题树</h3><div class='flow'><span>现有公共实现能否完成</span><i>是</i><span>能否只加场景或边界</span><i>是</i><span>归入既有分类</span><i>→</i><span>collect + 离线执行 + 回归</span></div><div class='notes'><label class='note'><strong>我的结业项目一句话目标</strong><textarea data-note='scope-goal'></textarea></label><label class='note'><strong>明确不做的三件事</strong><textarea data-note='scope-out'></textarea></label></div></section>
+
+    <section id='chain' data-section><p class='kicker'>03 · Full call chain</p><h2>调用链图必须同时画主链、生命周期和观察旁路</h2><div class='tree'>pytest case / fixture
+  → Test Data（Python类型、稳定参数ID）
+  → OfflineFrameworkTask（payload、策略、业务动作）
+  → OfflineFrameworkRequest（相对路径、runtime_metadata）
+  → common Request / Middleware / Retry / Polling
+  → 127.0.0.1 随机端口的OfflineService
+  → Response
+  → Assertions / Schema / Capture / TestContext cleanup
+  → pytest exit + Runner execution-result.json
+
+中性旁路：common.runtime_hooks
+  → Quality Case / Request facts（仅开启时）
+  → Semantic / Metrics / Flaky
+  → PipelineReport
+  → Markdown / JSON / Email</div><table><thead><tr><th>链路</th><th>必须说明</th><th>禁止做法</th></tr></thead><tbody>
+      <tr><td>业务主链</td><td>谁构造数据、谁发请求、谁解析业务状态、谁断言。</td><td>测试直接拼装重复的底层HTTP与重试实现。</td></tr>
+      <tr><td>资源生命周期</td><td>服务、Session、Response、线程、临时目录和cleanup何时关闭。</td><td>依赖进程退出回收资源。</td></tr>
+      <tr><td>运行编排</td><td>collect如何形成计划、并串行如何互斥、每个nodeid执行几次。</td><td>用控制台文本代替权威计划。</td></tr>
+      <tr><td>观察旁路</td><td>Runtime Hooks保持中性，Quality关闭时不创建身份和产物。</td><td>业务分类用例直接导入Quality、Metrics或Flaky内部实现。</td></tr>
+      <tr><td>报告下钻</td><td>Summary如何回到JUnit、Allure和Quality机器证据。</td><td>新增第二份人工汇总报告。</td></tr>
+    </tbody></table><div class='callout good'><strong>图的验收方式：</strong>随机指向任意箭头，都能回答“输入是什么、所有者是谁、失败如何传播、资源由谁收尾、证据写到哪里”。答不出的位置就是设计债务。</div></section>
+
+    <section id='classification' data-section><p class='kicker'>04 · Classification routing</p><h2>用例文件回答“哪一项职责失效”，黄金路径只回答“组合能否成立”</h2><table><thead><tr><th>要验证的能力</th><th>首选归属</th><th>原因</th></tr></thead><tbody>
+      <tr><td>本地服务协议、实例隔离、线程回收</td><td><code>tests/test_offline_service.py</code></td><td>先证明测试替身本身可信。</td></tr>
+      <tr><td>Request、Middleware、Header和payload不变性</td><td><code>test_request_pipeline.py</code></td><td>定位请求管线单一职责。</td></tr>
+      <tr><td>重试资格、Retry-After、幂等POST</td><td><code>test_retry.py</code></td><td>互斥重试规则不污染其他分类。</td></tr>
+      <tr><td>轮询成功、失败、未知和deadline</td><td><code>test_polling.py</code></td><td>状态机边界集中可读。</td></tr>
+      <tr><td>提取、转换、LIFO cleanup和多错误</td><td><code>test_context_cleanup.py</code></td><td>上下文与资源收尾有独立失败语义。</td></tr>
+      <tr><td>Capture、Schema、脱敏诊断</td><td><code>test_capture_assertions.py</code></td><td>输出和断言边界集中。</td></tr>
+      <tr><td>ContextVar、Session和Header并发隔离</td><td><code>test_concurrency_context.py</code></td><td>专门验证并发所有权。</td></tr>
+      <tr><td>稳定成功主链组合</td><td><code>test_full_framework_flow.py</code></td><td>黄金路径只保留唯一稳定成功链。</td></tr>
+    </tbody></table><h3>分类路由器</h3><div class='simulator'><div class='sim-controls'><select id='class-mode'><option value='retry'>新增“503后按Retry-After恢复”边界</option><option value='poll-fail'>新增轮询业务失败状态</option><option value='cleanup'>新增cleanup连续失败场景</option><option value='concurrency'>新增线程池Context传播隔离</option><option value='service'>新增OfflineService协议或回收规则</option><option value='golden'>新增稳定成功业务主链</option><option value='report'>新增另一份HTML人工质量报告</option></select><button class='primary' id='run-class'>选择归属</button></div><div class='result-grid'><div class='result'><small>目标文件</small><strong id='class-file'></strong></div><div class='result'><small>用例类型</small><strong id='class-type'></strong></div><div class='result'><small>是否进入黄金路径</small><strong id='class-golden'></strong></div><div class='result'><small>评审结论</small><strong id='class-result'></strong></div></div><div class='verdict' id='class-verdict'></div></div><div class='callout warn'><strong>新增文件门槛：</strong>只有形成独立、稳定、长期可命名的职责合同时才新建分类文件；否则优先归入现有分类。文件数量不是架构质量，单一职责才是。</div></section>
+
+    <section id='determinism' data-section><p class='kicker'>05 · Deterministic scenario</p><h2>离线场景必须冻结输入、序列、时间和资源</h2><p class='lead'>当前<code>OfflineService</code>使用Python标准库在<code>127.0.0.1</code>随机端口启动，九个冻结场景覆盖Echo、429/503、幂等POST、Polling和超限下载；状态按服务实例隔离。</p><div class='grid2'><div class='card'><h3>场景合同</h3><ul><li>请求输入固定，ID与参数名稳定；</li><li>HTTP和业务状态序列明确；</li><li>调用次数与重试次数可断言；</li><li>等待由记录器或小而有界的deadline控制；</li><li>输出bytes、Hash和Schema固定。</li></ul></div><div class='card'><h3>资源合同</h3><ul><li>只绑定IPv4 loopback随机端口；</li><li>服务状态不跨实例共享；</li><li>并发计数使用锁保护；</li><li>Session、Response、线程和服务显式关闭；</li><li>fixture teardown即使断言失败也执行。</li></ul></div></div><h3>场景设计模板</h3><pre><code>场景名称：稳定、唯一、可读
+初始状态：计数器 / task状态 / 固定资源
+输入：相对路径 + Python payload + 请求级Header
+响应序列：HTTP状态 + 业务状态 + 固定body
+预期：调用次数、状态迁移、Capture、Runtime事件
+时间：无随机sleep；明确retry wait或poll deadline
+收尾：Response / Session / Thread / Service / TempDir
+失败证据：断言消息脱敏且能定位字段路径</code></pre><table><thead><tr><th>反模式</th><th>为什么不确定</th><th>正确替代</th></tr></thead><tbody>
+      <tr><td>依赖公网服务或真实账号</td><td>网络、余额、数据和服务版本不可控。</td><td>本地确定性服务模拟最小协议。</td></tr>
+      <tr><td>用随机sleep等待状态</td><td>机器负载变化导致偶发超时。</td><td>固定序列、记录等待或总deadline。</td></tr>
+      <tr><td>模块级可变计数器</td><td>用例顺序和并发会互相污染。</td><td>状态归属于每个OfflineService实例。</td></tr>
+      <tr><td>失败时跳过close</td><td>后续测试继承连接和线程。</td><td>fixture yield、finally或cleanup栈。</td></tr>
+    </tbody></table><div class='notes'><label class='note'><strong>我的场景输入与冻结响应序列</strong><textarea data-note='scenario-sequence'></textarea></label><label class='note'><strong>我的资源关闭和失败恢复路径</strong><textarea data-note='scenario-cleanup'></textarea></label></div></section>
+
+    <section id='implementation' data-section><p class='kicker'>06 · Ownership and dependencies</p><h2>修改最少文件，但每个职责必须有唯一所有者</h2><table class='matrix'><thead><tr><th>变更类型</th><th>典型修改位置</th><th>边界</th></tr></thead><tbody>
+      <tr><td>新增服务场景</td><td><code>offline_service.py</code> + 对应服务/分类测试</td><td>不复制HTTP Server、状态仓库或fixture生命周期。</td></tr>
+      <tr><td>新增分类边界</td><td>一个既有<code>test_*.py</code>，必要时复用Task/Assertion</td><td>不要为了单条测试扩张公共Base类。</td></tr>
+      <tr><td>新增模块骨架</td><td><code>__init__.py/request.py/assertions.py/decorators.py/task.py/test_*.py</code></td><td>四件套是真实类，复用公共实现与离线服务。</td></tr>
+      <tr><td>新增通用断言或Schema</td><td>现有公共断言/Schema所有者</td><td>先证明是跨场景稳定合同，不把业务特例上移。</td></tr>
+    </tbody></table><div class='grid3'><div class='card'><h3>依赖方向</h3><p>业务模块依赖<code>common</code>公共API；不得导入Quality或Runner内部实现。手动观察使用中性Runtime Hooks。</p></div><div class='card'><h3>安全与脱敏</h3><p>相对路径、无真实Key、无完整域名；Header、URL查询、body和诊断遵守脱敏策略。</p></div><div class='card'><h3>资源所有权</h3><p>谁创建Request、Session、Response、线程或临时目录，谁必须明确关闭或注册cleanup。</p></div></div><div class='callout bad'><strong>架构红线：</strong>第二套pytest生命周期、第二套Runner、第二套重试器、业务用例直接写Quality事实、简单别名伪装四件套类、或新增并行人工报告，任一项出现都应退回设计阶段。</div><h3>修改说明模板</h3><pre><code>文件：workspace-relative/path.py
+职责：该文件唯一拥有的行为
+原因：为什么现有公共API不足以仅通过测试表达
+复用：使用了哪些已有Request / Task capability / fixture
+不修改：明确哪些核心所有者保持不变
+验证：由哪条分类测试与哪组门禁保护</code></pre></section>
+
+    <section id='collection' data-section><p class='kicker'>07 · Collection and pools</p><h2>先证明收集计划正确，再允许Runner真正执行</h2><div class='tree'>all collected nodeids
+  = parallel pool ∪ serial pool
+
+parallel pool ∩ serial pool = ∅
+每个nodeid最多执行一次
+expected_case_count = 最终权威计划数量</div><table><thead><tr><th>场景属性</th><th>池选择</th><th>理由</th></tr></thead><tbody>
+      <tr><td>实例隔离、本地服务、独立Session</td><td>parallel</td><td>无共享可变业务状态，优先并发。</td></tr>
+      <tr><td>账单、余额、共享账号、延迟结算</td><td>serial</td><td>存在跨用例共享状态或顺序约束。</td></tr>
+      <tr><td>专门验证线程并发隔离</td><td>parallel</td><td>测试内部并发不代表Runner外层必须串行，前提是实例独立。</td></tr>
+      <tr><td>无法说明资源所有权</td><td>阻断</td><td>不能用serial掩盖未知竞争，应先修设计。</td></tr>
+    </tbody></table><h3>分池决策器</h3><div class='simulator'><div class='sim-controls'><select id='pool-mode'><option value='isolated'>独立OfflineService与Request</option><option value='billing'>读取并修改共享账号余额</option><option value='thread'>用submit_with_context验证线程隔离</option><option value='polling'>每个用例拥有独立轮询任务状态</option><option value='env'>临时修改进程环境且未恢复</option><option value='unknown'>不清楚Session由谁关闭</option></select><button class='primary' id='run-pool'>决定分池</button></div><div class='result-grid'><div class='result'><small>建议池</small><strong id='pool-value'></strong></div><div class='result'><small>决定依据</small><strong id='pool-reason'></strong></div><div class='result'><small>collect证据</small><strong id='pool-proof'></strong></div><div class='result'><small>前置修复</small><strong id='pool-fix'></strong></div></div><div class='verdict' id='pool-verdict'></div></div><div class='callout good'><strong>当前快照：</strong>截至2026-08-06，离线模块为23项并发、0项串行，黄金nodeid一次。新增分类后数量可以变化；永久合同是集合守恒、职责边界和nodeid唯一，不是永远保持23。</div><div class='callout warn'><strong>collect-only边界：</strong>只收集和分池，不启动正式执行池、不调用真实接口、不创建Quality run_id或质量产物，也不应清理或生成Allure制品。</div></section>
+
+    <section id='evidence' data-section><p class='kicker'>08 · Evidence stack</p><h2>不同证据回答不同问题，不能互相替代</h2><div class='chain'><div class='core'>Source + 分类测试</div><div class='core'>collect / execution-result</div><div class='evidence'>JUnit + Allure</div><div class='evidence'>Quality + Pipeline Summary</div></div><table><thead><tr><th>证据</th><th>回答的问题</th><th>不能证明</th></tr></thead><tbody>
+      <tr><td>调用链图与修改说明</td><td>设计是否符合所有权与依赖方向。</td><td>代码真实可收集、可执行。</td></tr>
+      <tr><td>collect-only</td><td>nodeid、导入、分类、并串行计划是否正确。</td><td>请求和断言实际通过。</td></tr>
+      <tr><td>Runner execution-result</td><td>最终计划、池级原始退出码和执行次数。</td><td>具体断言为何失败。</td></tr>
+      <tr><td>JUnit</td><td>总数、通过、失败、错误、跳过与失败详情。</td><td>业务步骤、请求附件和完整质量语义。</td></tr>
+      <tr><td>Allure</td><td>用例步骤、请求、响应、附件和人工排查上下文。</td><td>权威pytest退出码和跨run历史。</td></tr>
+      <tr><td>Quality / Semantic / Metrics / Flaky</td><td>Case、Request、Operation、完整性、指标和稳定性诊断。</td><td>改写用例通过或Jenkins结果。</td></tr>
+      <tr><td>Pipeline Summary</td><td>本轮参数、阶段、直接观测结论和下钻入口。</td><td>替代机器事实或建立第二套结果。</td></tr>
+    </tbody></table><h3>证据下钻顺序</h3><div class='flow'><span>Pipeline Summary</span><i>→</i><span>JUnit统计</span><i>→</i><span>Allure具体用例</span><i>→</i><span>Quality Manifest与JSONL</span><i>→</i><span>Runner原始退出事实</span></div><div class='callout warn'><strong>不要反向推导：</strong>Pipeline Summary显示PASS，不代表所有Request都成功；JUnit用例通过，不代表负向用例中的业务请求成功；Metrics缺失也不能被写成0。</div><h3>结业证据清单</h3><div class='check-grid'><div class='check-card'><strong>设计证据</strong>调用链、范围、修改理由、依赖方向。</div><div class='check-card'><strong>收集证据</strong>总数、parallel/serial、黄金nodeid次数。</div><div class='check-card'><strong>执行证据</strong>离线服务、Runner、Quality和完整回归结果。</div><div class='check-card'><strong>诊断证据</strong>JUnit、Allure、Quality与Summary职责说明。</div></div></section>
+
+    <section id='review' data-section><p class='kicker'>09 · Review rubric</p><h2>结业评审先看硬门禁，再看100分质量量表</h2><div class='rubric'><div><strong>25</strong>架构边界</div><div><strong>15</strong>分类准确</div><div><strong>20</strong>确定性与资源</div><div><strong>25</strong>验证与证据</div><div><strong>15</strong>安全与可维护性</div></div><table><thead><tr><th>维度</th><th>满分标准</th><th>常见扣分</th></tr></thead><tbody>
+      <tr><td>架构边界</td><td>复用现有Request/Retry/Polling/Runner/Quality，依赖方向正确。</td><td>重复实现、业务反向依赖内部模块。</td></tr>
+      <tr><td>分类准确</td><td>边界归入正确分类，黄金路径只含稳定成功链。</td><td>所有场景堆入一个文件或黄金路径。</td></tr>
+      <tr><td>确定性与资源</td><td>固定输入与序列、实例隔离、无随机等待、资源全关闭。</td><td>共享计数、睡眠竞态、线程或Session泄漏。</td></tr>
+      <tr><td>验证与证据</td><td>六组命令通过，能从Summary下钻到机器事实。</td><td>只运行单条用例，未做collect或完整回归。</td></tr>
+      <tr><td>安全与可维护性</td><td>无真实Key/域名，诊断脱敏，nodeid稳定，修改说明清楚。</td><td>硬编码敏感信息、参数ID漂移、无变更理由。</td></tr>
+    </tbody></table><div class='callout bad'><strong>硬门禁优先：</strong>出现第二套核心实现、未经授权的真实调用、敏感信息、资源泄漏、collect失败、完整回归失败或架构反向依赖时，不计算总分，结论直接为未通过。</div><h3>提交状态评估器</h3><div class='simulator'><div class='sim-controls'><select id='review-mode'><option value='code-only'>只有代码和单条用例通过</option><option value='collect-only'>代码、分类与collect通过，尚未离线执行</option><option value='partial-tests'>离线Runner通过，但tests完整回归失败</option><option value='duplicate'>功能通过，但新增第二套Retry实现</option><option value='real'>真实接口通过，但没有费用授权</option><option value='complete'>七项成果齐全，六组命令通过</option></select><button class='primary' id='run-review'>评审</button></div><div class='result-grid'><div class='result'><small>结业状态</small><strong id='review-status'></strong></div><div class='result'><small>主要约束</small><strong id='review-blocker'></strong></div><div class='result'><small>下一步</small><strong id='review-next'></strong></div><div class='result'><small>评分处理</small><strong id='review-score'></strong></div></div><div class='verdict' id='review-verdict'></div></div></section>
+
+    <section id='commands' data-section><p class='kicker'>10 · Default acceptance</p><h2>六组默认验收命令：从最小协议到完整回归</h2><p class='lead'>按失败定位成本从低到高执行。任何一步失败都先修复根因，不要跳到后续命令用更多输出掩盖第一个约束。</p><div class='callout warn'><strong>环境准备：</strong>离线模块只访问loopback，但导入配置仍要求语法合法的环境文件。若本地没有<code>.env</code>，先从<code>.env.example</code>复制；不要填入或提交真实密钥。</div><pre><code>if (-not (Test-Path -LiteralPath '.env')) {
+  Copy-Item -LiteralPath '.env.example' -Destination '.env'
+}</code></pre><h3>1. 确定性服务协议与资源回收</h3><pre><code>.\.venv\Scripts\python.exe -m pytest tests/test_offline_service.py -q</code></pre><h3>2. 离线分类收集与分池</h3><pre><code>.\.venv\Scripts\python.exe run_master.py `
+  module/offline_framework_example `
+  --collect-only -q</code></pre><h3>3. Runner并发执行离线分类</h3><pre><code>.\.venv\Scripts\python.exe run_master.py `
+  module/offline_framework_example -n 2</code></pre><h3>4. Quality专项回归</h3><pre><code>.\.venv\Scripts\python.exe -m pytest tests/quality -q</code></pre><h3>5. 完整框架回归</h3><pre><code>.\.venv\Scripts\python.exe -m pytest tests -q</code></pre><h3>6. 真实Smoke只收集不执行</h3><pre><code>.\.venv\Scripts\python.exe run_master.py module/smoke --collect-only -q</code></pre><div class='callout bad'><strong>不可越界：</strong><code>module/smoke --collect-only</code>只能验证收集和分池。除非明确获得真实环境、账号、费用和风险授权，否则不得去掉<code>--collect-only</code>。</div><table><thead><tr><th>命令</th><th>通过时证明</th><th>失败时优先检查</th></tr></thead><tbody>
+      <tr><td>offline service</td><td>本地协议、实例隔离和线程回收可信。</td><td>场景合同、端口、锁、shutdown。</td></tr>
+      <tr><td>offline collect</td><td>导入、nodeid、分类和分池正确。</td><td>pytest收集规则、marker、初始化副作用。</td></tr>
+      <tr><td>offline run</td><td>四件套与公共核心在真实Runner链上成立。</td><td>Request所有权、断言、资源和池退出码。</td></tr>
+      <tr><td>quality tests</td><td>观察、归并、Metrics、Flaky和Reporting边界未回退。</td><td>来源合同、依赖方向、版本与Hash。</td></tr>
+      <tr><td>tests</td><td>扩展没有破坏完整框架合同。</td><td>第一个失败，而不是最后一个摘要。</td></tr>
+      <tr><td>smoke collect</td><td>真实业务模块仍可收集且分池。</td><td>导入、marker和环境配置；绝不真实执行。</td></tr>
+    </tbody></table><div class='callout good'><strong>基线解释：</strong>2026-08-06快照为离线23项并发/0串行、完整tests 686项、Smoke collect 40项（15并发/25串行）。结业扩展可能合理改变数量，评审关注集合守恒、职责边界和文档同步。</div><div class='notes'><label class='note'><strong>记录六组命令的实际结果与耗时</strong><textarea data-note='commands-result'></textarea></label><label class='note'><strong>若数量变化，解释新增/删除nodeid及分池原因</strong><textarea data-note='commands-count'></textarea></label></div></section>
+
+    <section id='quiz' data-section><p class='kicker'>11 · Final defense</p><h2>最终知识答辩</h2>
+      <div class='quiz' data-answer='b'><strong>1. 最优先的结业选题是什么？</strong><label><input type='radio' name='q1' value='a'> 重写Request与Retry</label><label><input type='radio' name='q1' value='b'> 在现有确定性服务中增加独立稳定场景</label><label><input type='radio' name='q1' value='c'> 直接执行完整真实Smoke</label></div>
+      <div class='quiz' data-answer='c'><strong>2. Polling failure与timeout应该放在哪里？</strong><label><input type='radio' name='q2' value='a'> 全部加入黄金路径</label><label><input type='radio' name='q2' value='b'> Pipeline Summary渲染器</label><label><input type='radio' name='q2' value='c'> 对应Polling分类用例</label></div>
+      <div class='quiz' data-answer='a'><strong>3. collect-only通过证明了什么？</strong><label><input type='radio' name='q3' value='a'> 导入、nodeid和分池计划成立，但不证明请求执行通过</label><label><input type='radio' name='q3' value='b'> 所有接口调用成功</label><label><input type='radio' name='q3' value='c'> Quality和Allure一定已生成</label></div>
+      <div class='quiz' data-answer='b'><strong>4. 哪类用例通常需要serial？</strong><label><input type='radio' name='q4' value='a'> 所有轮询用例</label><label><input type='radio' name='q4' value='b'> 修改共享余额、账号或延迟结算状态的用例</label><label><input type='radio' name='q4' value='c'> 使用本地随机端口的独立服务</label></div>
+      <div class='quiz' data-answer='c'><strong>5. 业务分类用例需要观察事件时应该怎么做？</strong><label><input type='radio' name='q5' value='a'> 直接导入quality.flaky_store</label><label><input type='radio' name='q5' value='b'> 手工写Quality JSONL</label><label><input type='radio' name='q5' value='c'> 使用common.runtime_hooks中性API</label></div>
+      <div class='quiz' data-answer='a'><strong>6. JUnit、Allure、Quality和Pipeline Summary的正确关系是什么？</strong><label><input type='radio' name='q6' value='a'> 分别提供统计、排查上下文、机器诊断和人工入口</label><label><input type='radio' name='q6' value='b'> 四者都可以改写pytest退出码</label><label><input type='radio' name='q6' value='c'> 有Summary后其他产物都可删除</label></div>
+      <div class='quiz' data-answer='b'><strong>7. 离线Runner通过，但完整tests存在失败，能否结业？</strong><label><input type='radio' name='q7' value='a'> 可以，新增用例通过即可</label><label><input type='radio' name='q7' value='b'> 不可以，必须定位并消除由扩展造成的回归</label><label><input type='radio' name='q7' value='c'> 把失败标记skip即可</label></div>
+      <div class='quiz' data-answer='c'><strong>8. 最后一个Smoke命令为什么必须保留--collect-only？</strong><label><input type='radio' name='q8' value='a'> 因为Runner不支持真实执行</label><label><input type='radio' name='q8' value='b'> 因为JUnit无法生成</label><label><input type='radio' name='q8' value='c'> 因为未获得真实环境、账号与费用授权时只能验证收集分池</label></div>
+      <button class='primary' id='submit-quiz'>提交答案</button><div class='quiz-summary' id='quiz-summary'>尚未提交。</div>
+    </section>
+
+    <section id='gate' data-section><p class='kicker'>12 · Graduation gate</p><h2>第4周暨课程结业门禁</h2><div class='gate-list'>
+      <label class='gate-item'><input type='checkbox' data-gate='hooks'><span>我能解释中性Runtime Hooks如何转换为Quality事实，且关闭时不产生身份和产物。</span></label>
+      <label class='gate-item'><input type='checkbox' data-gate='facts'><span>我能区分Case、Request、Operation、Request Group和Polling Session。</span></label>
+      <label class='gate-item'><input type='checkbox' data-gate='success'><span>我能区分HTTP成功、业务成功、用例通过和Pipeline成功。</span></label>
+      <label class='gate-item'><input type='checkbox' data-gate='metrics'><span>我能解释Metrics完整性、分母和缺失值不等于0。</span></label>
+      <label class='gate-item'><input type='checkbox' data-gate='flaky'><span>我能画出Flaky自动检测与人工治理状态机，并解释epoch。</span></label>
+      <label class='gate-item'><input type='checkbox' data-gate='report'><span>我能区分NOT_RUN与NO_DATA，并说明事实优先级。</span></label>
+      <label class='gate-item'><input type='checkbox' data-gate='drill'><span>我能从Pipeline Summary下钻到JUnit、Allure、Quality与Runner机器证据。</span></label>
+      <label class='gate-item'><input type='checkbox' data-gate='extension'><span>我已完成一个不复制核心实现、可离线复现且六组门禁通过的小扩展。</span></label>
+    </div><div class='callout good'><strong>最终验收句：</strong>我能在不新增第二套核心实现的前提下，把一个小型离线需求放到正确层和分类中，用确定性服务、稳定nodeid、显式资源所有权和安全数据完成实现，再通过collect、Runner、JUnit、Allure、Quality、Pipeline Summary及完整回归证明它可信。</div><h3>结业提交摘要</h3><div class='notes'><label class='note'><strong>项目名称、范围与最终结论</strong><textarea data-note='final-summary'></textarea></label><label class='note'><strong>最重要的一条架构取舍与证据</strong><textarea data-note='final-decision'></textarea></label></div><div class='footer'><div class='footer-links'><a class='button' href='第19天-流水线报告与持续集成.html'>← 上一课</a><a class='button' href='../接口测试框架四周学习课程.html'>返回课程大纲</a></div><span class='tag green'>四周课程完成</span></div></section>
+  </article></main>
+  <script>
+    (function(){
+      var prefix='api-case-course-day20-';
+      var scopeData={
+        scenario:['优先级1','offline_service.py + 服务合同/对应分类测试','固定场景、调用次数、资源回收、六组门禁','低','推荐。最小化修改面，同时能证明协议、公共能力、分类与证据链。'],
+        boundary:['优先级2','一个既有分类文件；必要时复用Task或Assertion','边界用例 + collect + 离线Runner + 完整回归','中','可接受。必须证明这是现有能力缺口，而不是重复已有用例。'],
+        module:['优先级3','规范四件套、__init__、分类测试，复用离线服务','模块collect、执行、依赖边界和完整回归','较高','可接受但范围较大。先确认场景或边界无法表达目标。'],
+        'second-request':['拒绝','会形成新的Request/Retry所有者','即使单测通过也无法证明架构正确','极高','违反结业硬约束。应复用BaseRequest、公共Retry和现有Task capability。'],
+        'golden-errors':['拒绝','错误扩张test_full_framework_flow.py','黄金路径变得多分支且难定位','高','互斥异常必须留在职责明确的分类用例，黄金路径只保留稳定成功主链。'],
+        'real-api':['阻断','真实环境、账号、费用和外部状态','结果不可重复且可能产生费用','极高','没有明确授权不能作为默认结业项目。先用OfflineService复现协议。']
+      };
+      function renderScope(){var item=scopeData[document.getElementById('scope-mode').value];document.getElementById('scope-rank').textContent=item[0];document.getElementById('scope-files').textContent=item[1];document.getElementById('scope-proof').textContent=item[2];document.getElementById('scope-risk').textContent=item[3];document.getElementById('scope-verdict').textContent=item[4];}
+      document.getElementById('run-scope').onclick=renderScope;document.getElementById('scope-mode').onchange=renderScope;renderScope();
+      var classData={
+        retry:['test_retry.py','能力分类','否','通过','重试资格和等待属于Retry单一职责；不要加入黄金路径。'],
+        'poll-fail':['test_polling.py','能力分类','否','通过','业务失败、unknown和timeout是互斥状态机边界。'],
+        cleanup:['test_context_cleanup.py','能力分类','否','通过','cleanup顺序与错误归并应在上下文分类中定位。'],
+        concurrency:['test_concurrency_context.py','并发分类','否','通过','Context与Session隔离需要专门的并发所有权证据。'],
+        service:['tests/test_offline_service.py','测试替身合同','否','通过','先证明OfflineService协议、实例隔离或资源回收本身可信。'],
+        golden:['test_full_framework_flow.py','稳定组合主链','是，仅稳定成功链','条件通过','只有已被分类验证的能力才能组合进入黄金路径。'],
+        report:['禁止新增','重复人工报告','否','拒绝','Pipeline Summary是唯一人工质量入口；新机器事实应进入既有来源合同。']
+      };
+      function renderClass(){var item=classData[document.getElementById('class-mode').value];document.getElementById('class-file').textContent=item[0];document.getElementById('class-type').textContent=item[1];document.getElementById('class-golden').textContent=item[2];document.getElementById('class-result').textContent=item[3];document.getElementById('class-verdict').textContent=item[4];}
+      document.getElementById('run-class').onclick=renderClass;document.getElementById('class-mode').onchange=renderClass;renderClass();
+      var poolData={
+        isolated:['parallel','服务、状态和Session均按用例实例隔离','nodeid只出现在parallel计划一次','无','并发优先是默认策略，独立资源无需serial。'],
+        billing:['serial','余额与账号是跨用例共享业务状态','nodeid只出现在serial计划一次','标记serial并说明结算顺序','串行是业务约束，不是性能优化。'],
+        thread:['parallel','用例内部并发使用submit_with_context且外部资源独立','parallel计划中唯一nodeid','验证线程池关闭和Context传播','测试并发能力不等于Runner必须串行。'],
+        polling:['parallel','每个服务实例拥有独立task游标和计数','parallel计划中唯一nodeid','设置有界poll_timeout','独立轮询状态可以安全并发。'],
+        env:['阻断','进程环境是共享可变状态且未恢复','collect不能证明运行隔离','改用上下文管理并在finally恢复','不能用serial长期掩盖环境污染。'],
+        unknown:['阻断','资源所有权未知','不得进入最终执行计划','明确fixture yield或teardown关闭Session','先解决所有权，再决定并串行。']
+      };
+      function renderPool(){var item=poolData[document.getElementById('pool-mode').value];document.getElementById('pool-value').textContent=item[0];document.getElementById('pool-reason').textContent=item[1];document.getElementById('pool-proof').textContent=item[2];document.getElementById('pool-fix').textContent=item[3];document.getElementById('pool-verdict').textContent=item[4];}
+      document.getElementById('run-pool').onclick=renderPool;document.getElementById('pool-mode').onchange=renderPool;renderPool();
+      var reviewData={
+        'code-only':['未通过','缺少collect、Runner、回归和多层证据','补齐七项成果与六组门禁','不评分','代码存在不等于框架扩展可信。先建立最小执行与证据闭环。'],
+        'collect-only':['未完成','只证明可收集，未证明请求和断言执行','运行离线服务、Runner及回归','暂缓评分','collect是执行前门禁，不是最终验收。'],
+        'partial-tests':['阻断','完整tests存在回归','定位第一个失败并判断是否由扩展造成','不评分','局部成功不能覆盖全局合同回退。'],
+        duplicate:['拒绝','新增第二套Retry所有者','删除重复实现并复用公共Retry','不评分','这是硬门禁，不因功能测试通过而放行。'],
+        real:['拒绝','缺少真实环境与费用授权','回到确定性OfflineService','不评分','真实调用成功不能补偿安全和可重复性缺失。'],
+        complete:['通过评审','无硬门禁，证据闭环','按100分量表复核说明质量','进入评分','七项成果齐全且六组命令通过，具备结业条件。']
+      };
+      function renderReview(){var item=reviewData[document.getElementById('review-mode').value];document.getElementById('review-status').textContent=item[0];document.getElementById('review-blocker').textContent=item[1];document.getElementById('review-next').textContent=item[2];document.getElementById('review-score').textContent=item[3];document.getElementById('review-verdict').textContent=item[4];}
+      document.getElementById('run-review').onclick=renderReview;document.getElementById('review-mode').onchange=renderReview;renderReview();
+      var notes=Array.from(document.querySelectorAll('[data-note]'));notes.forEach(function(note){note.value=localStorage.getItem(prefix+'note-'+note.dataset.note)||'';note.oninput=function(){localStorage.setItem(prefix+'note-'+note.dataset.note,note.value);};});
+      var gates=Array.from(document.querySelectorAll('[data-gate]'));function updateGate(){var count=gates.filter(function(item){return item.checked;}).length;document.getElementById('gate-text').textContent=count+'/'+gates.length;document.getElementById('gate-value').style.width=(count/gates.length*100)+'%';}gates.forEach(function(item){item.checked=localStorage.getItem(prefix+'gate-'+item.dataset.gate)==='1';item.onchange=function(){localStorage.setItem(prefix+'gate-'+item.dataset.gate,item.checked?'1':'0');updateGate();};});updateGate();
+      document.getElementById('submit-quiz').onclick=function(){var cards=Array.from(document.querySelectorAll('.quiz')),score=0;cards.forEach(function(card){var selected=card.querySelector('input:checked'),ok=selected&&selected.value===card.dataset.answer;card.classList.toggle('correct',!!ok);card.classList.toggle('wrong',!ok);if(ok)score++;});var output=document.getElementById('quiz-summary');output.textContent=score>=7?score+'/8：答辩达标，请完成八项结业门禁和实际项目证据。':score+'/8：未达标，请回看选题范围、分类、分池、证据职责与安全边界。';output.style.background=score>=7?'var(--green-soft)':'var(--amber-soft)';};
+      document.getElementById('reset').onclick=function(){if(!confirm('确认清除第20课记录？'))return;Object.keys(localStorage).filter(function(key){return key.startsWith(prefix);}).forEach(function(key){localStorage.removeItem(key);});notes.forEach(function(note){note.value='';});gates.forEach(function(item){item.checked=false;});document.querySelectorAll('.quiz').forEach(function(card){card.classList.remove('correct','wrong');card.querySelectorAll('input').forEach(function(input){input.checked=false;});});var summary=document.getElementById('quiz-summary');summary.textContent='尚未提交。';summary.removeAttribute('style');updateGate();};
+      document.getElementById('menu').onclick=function(){document.body.classList.toggle('nav-open');};var links=Array.from(document.querySelectorAll('.nav a')),map=new Map(links.map(function(link){return[link.hash.slice(1),link];}));var observer=new IntersectionObserver(function(entries){var visible=entries.filter(function(entry){return entry.isIntersecting;}).sort(function(left,right){return left.boundingClientRect.top-right.boundingClientRect.top;});if(!visible.length)return;links.forEach(function(link){link.classList.remove('active');});var current=map.get(visible[0].target.id);if(current)current.classList.add('active');},{rootMargin:'-8% 0px -78% 0px',threshold:[0,1]});document.querySelectorAll('[data-section]').forEach(function(section){observer.observe(section);});document.getElementById('nav').onclick=function(){document.body.classList.remove('nav-open');};addEventListener('scroll',function(){var max=document.documentElement.scrollHeight-innerHeight;document.getElementById('page-progress').style.width=(max?scrollY/max*100:0)+'%';},{passive:true});
+    })();
+  </script>
+</body>
+</html>

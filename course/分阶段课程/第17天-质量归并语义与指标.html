@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang=zh-CN>
+<head>
+  <meta charset=utf-8>
+  <meta name='viewport' content='width=device-width, initial-scale=1'>
+  <meta name='description' content='接口测试框架四周学习课程第17天：质量事实归并、逻辑调用语义、来源完整性与Metrics聚合'>
+  <title>第17天｜质量归并、语义与指标</title>
+  <style>
+    :root{--ink:#172033;--muted:#5e6a7d;--line:#d9e3eb;--bg:#f3f7f9;--blue:#185fa5;--blue2:#124777;--soft:#e8f3ff;--green:#17784a;--green-soft:#e7f8ef;--amber:#9a5b09;--amber-soft:#fff4d9;--red:#b4233e;--red-soft:#fff0f2;--slate:#40516a;--slate-soft:#edf2f8;--purple:#6f42c1;--purple-soft:#f1ebff;--nav:292px}
+    *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:26px}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.75 system-ui,-apple-system,'Segoe UI','Microsoft YaHei',sans-serif}a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}button,input,select,textarea{font:inherit}code{border-radius:5px;padding:.12em .38em;background:#edf2f8;color:#a52150;font:.9em/1.5 Consolas,monospace}pre{overflow:auto;border-radius:12px;padding:19px;background:#101827;color:#e7edf7;line-height:1.65}pre code{padding:0;background:none;color:inherit}h2{margin:0 0 14px;font-size:clamp(27px,3vw,38px);line-height:1.25}h3{margin:22px 0 8px}p{margin:9px 0}ul,ol{padding-left:1.4em}table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid var(--line);padding:12px;text-align:left;vertical-align:top}th{background:#f1f7fb}
+    .page-progress{position:fixed;inset:0 0 auto;z-index:60;height:4px;background:#dce8ef}.page-progress span{display:block;width:0;height:100%;background:linear-gradient(90deg,#06b6d4,#2563eb,#22c55e)}.side{position:fixed;inset:4px auto 0 0;z-index:30;width:var(--nav);height:calc(100vh - 4px);padding:24px 18px;overflow:auto;background:#10283c;color:#e5f3ff}.mark{padding:0 10px 18px;border-bottom:1px solid #31516a}.mark small{color:#7dd3fc;letter-spacing:.12em}.mark h2{margin:5px 0;color:#fff;font-size:20px}.mark p{color:#adc5d7;font-size:13px}.nav{display:grid;gap:3px;margin-top:18px}.nav a{display:grid;grid-template-columns:25px 1fr;gap:8px;border-radius:8px;padding:9px 10px;color:#ccdeea;font-size:13px}.nav a:hover,.nav a.active{background:var(--blue);color:#fff;text-decoration:none}.num{color:#7dd3fc}.meter{margin:22px 10px}.meter-row{display:flex;justify-content:space-between;color:#b6ccd9;font-size:12px}.meter-track{height:7px;margin-top:7px;overflow:hidden;border-radius:9px;background:#365368}.meter-value{width:0;height:100%;background:#38bdf8}
+    .main{margin-left:var(--nav);padding:34px 42px 80px}.topbar{display:flex;justify-content:space-between;max-width:1140px;margin:0 auto 18px;color:var(--muted);font-size:14px}.toolbar,.footer-links{display:flex;gap:8px;flex-wrap:wrap}.button,.menu,.primary{border-radius:9px;padding:8px 12px;cursor:pointer}.button,.menu{border:1px solid var(--line);background:#fff;color:var(--muted)}.menu{display:none}.primary{border:0;background:var(--blue);color:#fff;font-weight:750}.lesson{max-width:1140px;margin:auto;overflow:hidden;border:1px solid #dfe8ee;border-radius:20px;background:#fff;box-shadow:0 18px 52px rgba(31,49,74,.1)}
+    .hero{position:relative;overflow:hidden;padding:66px 72px 57px;background:radial-gradient(circle at 86% 16%,rgba(168,85,247,.24),transparent 29%),linear-gradient(135deg,#102d4a,#185fa5 52%,#6f42c1);color:#fff}.hero:after{content:'17';position:absolute;right:22px;bottom:-55px;color:rgba(255,255,255,.08);font:800 210px/1 system-ui}.eyebrow{color:#bae6fd;font-weight:800;letter-spacing:.12em}.hero h1{position:relative;z-index:1;max-width:940px;margin:0;font-size:clamp(38px,5vw,59px);line-height:1.14}.hero-lead{position:relative;z-index:1;max-width:930px;margin-top:18px;color:#e6f7ff;font-size:18px}.pills{position:relative;z-index:1;display:flex;flex-wrap:wrap;gap:9px;margin-top:25px}.pill{border:1px solid rgba(255,255,255,.3);border-radius:99px;padding:5px 10px;background:rgba(255,255,255,.1);font-size:13px}.outcome{position:relative;z-index:1;margin-top:25px;border-left:4px solid #c4b5fd;padding:13px 17px;background:rgba(8,39,59,.36)}
+    section{padding:52px 72px;border-top:1px solid var(--line)}.kicker{color:var(--blue);font-size:13px;font-weight:800;letter-spacing:.12em}.lead{color:var(--muted);font-size:17px}.grid2,.grid3,.notes,.result-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px;margin-top:20px}.grid3{grid-template-columns:repeat(3,minmax(0,1fr))}.card{border:1px solid var(--line);border-radius:14px;padding:18px;background:#fff}.card h3{margin:0 0 7px;font-size:17px}.card p{color:var(--muted)}.goal{display:flex;gap:13px}.goal b{display:grid;place-items:center;flex:0 0 34px;height:34px;border-radius:50%;background:var(--soft);color:var(--blue)}.callout{margin:18px 0;border-radius:12px;padding:16px 18px;border-left:4px solid var(--blue);background:var(--soft)}.callout.good{border-color:var(--green);background:var(--green-soft)}.callout.warn{border-color:var(--amber);background:var(--amber-soft)}.callout.bad{border-color:var(--red);background:var(--red-soft)}.callout.purple{border-color:var(--purple);background:var(--purple-soft)}
+    .flow{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;margin:20px 0}.flow span{display:flex;align-items:center;justify-content:center;min-height:54px;flex:1 1 128px;border:1px solid var(--line);border-radius:11px;padding:10px;text-align:center;background:#fff;font-weight:700}.flow i{align-self:center;color:#087a8f;font-style:normal;font-weight:900}.tree{margin:18px 0;border-radius:14px;padding:20px;background:#101827;color:#e7edf7;font:14px/1.75 Consolas,monospace;white-space:pre-wrap}.tag{display:inline-block;border-radius:99px;padding:2px 8px;background:var(--slate-soft);color:var(--slate);font-size:12px;font-weight:700}.tag.green{background:var(--green-soft);color:var(--green)}.tag.amber{background:var(--amber-soft);color:var(--amber)}.tag.red{background:var(--red-soft);color:var(--red)}.tag.purple{background:var(--purple-soft);color:var(--purple)}.matrix td:first-child{font-weight:750}
+    .steps{counter-reset:steps;display:grid;gap:14px;margin-top:18px}.step{position:relative;border:1px solid var(--line);border-radius:14px;padding:18px 18px 18px 62px;background:#fff}.step:before{counter-increment:steps;content:counter(steps);position:absolute;left:18px;top:18px;display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--blue);color:#fff;font-weight:800}.simulator{border:1px solid #cbd9e5;border-radius:16px;padding:20px;background:#f8fbfd}.sim-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.sim-controls select{min-width:290px;border:1px solid var(--line);border-radius:9px;padding:9px;background:#fff}.result{border:1px solid var(--line);border-radius:12px;padding:14px;background:#fff}.result small{display:block;color:var(--muted)}.result strong{display:block;margin-top:5px;color:var(--blue)}.verdict{margin-top:15px;border-radius:10px;padding:13px;background:var(--purple-soft);color:#4c2a85}.note{display:grid;gap:7px}.note textarea{min-height:112px;resize:vertical;border:1px solid var(--line);border-radius:10px;padding:11px;background:#fbfdff}
+    .quiz{margin:14px 0;border:1px solid var(--line);border-radius:14px;padding:18px}.quiz.correct{border-color:#79c99f;background:var(--green-soft)}.quiz.wrong{border-color:#e4aa75;background:var(--amber-soft)}.quiz label{display:block;margin:8px 0}.quiz-summary{margin-top:14px;border-radius:10px;padding:13px;background:var(--slate-soft)}.gate-list{display:grid;gap:10px}.gate-item{display:flex;gap:11px;border:1px solid var(--line);border-radius:11px;padding:13px;background:#fff}.gate-item input{margin-top:6px}.footer{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:30px;padding-top:20px;border-top:1px solid var(--line)}.pending{color:var(--muted);font-size:14px}
+    @media(max-width:980px){:root{--nav:0px}.side{transform:translateX(-100%);width:292px;transition:.2s}.nav-open .side{transform:none}.main{margin-left:0;padding:20px}.menu{display:inline-block}.hero,section{padding:42px 28px}.grid3{grid-template-columns:1fr 1fr}}@media(max-width:680px){.topbar,.footer{align-items:flex-start;flex-direction:column}.hero{padding:45px 23px}.hero:after{font-size:150px}.hero h1{font-size:38px}section{padding:38px 22px}.grid2,.grid3,.notes,.result-grid{grid-template-columns:1fr}.flow i{display:none}.sim-controls select{min-width:0;width:100%}th,td{padding:9px;font-size:14px}}
+  </style>
+</head>
+<body>
+  <div class='page-progress'><span id='page-progress'></span></div>
+  <aside class='side'><div class='mark'><small>接口测试框架课程</small><h2>第17天 · 先可信，再聚合</h2><p>第4周 / 质量归并、语义关系与Metrics</p></div><nav class='nav' id='nav'>
+    <a href='#goals'><span class='num'>01</span><span>目标与核心约束</span></a><a href='#layers'><span class='num'>02</span><span>四类事实分层</span></a><a href='#identity'><span class='num'>03</span><span>稳定身份与归属</span></a><a href='#p0'><span class='num'>04</span><span>P0事实归并</span></a><a href='#failure'><span class='num'>05</span><span>失败分类与指纹</span></a><a href='#semantic'><span class='num'>06</span><span>语义关系图</span></a><a href='#relationships'><span class='num'>07</span><span>关系完整性</span></a><a href='#sources'><span class='num'>08</span><span>Metrics来源信任</span></a><a href='#metrics'><span class='num'>09</span><span>指标与缺失语义</span></a><a href='#practice'><span class='num'>10</span><span>运行级证据实践</span></a><a href='#quiz'><span class='num'>11</span><span>知识自测</span></a><a href='#gate'><span class='num'>12</span><span>本课门禁</span></a>
+  </nav><div class='meter'><div class='meter-row'><span>门禁进度</span><span id='gate-text'>0/5</span></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div></aside>
+  <main class='main'><div class='topbar'><div><button class='menu' id='menu'>课程目录</button> 第17天 · 建议学习 2～2.5 小时</div><div class='toolbar'><a class='button' href='../接口测试框架四周学习课程.html'>课程大纲</a><button class='button' id='reset'>清除本课记录</button></div></div><article class='lesson'>
+    <header class='hero'><div class='eyebrow'>DAY 17 · TRUST BEFORE AGGREGATION</div><h1>质量归并、语义与指标</h1><p class='hero-lead'>第16天回答“发生了哪些原始事件”，今天回答“这些事件是否可信、彼此如何关联、最终能计算什么”。指标不是事实的替代品，而是建立在可信事实和完整关系之上的派生视图。</p><div class='pills'><span class='pill'>Case / Request / Failure</span><span class='pill'>Operation / Group / Polling</span><span class='pill'>Manifest / Hash / Schema</span><span class='pill'>Metrics Completeness</span></div><div class='outcome'><strong>今日结果：</strong>能够从一个pytest invocation出发，沿P0归并、Semantic关系和Metrics来源验证，解释为什么请求失败数、逻辑调用失败数、测试失败数不能互相替代。</div></header>
+    <section id='goals' data-section><p class='kicker'>01 · Learning contract</p><h2>目标与核心约束</h2><p class='lead'>今天不是学习如何把更多数字塞进报告，而是学习一条更严格的推导链：原始事实可信、关系完整、语义明确之后，数字才有解释价值。</p><div class='grid2'>
+      <div class='card goal'><b>1</b><div><h3>区分事实层级</h3><p>明确Case、Request、Failure和Operation分别回答什么问题，避免用请求结果替代测试结果。</p></div></div>
+      <div class='card goal'><b>2</b><div><h3>理解语义关系</h3><p>解释Request Event、Request Group、Polling Session和Operation的所有权与引用关系。</p></div></div>
+      <div class='card goal'><b>3</b><div><h3>证明来源可信</h3><p>理解Manifest、Schema版本、原始文件Hash、run_id和跨产物证据为什么必须一致。</p></div></div>
+      <div class='card goal'><b>4</b><div><h3>保留缺失语义</h3><p>掌握complete、partial、missing、no_data和not_applicable，禁止把未知值悄悄变成0。</p></div></div>
+    </div><div class='callout purple'><strong>第一性原理：</strong>Metrics是派生结论，不是原始事实。若来源不可信，正确行为是FAILED；若来源可信但覆盖不完整，正确行为是DEGRADED或部分完整；只有证据和关系都满足合同，才允许AGGREGATED。</div><div class='flow'><span>原始分片</span><i>→</i><span>P0归并</span><i>→</i><span>Semantic关系</span><i>→</i><span>来源验证</span><i>→</i><span>Metrics视图</span></div><div class='callout warn'><strong>TOC约束：</strong>本课最容易卡住的不是聚合公式，而是把不同层级的“成功/失败”混为一谈。先解除事实层级约束，再讨论成功率、重试挽救率和usage覆盖率。</div><h3>建议阅读顺序</h3><div class='grid2'><div class='card'><h3>P0事实与失败</h3><ol><li><code>quality/models.py</code></li><li><code>quality/identifiers.py</code></li><li><code>quality/aggregator.py</code></li><li><code>quality/classifier.py</code></li></ol></div><div class='card'><h3>Semantic与Metrics</h3><ol><li><code>quality/semantic_models.py</code></li><li><code>quality/semantic_aggregator.py</code></li><li><code>quality/metrics/sources.py</code></li><li><code>quality/metrics/validation.py</code></li><li><code>quality/metrics/builder.py</code></li><li><code>quality/metrics/service.py</code></li></ol></div></div></section>
+
+    <section id='layers' data-section><p class='kicker'>02 · Fact hierarchy</p><h2>四类事实：谁都不能替代谁</h2><table class='matrix'><thead><tr><th>事实</th><th>核心模型</th><th>回答的问题</th><th>不能推出</th></tr></thead><tbody>
+      <tr><td>Case事实</td><td><code>CaseResult</code></td><td>pytest某个setup/call/teardown阶段发生了什么，最终用例是否通过。</td><td>不能仅凭通过断定所有HTTP请求成功。</td></tr>
+      <tr><td>Request事实</td><td><code>RequestMetric</code></td><td>一次真实HTTP attempt的状态码、耗时、超时、可重试性、业务状态和usage。</td><td>不能仅凭500断定pytest用例失败。</td></tr>
+      <tr><td>Failure事实</td><td><code>FailureRecord</code></td><td>失败用例的稳定分类、责任域、置信度和可比较指纹。</td><td>不会为每个失败请求都生成测试Failure。</td></tr>
+      <tr><td>Semantic事实</td><td><code>OperationRecord</code>等</td><td>多个attempt、轮询请求和流式消费共同构成了哪个业务动作。</td><td>不能覆盖CaseResult或修改pytest退出码。</td></tr>
+    </tbody></table><h3>典型因果链</h3><div class='tree'>服务返回预期的 400
+├─ RequestMetric.business_status = failed
+├─ Operation.outcome = failed
+├─ 测试断言 error.code 与 error.type 正确
+└─ CaseResult.final_status = passed
+
+因此：请求失败数 ≠ 逻辑调用失败数 ≠ 测试失败数</div><div class='callout good'><strong>负向用例并不矛盾：</strong>被测业务调用按真实语义失败，但测试目标正是验证该失败契约，所以pytest可以通过。Metrics必须保留业务失败，不能为了让成功率好看而改写成success。</div><div class='grid3'><div class='card'><h3>HTTP成功</h3><p>通常指transport获得响应且状态码满足某种区间，不等于业务字段成功。</p></div><div class='card'><h3>业务成功</h3><p>来自稳定业务状态或Operation outcome，不等于测试断言通过。</p></div><div class='card'><h3>Pipeline成功</h3><p>由pytest原始退出码和Jenkins阶段事实决定，不由Metrics反推。</p></div></div></section>
+
+    <section id='identity' data-section><p class='kicker'>03 · Stable identity</p><h2>稳定身份让分片能够归并</h2><p class='lead'>并发worker各自写文件，归并器并不依赖文件顺序猜测归属，而是依赖同一套稳定身份把记录重新连接起来。</p><div class='tree'>run_id
+└─ execution_id
+   └─ worker_id
+      └─ case_id：去掉参数后的稳定nodeid
+         └─ invocation_id：run_id + case_id + param_hash
+            ├─ CaseResult：按phase记录
+            ├─ RequestMetric：每次attempt一个request_event_id
+            └─ Semantic：operation_id / group_id / polling_session_id</div><table><thead><tr><th>身份</th><th>稳定性</th><th>用途</th></tr></thead><tbody>
+      <tr><td><code>case_id</code></td><td>跨运行稳定</td><td>表示测试定义；参数部分从nodeid中分离。</td></tr>
+      <tr><td><code>param_hash</code></td><td>相同参数稳定</td><td>基于脱敏后的规范化参数生成，避免把密钥写进身份。</td></tr>
+      <tr><td><code>invocation_id</code></td><td>单次run内稳定</td><td>连接Case、Request、JUnit与Semantic事实。</td></tr>
+      <tr><td><code>request_event_id</code></td><td>每次attempt唯一</td><td>重试时每次真实请求独立记录，不能复用。</td></tr>
+      <tr><td><code>interface_id</code></td><td>接口模板稳定</td><td>由method、脱敏url_template和protocol组成，动态路径段模板化。</td></tr>
+    </tbody></table><div class='callout'><strong>为什么不能按文件名或时间戳关联：</strong>xdist并发顺序不稳定，时间接近也不代表同一业务动作；只有显式身份和引用关系才能证明所有权。</div><div class='notes'><label class='note'><strong>练习：用一句话解释case_id与invocation_id的区别</strong><textarea data-note='identity'></textarea></label><label class='note'><strong>练习：写出一次Retry中不变与变化的身份</strong><textarea data-note='retry-identity'></textarea></label></div></section>
+
+    <section id='p0' data-section><p class='kicker'>04 · P0 merge</p><h2>P0事实归并：先提交清单，再写最终事实</h2><p class='lead'><code>merge_quality_run()</code>把execution-worker分片和JUnit证据归并为当前run的可信基础事实。它采用“先写merging Manifest，完成后再写complete Manifest”的提交协议。</p><div class='steps'>
+      <div class='step'><strong>扫描分片</strong><p>读取<code>cases-*.jsonl</code>、<code>requests-*.jsonl</code>、<code>integrity-*.jsonl</code>，记录物理行、当前run记录、外来run、非法JSON、非法Schema和重复情况。</p></div>
+      <div class='step'><strong>读取JUnit</strong><p>验证文件存在性与新鲜度，解析quality身份；JUnit提供统计和失败详情，但不能覆盖Case分片。</p></div>
+      <div class='step'><strong>对账</strong><p>核对权威计划的<code>expected_case_count</code>、invocation数量和JUnit身份，发现缺失、陈旧或状态不一致。</p></div>
+      <div class='step'><strong>分类失败</strong><p>仅对Case raw/final状态为failed或error的记录，组合JUnit、RequestMetric与integrity证据生成FailureRecord。</p></div>
+      <div class='step'><strong>原子写出</strong><p>输出case-results、request-metrics、failures、integrity-issues，并按原始文件bytes计算SHA256后提交complete Manifest。</p></div>
+    </div><h3>去重不是简单丢弃</h3><table><thead><tr><th>记录</th><th>唯一键</th><th>相同重复</th><th>冲突重复</th></tr></thead><tbody>
+      <tr><td>CaseResult</td><td><code>invocation_id + phase</code></td><td>计入exact_duplicates</td><td>ERROR：case_result_conflict</td></tr>
+      <tr><td>RequestMetric</td><td><code>request_event_id</code></td><td>计入exact_duplicates</td><td>ERROR：request_metric_conflict</td></tr>
+      <tr><td>IntegrityIssue</td><td>source、code、related_id、message</td><td>计入exact_duplicates</td><td>ERROR：integrity_issue_conflict</td></tr>
+    </tbody></table><div class='grid3'><div class='card'><h3><span class='tag green'>complete</span></h3><p>没有WARN或ERROR，事实和对账完整。</p></div><div class='card'><h3><span class='tag amber'>degraded</span></h3><p>存在WARN，仍可保留事实，但使用者必须知道覆盖或一致性下降。</p></div><div class='card'><h3><span class='tag red'>failed</span></h3><p>存在ERROR或归并异常，高阶消费者不得假装来源可信。</p></div></div><div class='callout warn'><strong>Manifest不是目录索引：</strong>它同时声明run身份、版本、状态、来源统计、输出数量、输出Hash和完整性结论。只有<code>status=complete</code>且Hash匹配的产物才是已提交证据。</div></section>
+
+    <section id='failure' data-section><p class='kicker'>05 · Failure classification</p><h2>失败分类与稳定指纹</h2><p class='lead'>FailureRecord服务于历史比较和责任定位，因此必须先脱敏、规范化动态内容，再生成稳定指纹；它不能直接复用每次变化的异常全文。</p><div class='flow'><span>失败Case</span><i>→</i><span>JUnit错误详情</span><i>+</i><span>Request证据</span><i>+</i><span>Integrity代码</span><i>→</i><span>分类与指纹</span></div><table><thead><tr><th>优先规则</th><th>分类</th><th>典型证据</th></tr></thead><tbody>
+      <tr><td>1</td><td>CONFIGURATION</td><td>缺少环境变量、API Key、权限、Settings校验错误。</td></tr>
+      <tr><td>2</td><td>FRAMEWORK_DEFECT</td><td>错误位置在quality目录，或相关integrity code以quality开头。</td></tr>
+      <tr><td>3</td><td>ENVIRONMENT</td><td>DNS、连接拒绝、代理、SSL、磁盘空间。</td></tr>
+      <tr><td>4</td><td>TEST_DEFECT</td><td>测试代码中的KeyError、IndexError、TypeError等本地错误。</td></tr>
+      <tr><td>5</td><td>TRANSIENT</td><td>429、rate limit、可重试timeout或连接重置。</td></tr>
+      <tr><td>6</td><td>PRODUCT_DEFECT</td><td>唯一接口上的契约、Schema、响应或状态码断言问题。</td></tr>
+      <tr><td>兜底</td><td>UNKNOWN</td><td>证据不足，保留低置信度而不是强行猜测。</td></tr>
+    </tbody></table><div class='tree'>failure_id 输入
+├─ phase
+├─ error_type
+├─ normalized_message
+│  ├─ URL查询参数脱敏
+│  ├─ 时间戳 / UUID / 内存地址归一化
+│  ├─ 动态长数字与路径ID模板化
+│  └─ 临时目录替换
+├─ 唯一 interface_id（若证据唯一）
+└─ assert_location</div><div class='callout bad'><strong>不要倒因为果：</strong>一次RequestMetric失败不会自动生成FailureRecord。只有pytest Case失败或错误时，归并器才尝试分类；否则负向用例、重试中间失败和轮询pending都会被错误地当成测试缺陷。</div></section>
+
+    <section id='semantic' data-section><p class='kicker'>06 · Semantic graph</p><h2>语义关系不是一条直线，而是一张有所有权的图</h2><p class='lead'>Operation表示业务动作；Request Group表示一次逻辑请求及其重试attempt；Polling Session表示一段轮询会话；Request Event表示一次真实网络尝试。</p><div class='tree'>pytest case / invocation
+└─ logical operation
+   ├─ request_group_ids：Operation直接引用全部Group
+   │  ├─ create group
+   │  │  └─ request_event_id(s)
+   │  └─ polling group(s)
+   │     └─ request_event_id(s)
+   └─ polling_session_ids
+      └─ request_group_ids：只引用本次轮询的Group
+
+轮询Group同时满足：
+group.operation_id = operation.operation_id
+group.polling_session_id = session.polling_session_id</div><table><thead><tr><th>模型</th><th>关键内容</th><th>主要约束</th></tr></thead><tbody>
+      <tr><td>RequestGroupRecord</td><td>attempt事件、重试等待、首尾transport/status、总耗时。</td><td>attempt_count等于事件数；final event属于事件集合。</td></tr>
+      <tr><td>PollingSessionRecord</td><td>poll次数、状态序列、sleep、终态和首次观察偏移。</td><td>poll_count等于所引用Group数量。</td></tr>
+      <tr><td>OperationRecord</td><td>kind、name、role、model、outcome、timing、usage和证据。</td><td>SSE必须有stream_outcome；非SSE不得携带该字段。</td></tr>
+      <tr><td>OperationUsage</td><td>token、媒体用量、已知与缺失来源事件。</td><td>missing/not_applicable不能携带伪造数值；complete不能仍有缺失事件。</td></tr>
+    </tbody></table><div class='callout purple'><strong>总纲中的关键细节：</strong>Operation的<code>request_group_ids</code>包含轮询Session中的Group。Polling Session不是把Group从Operation中“拿走”，而是在Operation所有权之上增加轮询会话归属。</div></section>
+
+    <section id='relationships' data-section><p class='kicker'>07 · Relationship integrity</p><h2>关系完整性：每个引用都必须能被证明</h2><p class='lead'>Semantic归并器先验证P0 Manifest和request-metrics Hash，再检查图关系；Metrics加载时会再次执行更严格的来源合同。重复验证不是浪费，而是在不同消费者边界阻止错误扩散。</p><div class='grid2'>
+      <div class='card'><h3>Event → Group</h3><ul><li>一个request_event只能属于一个Group。</li><li>attempt_index必须从1连续增长。</li><li>接口、协议、method和URL模板必须一致。</li><li>Group首尾结果必须与首尾Event证据一致。</li></ul></div>
+      <div class='card'><h3>Group → Operation</h3><ul><li>Group引用的Operation必须存在。</li><li>Operation也必须反向包含该Group。</li><li>run、case、invocation身份必须一致。</li><li>一个Group不能被多个Operation拥有。</li></ul></div>
+      <div class='card'><h3>Session → Group</h3><ul><li>Session引用的轮询Group必须存在。</li><li>Group的polling_session_id必须匹配。</li><li>Session和Group必须属于同一Operation。</li><li>poll_count必须等于Group数量。</li></ul></div>
+      <div class='card'><h3>Usage → Event</h3><ul><li>已知与缺失Event集合不能重叠。</li><li>Usage Event必须位于该Operation内。</li><li>一个Usage Event不能属于多个Operation。</li><li>缺失必须显式记录，不能补0。</li></ul></div>
+    </div><div class='callout bad'><strong>孤儿事实必须阻断：</strong>只要存在未分配Group、缺失Event、跨invocation引用或Hash不匹配，Metrics不能继续把这些数据当成可信样本。</div><h3>场景推演器</h3><div class='simulator'><div class='sim-controls'><select id='sim-mode'><option value='simple'>单请求成功</option><option value='retry'>503后重试成功</option><option value='negative'>预期业务失败的负向用例</option><option value='polling'>创建加轮询成功</option><option value='usage'>成功但usage缺失</option><option value='broken'>Group引用缺失Event</option></select><button class='primary' id='run-sim'>推演</button></div><div class='result-grid'><div class='result'><small>Case事实</small><strong id='sim-case'></strong></div><div class='result'><small>Request / Group</small><strong id='sim-request'></strong></div><div class='result'><small>Operation语义</small><strong id='sim-operation'></strong></div><div class='result'><small>Metrics状态</small><strong id='sim-metrics'></strong></div></div><div class='verdict' id='sim-verdict'></div></div></section>
+
+    <section id='sources' data-section><p class='kicker'>08 · Source trust</p><h2>Metrics先验证证据链，再读取数字</h2><p class='lead'><code>load_sources()</code>不是普通文件读取器。它执行的是一份信任合同：身份、版本、提交状态、Hash、跨层引用和关系必须全部成立。</p><div class='steps'>
+      <div class='step'><strong>读取run.json</strong><p>RunRecord必须合法且run_id等于本次聚合目标。</p></div>
+      <div class='step'><strong>验证P0 Manifest</strong><p>manifest_version、schema_version、run_id和status必须精确匹配；P0完整性为failed时直接拒绝。</p></div>
+      <div class='step'><strong>验证P0 Request Hash</strong><p>按<em>原始文件bytes</em>计算SHA256，必须与Manifest的request-metrics输出Hash一致。</p></div>
+      <div class='step'><strong>验证Semantic Manifest</strong><p>检查semantic版本、complete状态和完整性；还要确认Semantic记录的P0 Manifest与Request Hash正是当前P0证据。</p></div>
+      <div class='step'><strong>验证全部Semantic输出</strong><p>request-groups、polling-sessions、operations和integrity-issues逐个校验Hash、Schema与记录内容。</p></div>
+      <div class='step'><strong>重新验证关系</strong><p>构建唯一索引，检查所有权、身份、attempt序列、首尾证据、usage归属和孤儿记录。</p></div>
+    </div><div class='tree'>run.json
+  + merged/manifest.json
+  + merged/request-metrics.jsonl
+  + semantic/merged/manifest.json
+  + semantic/merged/request-groups.jsonl
+  + semantic/merged/polling-sessions.jsonl
+  + semantic/merged/operations.jsonl
+  + semantic/merged/integrity-issues.jsonl
+  ─────────────────────────────────────
+  通过身份 / 版本 / status / Hash / 关系验证
+  = MetricsSources</div><table><thead><tr><th>Metrics结果</th><th>含义</th><th>典型原因</th></tr></thead><tbody>
+      <tr><td><span class='tag green'>aggregated</span></td><td>来源可信、有workload Operation、没有降级原因。</td><td>正常完成且覆盖完整。</td></tr>
+      <tr><td><span class='tag amber'>degraded</span></td><td>来源仍可用，但运行或覆盖存在已知缺口。</td><td>run未完成、P0/Semantic降级、operation或usage不完整。</td></tr>
+      <tr><td><span class='tag purple'>no_data</span></td><td>来源可信，但没有可聚合的workload Operation。</td><td>只有control流量或本轮没有业务调用。</td></tr>
+      <tr><td><span class='tag red'>failed</span></td><td>来源合同不成立，不能发布指标。</td><td>Manifest不可信、Hash不匹配、Schema错误、关系断裂。</td></tr>
+    </tbody></table><div class='callout warn'><strong>陈旧文件不是兜底：</strong>只要run_id、提交状态或Hash不属于本轮，就必须拒绝；不能因为旧文件可解析、数字看起来正常，就拿它替代本轮缺失证据。</div></section>
+
+    <section id='metrics' data-section><p class='kicker'>09 · Metrics semantics</p><h2>指标分三层，缺失值永远不偷偷变成0</h2><p class='lead'>Builder只把<code>TrafficRole.WORKLOAD</code>纳入业务指标。CONTROL、UNKNOWN、not_applicable usage和未分配Event都会进入Exclusions或Issue，而不是混入成功率分母。</p><table><thead><tr><th>粒度</th><th>回答的问题</th><th>代表性指标</th></tr></thead><tbody>
+      <tr><td>Operation</td><td>一个业务动作整体是否成功、耗时多少、用了多少token或媒体资源。</td><td>outcome、success rate、total timing、usage、retry extra usage。</td></tr>
+      <tr><td>Request Group</td><td>一次逻辑请求是否重试、首尾结果如何、重试是否挽救。</td><td>attempt count、retry rate、HTTP/business rescue rate、retry wait。</td></tr>
+      <tr><td>Request Event</td><td>真实attempt层面发生了多少timeout、429、5xx和业务失败。</td><td>transport分布、HTTP 5xx/429 rate、duration、usage coverage。</td></tr>
+    </tbody></table><h3>覆盖率模型</h3><div class='grid2'><div class='card'><h3>NumericAggregate</h3><pre><code>eligible_count = sample_size + missing_count
+
+sample_size = 0
+→ total / mean / min / max = null
+→ completeness = no_data 或 not_applicable</code></pre></div><div class='card'><h3>RatioAggregate</h3><pre><code>value = numerator / sample_size
+
+sample_size = 0
+→ value = null
+→ completeness = no_data
+
+unknown_count &gt; 0
+→ completeness = partial</code></pre></div></div><table><thead><tr><th>语义</th><th>应该如何表达</th><th>禁止做法</th></tr></thead><tbody>
+      <tr><td>真实值为0</td><td>sample_size包含该样本，数值字段为0。</td><td>与“没有观测到值”混淆。</td></tr>
+      <tr><td>值缺失</td><td>missing_count增加，聚合完整性为partial或no_data。</td><td>把缺失token写成0。</td></tr>
+      <tr><td>不适用</td><td>使用not_applicable，例如明确不产生usage的Operation。</td><td>算入usage缺失率。</td></tr>
+      <tr><td>未知角色</td><td>进入Exclusions与unknown_traffic_role Issue。</td><td>默认当作workload。</td></tr>
+    </tbody></table><div class='callout good'><strong>指标的可解释性来自分母：</strong>任何成功率都必须同时保留numerator、sample_size、unknown_count和completeness。只展示一个百分比，会隐藏样本为空或覆盖不完整的事实。</div><div class='notes'><label class='note'><strong>练习：解释usage为0与usage missing的差异</strong><textarea data-note='usage'></textarea></label><label class='note'><strong>练习：为什么control流量不能进入workload成功率</strong><textarea data-note='control'></textarea></label></div></section>
+
+    <section id='practice' data-section><p class='kicker'>10 · Run-level evidence</p><h2>运行级实践：从第16天证据还原完整关系</h2><p class='lead'>继续使用第16天同一PowerShell会话生成的离线Quality产物。若证据不存在，应返回第16天重新生成；不得用旧run文件、手工JSON或真实付费接口代替。</p><div class='callout warn'><strong>安全边界：</strong>本课只读取<code>reports/quality</code>中的本轮离线产物，并运行<code>tests/quality</code>。不要把<code>module/smoke</code>改为真实执行。</div>
+      <h3>步骤1：验证归并、语义与Metrics合同</h3><pre><code>.\.venv\Scripts\python.exe -m pytest `
+  tests/quality/test_quality_aggregator.py `
+  tests/quality/test_semantic_aggregator.py `
+  tests/quality/test_semantic_request_groups.py `
+  tests/quality/test_semantic_polling.py `
+  tests/quality/test_metrics_sources.py `
+  tests/quality/test_metrics_source_contracts.py `
+  tests/quality/test_metrics_models.py `
+  -q</code></pre><p>这些测试分别保护分片归并、JUnit对账、Semantic关系、轮询归属、Manifest/Hash信任和缺失值模型。</p>
+      <h3>步骤2：确认所有证据属于同一run</h3><pre><code>$required = @(
+  'reports/quality/run.json',
+  'reports/quality/merged/manifest.json',
+  'reports/quality/merged/request-metrics.jsonl',
+  'reports/quality/semantic/merged/manifest.json',
+  'reports/quality/semantic/merged/request-groups.jsonl',
+  'reports/quality/semantic/merged/polling-sessions.jsonl',
+  'reports/quality/semantic/merged/operations.jsonl',
+  'reports/quality/metrics/manifest.json',
+  'reports/quality/metrics/run-metrics.json'
+)
+$missing = @($required | Where-Object { -not (Test-Path -LiteralPath $_) })
+if ($missing.Count -gt 0) { throw ('Missing evidence: ' + ($missing -join ', ')) }
+
+$run = Get-Content -LiteralPath $required[0] -Raw | ConvertFrom-Json
+$p0 = Get-Content -LiteralPath $required[1] -Raw | ConvertFrom-Json
+$semantic = Get-Content -LiteralPath $required[3] -Raw | ConvertFrom-Json
+$metricsManifest = Get-Content -LiteralPath $required[7] -Raw | ConvertFrom-Json
+
+[pscustomobject]@{
+  Run = $run.run_id
+  P0Run = $p0.run_id
+  P0Status = $p0.status
+  P0Integrity = $p0.integrity_status
+  SemanticRun = $semantic.run_id
+  SemanticStatus = $semantic.status
+  SemanticIntegrity = $semantic.integrity_status
+  MetricsRun = $metricsManifest.run_id
+  MetricsWrite = $metricsManifest.write_status
+  MetricsStatus = $metricsManifest.metrics_status
+}</code></pre><p>所有run_id必须一致；P0与Semantic Manifest必须为complete。Metrics可以是aggregated或degraded，但不能用旧文件掩盖failed。</p>
+      <h3>步骤3：还原一个含轮询的Operation</h3><pre><code>function Read-JsonLines([string]$Path) {
+  @(Get-Content -LiteralPath $Path | Where-Object { $_.Trim() } | ForEach-Object {
+    $_ | ConvertFrom-Json
+  })
+}
+
+$events = Read-JsonLines 'reports/quality/merged/request-metrics.jsonl'
+$groups = Read-JsonLines 'reports/quality/semantic/merged/request-groups.jsonl'
+$sessions = Read-JsonLines 'reports/quality/semantic/merged/polling-sessions.jsonl'
+$operations = Read-JsonLines 'reports/quality/semantic/merged/operations.jsonl'
+
+$operation = $operations |
+  Where-Object { @($_.polling_session_ids).Count -gt 0 } |
+  Select-Object -First 1
+if ($null -eq $operation) { throw 'No polling operation found' }
+
+$ownedGroups = @($groups | Where-Object {
+  $operation.request_group_ids -contains $_.request_group_id
+})
+$ownedSessions = @($sessions | Where-Object {
+  $operation.polling_session_ids -contains $_.polling_session_id
+})
+$ownedEventIds = @($ownedGroups | ForEach-Object { $_.attempt_event_ids })
+$ownedEvents = @($events | Where-Object {
+  $ownedEventIds -contains $_.request_event_id
+})
+
+[pscustomobject]@{
+  Operation = $operation.operation_id
+  Kind = $operation.operation_kind
+  Outcome = $operation.outcome
+  Groups = $ownedGroups.Count
+  PollingSessions = $ownedSessions.Count
+  Attempts = $ownedEvents.Count
+  UsageCompleteness = $operation.usage.completeness
+}</code></pre><p>逐个核对：每个轮询Group既在Operation的<code>request_group_ids</code>中，也在对应Session的<code>request_group_ids</code>中；每个Event只属于一个Group。</p>
+      <h3>步骤4：解释Metrics，而不是只看百分比</h3><pre><code>$metrics = Get-Content `
+  -LiteralPath 'reports/quality/metrics/run-metrics.json' `
+  -Raw | ConvertFrom-Json
+
+[pscustomobject]@{
+  Status = $metrics.status
+  DegradedReasons = $metrics.integrity.degraded_reasons -join ', '
+  WorkloadOperations = $metrics.run_metrics.operation.operation_count
+  OperationSuccessNumerator = $metrics.run_metrics.operation.success_rate.numerator
+  OperationSuccessSamples = $metrics.run_metrics.operation.success_rate.sample_size
+  OperationSuccessValue = $metrics.run_metrics.operation.success_rate.value
+  UsageEligible = $metrics.run_metrics.usage.input_tokens.eligible_count
+  UsageSamples = $metrics.run_metrics.usage.input_tokens.sample_size
+  UsageMissing = $metrics.run_metrics.usage.input_tokens.missing_count
+  UsageCompleteness = $metrics.run_metrics.usage.input_tokens.completeness
+}</code></pre><div class='callout good'><strong>输出要求：</strong>任选一个Operation，画出Operation → Group → Event及Polling Session的双向归属；再用一句话分别解释Case结果、Operation结果、Metrics状态和usage完整性。</div><div class='notes'><label class='note'><strong>我的证据关系图说明</strong><textarea data-note='evidence-map'></textarea></label><label class='note'><strong>我的四层结论</strong><textarea data-note='four-layer-result'></textarea></label></div></section>
+
+    <section id='quiz' data-section><p class='kicker'>11 · Knowledge check</p><h2>知识自测</h2>
+      <div class='quiz' data-answer='b'><strong>1. 一个负向用例收到预期400并通过断言，正确事实组合是什么？</strong><label><input type='radio' name='q1' value='a'> Request、Operation和Case都必须success</label><label><input type='radio' name='q1' value='b'> Request/Operation可failed，Case可以passed</label><label><input type='radio' name='q1' value='c'> Metrics必须忽略该Operation</label></div>
+      <div class='quiz' data-answer='c'><strong>2. 哪个条件足以阻止Metrics继续聚合？</strong><label><input type='radio' name='q2' value='a'> success rate低于100%</label><label><input type='radio' name='q2' value='b'> usage completeness为partial</label><label><input type='radio' name='q2' value='c'> Semantic输出Hash与Manifest不一致</label></div>
+      <div class='quiz' data-answer='a'><strong>3. 轮询Request Group的正确归属是什么？</strong><label><input type='radio' name='q3' value='a'> 同时属于Operation，并由Polling Session引用</label><label><input type='radio' name='q3' value='b'> 只属于Polling Session，不在Operation中</label><label><input type='radio' name='q3' value='c'> 直接属于Case，不需要Operation</label></div>
+      <div class='quiz' data-answer='c'><strong>4. input_tokens没有任何可用样本时应该如何表达？</strong><label><input type='radio' name='q4' value='a'> mean等于0</label><label><input type='radio' name='q4' value='b'> 省略completeness</label><label><input type='radio' name='q4' value='c'> 数值为null，completeness为no_data或not_applicable</label></div>
+      <div class='quiz' data-answer='b'><strong>5. FailureRecord通常何时生成？</strong><label><input type='radio' name='q5' value='a'> 每出现一次失败RequestMetric</label><label><input type='radio' name='q5' value='b'> Case raw/final状态为failed或error时</label><label><input type='radio' name='q5' value='c'> Pipeline Summary显示关注时</label></div>
+      <div class='quiz' data-answer='a'><strong>6. CONTROL流量为什么从workload指标中排除？</strong><label><input type='radio' name='q6' value='a'> 它服务于余额、usage或管理查询，混入会污染被测业务分母</label><label><input type='radio' name='q6' value='b'> 它一定没有RequestMetric</label><label><input type='radio' name='q6' value='c'> 它一定串行执行</label></div>
+      <button class='primary' id='submit-quiz'>提交答案</button><div class='quiz-summary' id='quiz-summary'>尚未提交。</div>
+    </section>
+
+    <section id='gate' data-section><p class='kicker'>12 · Exit gate</p><h2>本课门禁：没有可信来源，就没有可信指标</h2><div class='gate-list'>
+      <label class='gate-item'><input type='checkbox' data-gate='facts'><span>我能区分Case、Request、Failure和Operation事实，且不会互相替代。</span></label>
+      <label class='gate-item'><input type='checkbox' data-gate='merge'><span>我能解释P0归并顺序、重复处理、JUnit对账和Manifest提交协议。</span></label>
+      <label class='gate-item'><input type='checkbox' data-gate='graph'><span>我能画出Operation、Request Group、Polling Session与Request Event关系。</span></label>
+      <label class='gate-item'><input type='checkbox' data-gate='trust'><span>我能说明run_id、版本、status、原始bytes Hash与关系验证的信任链。</span></label>
+      <label class='gate-item'><input type='checkbox' data-gate='metrics'><span>我能区分aggregated、degraded、no_data、failed，并解释缺失不等于0。</span></label>
+    </div><div class='callout good'><strong>一句话验收：</strong>P0先归并Case、Request和Failure事实，Semantic再建立Operation、Group、Polling与Event关系，Metrics只消费身份、版本、Hash和关系均可信的workload证据；任何缺失都保留覆盖语义，任何诊断都不得改写pytest事实。</div><div class='footer'><div class='footer-links'><a class='button' href='第16天-运行时观察与质量事实采集.html'>← 上一课</a><a class='button' href='../接口测试框架四周学习课程.html'>返回课程大纲</a></div><a class='button' href='第18天-不稳定用例治理与产物信任.html'>下一课 →</a></div></section>
+  </article></main>
+  <script>
+    (function(){
+      var prefix='api-case-course-day17-';
+      var data={
+        simple:['passed','1个Group / 1个成功Event','success / usage按响应覆盖','aggregated','所有权与证据完整，Case、Operation和Metrics都可成功，但三者仍是不同事实。'],
+        retry:['passed','1个Group / 2个Event：503 → 200','success；Group记录retry rescue','aggregated或degraded','中间失败Event保留；最终Operation可成功。请求失败数增加不等于Case失败。'],
+        negative:['passed','1个400 Event / business failed','failed','aggregated','负向契约验证通过：pytest通过，但Operation按真实业务语义失败并进入分母。'],
+        polling:['passed','create Group + 多个polling Group','async_task success；Session引用轮询Group','aggregated或degraded','Operation直接拥有全部Group，Polling Session额外引用轮询Group；usage覆盖决定是否降级。'],
+        usage:['passed','请求与关系完整','success / usage missing','degraded','缺失usage不是0。Metrics保留missing_count并给出usage_incomplete降级原因。'],
+        broken:['可能仍有pytest结果','Group引用不存在的Event','关系不可信','failed','来源合同断裂。正确行为是停止Metrics聚合，而不是丢弃坏引用后继续算。']
+      };
+      function simulate(){var x=data[document.getElementById('sim-mode').value];['case','request','operation','metrics'].forEach(function(k,i){document.getElementById('sim-'+k).textContent=x[i];});document.getElementById('sim-verdict').textContent=x[4];}
+      document.getElementById('run-sim').onclick=simulate;document.getElementById('sim-mode').onchange=simulate;simulate();
+      var notes=Array.from(document.querySelectorAll('[data-note]'));notes.forEach(function(n){n.value=localStorage.getItem(prefix+'note-'+n.dataset.note)||'';n.oninput=function(){localStorage.setItem(prefix+'note-'+n.dataset.note,n.value);};});
+      var gates=Array.from(document.querySelectorAll('[data-gate]'));function updateGate(){var n=gates.filter(function(x){return x.checked;}).length;document.getElementById('gate-text').textContent=n+'/'+gates.length;document.getElementById('gate-value').style.width=(n/gates.length*100)+'%';}gates.forEach(function(x){x.checked=localStorage.getItem(prefix+'gate-'+x.dataset.gate)==='1';x.onchange=function(){localStorage.setItem(prefix+'gate-'+x.dataset.gate,x.checked?'1':'0');updateGate();};});updateGate();
+      document.getElementById('submit-quiz').onclick=function(){var cards=Array.from(document.querySelectorAll('.quiz')),score=0;cards.forEach(function(c){var selected=c.querySelector('input:checked'),ok=selected&&selected.value===c.dataset.answer;c.classList.toggle('correct',!!ok);c.classList.toggle('wrong',!ok);if(ok)score++;});var output=document.getElementById('quiz-summary');output.textContent=score>=5?score+'/6：达标，请完成证据关系图和本课门禁。':score+'/6：未达标，请回看事实层级、关系完整性、来源信任和缺失语义。';output.style.background=score>=5?'var(--green-soft)':'var(--amber-soft)';};
+      document.getElementById('reset').onclick=function(){if(!confirm('确认清除第17课记录？'))return;Object.keys(localStorage).filter(function(k){return k.startsWith(prefix);}).forEach(function(k){localStorage.removeItem(k);});notes.forEach(function(n){n.value='';});gates.forEach(function(x){x.checked=false;});document.querySelectorAll('.quiz').forEach(function(c){c.classList.remove('correct','wrong');c.querySelectorAll('input').forEach(function(x){x.checked=false;});});var q=document.getElementById('quiz-summary');q.textContent='尚未提交。';q.removeAttribute('style');updateGate();};
+      document.getElementById('menu').onclick=function(){document.body.classList.toggle('nav-open');};var links=Array.from(document.querySelectorAll('.nav a')),map=new Map(links.map(function(a){return[a.hash.slice(1),a];}));var observer=new IntersectionObserver(function(entries){var visible=entries.filter(function(e){return e.isIntersecting;}).sort(function(a,b){return a.boundingClientRect.top-b.boundingClientRect.top;});if(!visible.length)return;links.forEach(function(a){a.classList.remove('active');});var current=map.get(visible[0].target.id);if(current)current.classList.add('active');},{rootMargin:'-8% 0px -78% 0px',threshold:[0,1]});document.querySelectorAll('[data-section]').forEach(function(section){observer.observe(section);});document.getElementById('nav').onclick=function(){document.body.classList.remove('nav-open');};addEventListener('scroll',function(){var max=document.documentElement.scrollHeight-innerHeight;document.getElementById('page-progress').style.width=(max?scrollY/max*100:0)+'%';},{passive:true});
+    })();
+  </script>
+</body>
+</html>
