@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="接口测试框架四周学习课程第9天：Polling状态机、总deadline、Retry协作与SSE流式响应">
+  <title>第09天｜轮询状态机与流式响应</title>
+  <style>
+    :root{color-scheme:light;--ink:#172033;--muted:#5d6a7d;--line:#dbe4ef;--paper:#fff;--canvas:#f3f7f9;--blue:#2256d5;--blue2:#173e9d;--blue-soft:#eaf1ff;--cyan:#087a8f;--cyan-soft:#e5f8fb;--green:#17784a;--green-soft:#e7f8ef;--amber:#985b0b;--amber-soft:#fff4dc;--red:#b4233e;--red-soft:#fff0f2;--violet:#6d43b5;--violet-soft:#f3edff;--nav:290px;--shadow:0 18px 52px rgba(31,49,74,.1)}
+    *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:28px}body{margin:0;background:var(--canvas);color:var(--ink);font:16px/1.75 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}button,input,select,textarea{font:inherit}a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}code{border-radius:5px;padding:.12em .38em;background:#edf2f8;color:#a52150;font:.9em/1.5 "Cascadia Code",Consolas,monospace}pre{margin:0;overflow:auto;border-radius:12px;padding:20px;background:#111827;color:#e7edf7;line-height:1.65}pre code{padding:0;background:transparent;color:inherit}h2{margin:0 0 14px;font-size:clamp(27px,3.4vw,38px);line-height:1.25;letter-spacing:-.025em}h3{margin:24px 0 9px;line-height:1.35}p{margin:9px 0}ul,ol{padding-left:1.45em}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid var(--line);padding:12px 13px;text-align:left;vertical-align:top}th{background:#f5f8fb;color:#34435a}
+    .page-progress{position:fixed;inset:0 0 auto;z-index:60;height:4px;background:#dce8ed}.page-progress span{display:block;width:0;height:100%;background:linear-gradient(90deg,#06b6d4,#2563eb,#7c3aed)}.side{position:fixed;inset:4px auto 0 0;z-index:30;width:var(--nav);height:calc(100vh - 4px);padding:24px 18px 36px;overflow:auto;background:#101b2f;color:#dbe6f7}.mark{padding:0 10px 18px;border-bottom:1px solid #2b3a53}.mark small{color:#67e8f9;letter-spacing:.12em}.mark h2{margin:5px 0 7px;color:#fff;font-size:20px;line-height:1.35;letter-spacing:0}.mark p{margin:0;color:#9eb0c9;font-size:13px}.nav-list{display:grid;gap:3px;margin-top:18px}.nav-list a{display:grid;grid-template-columns:25px minmax(0,1fr);gap:8px;border-radius:8px;padding:9px 10px;color:#c9d5e7;font-size:13px;line-height:1.35}.nav-list a:hover{background:#1c2b45;color:#fff;text-decoration:none}.nav-list a.active{background:#087a8f;color:#fff}.num{color:#67e8f9}.side-meter{margin:22px 10px}.meter-row{display:flex;justify-content:space-between;margin-bottom:7px;color:#a9b8ce;font-size:12px}.meter-track{height:7px;overflow:hidden;border-radius:99px;background:#34445d}.meter-value{width:0;height:100%;background:#22d3ee;transition:width .2s}
+    .main{margin-left:var(--nav);padding:34px 42px 80px}.topbar{display:flex;justify-content:space-between;align-items:center;max-width:1120px;margin:0 auto 18px}.crumbs{color:var(--muted);font-size:14px}.crumbs span{margin:0 7px;color:#9aa7b8}.toolbar,.footer-links{display:flex;gap:8px;flex-wrap:wrap}.button,.menu,.primary{border-radius:9px;padding:8px 12px;cursor:pointer}.button,.menu{border:1px solid var(--line);background:var(--paper);color:var(--muted);box-shadow:0 3px 12px rgba(31,48,79,.05)}.button:hover{color:var(--blue);text-decoration:none}.menu{display:none}.primary{border:0;background:var(--blue);color:#fff;font-weight:750}.primary:hover{background:var(--blue2)}.lesson{max-width:1120px;margin:auto;border:1px solid #e2eaf0;border-radius:20px;background:var(--paper);box-shadow:var(--shadow)}
+    .hero{position:relative;overflow:hidden;padding:68px 72px 58px;border-radius:20px 20px 0 0;background:radial-gradient(circle at 87% 18%,rgba(103,232,249,.27),transparent 27%),linear-gradient(135deg,#172244,#24518d 55%,#087a8f);color:#fff}.hero:after{content:"09";position:absolute;right:34px;bottom:-56px;color:rgba(255,255,255,.08);font:800 210px/1 system-ui}.eyebrow{margin:0 0 10px;color:#a5f3fc;font-weight:800;letter-spacing:.12em}.hero h1{position:relative;z-index:1;max-width:920px;margin:0;font-size:clamp(38px,5vw,59px);line-height:1.14;letter-spacing:-.04em}.hero-lead{position:relative;z-index:1;max-width:880px;margin:20px 0 0;color:#e1f5fb;font-size:18px}.pills{position:relative;z-index:1;display:flex;flex-wrap:wrap;gap:10px;margin-top:27px}.pill{border:1px solid rgba(255,255,255,.27);border-radius:99px;padding:6px 11px;background:rgba(255,255,255,.1);font-size:13px}.hero-outcome{position:relative;z-index:1;max-width:890px;margin-top:29px;border-left:4px solid #67e8f9;border-radius:0 10px 10px 0;padding:14px 18px;background:rgba(10,27,47,.32)}
+    section{padding:54px 72px;border-top:1px solid var(--line)}.kicker{margin:0 0 8px;color:var(--cyan);font-size:13px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.lead{max-width:920px;color:var(--muted);font-size:17px}.goals,.cards,.state-cards,.evidence-grid,.notes-grid,.stream-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px;margin-top:22px}.goal,.card,.state-card,.evidence-card,.stream-card{border:1px solid var(--line);border-radius:14px;padding:19px;background:#fff}.goal{display:flex;gap:14px}.goal>b{display:grid;place-items:center;flex:0 0 34px;height:34px;border-radius:50%;background:var(--cyan-soft);color:var(--cyan)}.goal h3,.card h3,.state-card h3,.evidence-card h3,.stream-card h3{margin:0 0 7px;font-size:17px}.goal p,.card p,.state-card p,.evidence-card p,.stream-card p{margin:0;color:var(--muted)}.constraint{margin-top:22px;border-left:4px solid var(--cyan);border-radius:0 10px 10px 0;padding:15px 18px;background:var(--cyan-soft);color:#075c6c}.callout{margin:18px 0;border-radius:12px;padding:15px 17px}.info{background:var(--blue-soft);color:#183d8f}.warn{background:var(--amber-soft);color:#754506}.danger{background:var(--red-soft);color:#8b2035}.good{background:var(--green-soft);color:#145e3b}.violet{background:var(--violet-soft);color:#553394}
+    .two-axis{display:grid;grid-template-columns:1fr 1fr;gap:17px;margin-top:22px}.axis{border:1px solid var(--line);border-radius:15px;padding:21px}.axis.state{background:linear-gradient(145deg,#eefafe,#fff)}.axis.outcome{background:linear-gradient(145deg,#f5f0ff,#fff)}.axis h3{margin-top:0}.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.chip{border-radius:99px;padding:5px 10px;font-size:13px;font-weight:750}.chip.pending{background:var(--amber-soft);color:var(--amber)}.chip.success{background:var(--green-soft);color:var(--green)}.chip.failure{background:var(--red-soft);color:var(--red)}.chip.unknown{background:var(--violet-soft);color:var(--violet)}.chip.timeout{background:#e8eef8;color:#3d506f}.formula{margin:20px 0;border:1px solid #cbdce5;border-radius:14px;padding:20px;background:linear-gradient(135deg,#f2fbfd,#f8f5ff);text-align:center;font-weight:800;font-size:18px}.formula small{display:block;margin-top:6px;color:var(--muted);font-weight:500;font-size:14px}
+    .table-wrap{margin-top:20px;overflow:auto;border:1px solid var(--line);border-radius:14px}.policy-table{min-width:780px}.policy-table td:first-child{white-space:nowrap;font-family:"Cascadia Code",Consolas,monospace;color:#a52150}.priority{display:flex;align-items:stretch;gap:9px;margin:24px 0;overflow:auto}.priority-node{min-width:180px;border:1px solid var(--line);border-radius:12px;padding:15px;background:#fff}.priority-node b{display:block;color:var(--cyan)}.priority-node small{color:var(--muted)}.arrow{display:grid;place-items:center;color:#98a5b9;font-weight:900}.decision-lab{display:grid;gap:10px;margin-top:20px}.decision-row{display:grid;grid-template-columns:minmax(0,1fr) 170px 42px;gap:11px;align-items:center;border:1px solid var(--line);border-radius:11px;padding:12px 14px}.decision-row select{border:1px solid #cbd6e5;border-radius:8px;padding:7px;background:#fff}.decision-row .answer{font-weight:900;text-align:center}.feedback{min-height:27px;margin-top:12px;font-weight:750}
+    .state-card{position:relative;padding-top:43px}.state-card .badge{position:absolute;left:18px;top:14px;border-radius:99px;padding:2px 9px;font-size:12px;font-weight:800}.state-card.pending .badge{background:var(--amber-soft);color:var(--amber)}.state-card.success .badge{background:var(--green-soft);color:var(--green)}.state-card.failure .badge{background:var(--red-soft);color:var(--red)}.state-card.unknown .badge{background:var(--violet-soft);color:var(--violet)}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:22px 0 12px}.tab{border:1px solid var(--line);border-radius:99px;padding:7px 12px;background:#fff;color:var(--muted);cursor:pointer}.tab.active{border-color:var(--cyan);background:var(--cyan);color:#fff}.player{border:1px solid var(--line);border-radius:14px;padding:21px;background:#f8fbfd}.player h3{margin-top:0}.timeline{display:flex;gap:9px;overflow:auto;padding:8px 0}.timeline-node{min-width:148px;border:1px solid #cbd9e1;border-radius:11px;padding:13px;background:#fff}.timeline-node b{display:block;color:var(--cyan)}.timeline-node small{color:var(--muted)}.timeline-node.terminal{border-color:#b69de1;background:var(--violet-soft)}.player-fact{margin-top:14px;border-left:4px solid var(--violet);padding:12px 15px;background:var(--violet-soft);color:#553394}
+    .budget{display:grid;grid-template-columns:minmax(280px,.85fr) minmax(360px,1.15fr);gap:18px;margin-top:23px}.controls,.budget-output{border:1px solid var(--line);border-radius:14px;padding:21px}.controls{display:grid;grid-template-columns:1fr 1fr;gap:13px}.field{display:grid;gap:5px}.field label{color:#3f4d62;font-size:13px;font-weight:750}.field input{width:100%;border:1px solid #c9d4e4;border-radius:8px;padding:9px 10px;background:#fff}.budget-output{background:linear-gradient(145deg,#13213c,#175d71);color:#fff}.budget-output small{color:#bcecf5}.budget-value{margin:10px 0 6px;color:#a5f3fc;font-size:30px;font-weight:850}.ledger{display:grid;gap:8px;margin-top:15px}.ledger-row{display:flex;justify-content:space-between;gap:14px;border-top:1px solid rgba(255,255,255,.15);padding-top:8px;color:#e1f4f8}.budget-track{height:12px;overflow:hidden;border-radius:99px;background:rgba(255,255,255,.16);margin-top:16px}.budget-used{height:100%;width:0;background:linear-gradient(90deg,#22d3ee,#fbbf24);transition:width .2s}
+    .nested{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:stretch;margin-top:22px}.nested-box{border:1px solid var(--line);border-radius:14px;padding:20px}.nested-box.outer{background:var(--cyan-soft)}.nested-box.inner{background:var(--amber-soft)}.nested-middle{display:grid;place-items:center;color:var(--muted);font-weight:900}.evidence-card strong{display:block;margin-top:8px}.paths{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}.path{border-radius:6px;padding:5px 8px;background:#edf2f8;color:#3f4d62;font:12px/1.4 "Cascadia Code",Consolas,monospace}
+    .stream-flow{display:flex;align-items:stretch;gap:9px;margin:22px 0;overflow:auto}.stream-node{min-width:155px;border:1px solid var(--line);border-radius:12px;padding:14px;background:#fff}.stream-node b{display:block;color:var(--cyan)}.stream-node small{color:var(--muted)}.stream-table{min-width:740px}.code-pair{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-top:20px}.code-pair h3{margin-top:0}.commands{display:grid;gap:14px;margin-top:20px}.command{border:1px solid var(--line);border-radius:14px;overflow:hidden}.command-head{display:flex;justify-content:space-between;gap:12px;padding:10px 15px;background:#f3f6fa;color:#48566c;font-size:14px}.command pre{border-radius:0}.notes-grid textarea{width:100%;min-height:125px;resize:vertical;border:1px solid #cbd6e5;border-radius:10px;padding:11px;background:#fcfdff}.notes-grid label{display:grid;gap:7px;color:#3f4d62;font-weight:750}
+    .quiz-list{display:grid;gap:15px;margin-top:20px}.quiz{border:1px solid var(--line);border-radius:14px;padding:20px}.quiz legend{padding:0 5px;font-weight:750}.options{display:grid;gap:8px;margin-top:10px}.options label{display:flex;gap:8px;border-radius:8px;padding:8px 10px;cursor:pointer}.options label:hover{background:#f5f8fc}.explanation{display:none;margin-top:10px;border-radius:8px;padding:10px 12px;font-size:14px}.quiz.correct{border-color:#8dd9b3}.quiz.correct .explanation{display:block;background:var(--green-soft);color:#155e3b}.quiz.wrong{border-color:#f0a9b7}.quiz.wrong .explanation{display:block;background:var(--red-soft);color:#8c1d34}.summary{margin-top:16px;min-height:42px;border-radius:10px;padding:11px 14px;background:#f5f8fc}.gate-list{display:grid;gap:9px;margin:20px 0}.gate{display:flex;gap:10px;border:1px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer}.gate input{margin-top:.45em;accent-color:var(--cyan)}.gate input:checked+span{color:var(--muted);text-decoration:line-through}.footer{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-top:30px;border-top:1px solid var(--line);padding-top:24px}.pending-next{border:1px dashed #aab7ca;border-radius:10px;padding:10px 14px;color:var(--muted)}
+    @media(max-width:980px){.side{transform:translateX(-100%);transition:transform .2s}.nav-open .side{transform:none}.main{margin-left:0;padding:25px 22px 60px}.menu{display:inline-block}.hero{padding:58px 45px 48px}section{padding:48px 45px}.nested{grid-template-columns:1fr}.nested-middle{transform:rotate(90deg)}}
+    @media(max-width:690px){.crumbs{display:none}.toolbar{width:100%;justify-content:space-between}.lesson{border-radius:12px}.hero{padding:48px 22px 42px;border-radius:12px 12px 0 0}.hero:after{font-size:145px}section{padding:42px 22px}.goals,.cards,.state-cards,.evidence-grid,.notes-grid,.stream-grid,.two-axis,.budget,.code-pair{grid-template-columns:1fr}.controls{grid-template-columns:1fr}.decision-row{grid-template-columns:1fr}.decision-row .answer{text-align:left}.footer{align-items:stretch;flex-direction:column}.footer-links{flex-direction:column}}
+  </style>
+</head>
+<body>
+  <div class="page-progress"><span id="page-progress"></span></div>
+  <aside class="side" id="side-nav">
+    <div class="mark"><small>接口测试框架课程</small><h2>第09天 · 有限等待</h2><p>第2周 / 请求内核与可靠性能力</p></div>
+    <nav class="nav-list" id="nav-list" aria-label="本课目录">
+      <a href="#goals"><span class="num">01</span><span>问题与目标</span></a><a href="#model"><span class="num">02</span><span>状态与终止结果</span></a><a href="#policy"><span class="num">03</span><span>PollingPolicy合同</span></a><a href="#evaluation"><span class="num">04</span><span>判定优先级</span></a><a href="#transitions"><span class="num">05</span><span>状态迁移播放器</span></a><a href="#deadline"><span class="num">06</span><span>总deadline账本</span></a><a href="#retry"><span class="num">07</span><span>Polling与Retry</span></a><a href="#evidence"><span class="num">08</span><span>迁移与证据</span></a><a href="#sse"><span class="num">09</span><span>SSE生命周期</span></a><a href="#practice"><span class="num">10</span><span>离线实践</span></a><a href="#quiz"><span class="num">11</span><span>知识自测</span></a><a href="#gate"><span class="num">12</span><span>本课门禁</span></a>
+    </nav>
+    <div class="side-meter"><div class="meter-row"><span>门禁完成度</span><span id="gate-text">0/5</span></div><div class="meter-track"><div class="meter-value" id="gate-value"></div></div></div>
+  </aside>
+  <main class="main">
+    <div class="topbar"><div class="crumbs"><a href="../接口测试框架四周学习课程.html">课程大纲</a><span>/</span>第09天</div><div class="toolbar"><button class="menu" id="menu" type="button" aria-controls="side-nav">☰ 本课目录</button><a class="button" href="../接口测试框架四周学习课程.html">返回课程大纲</a><button class="button" id="reset" type="button">重置本课记录</button></div></div>
+    <article class="lesson">
+      <header class="hero">
+        <p class="eyebrow">DAY 09 · BOUNDED ASYNC OBSERVATION</p><h1>轮询状态机与流式响应</h1>
+        <p class="hero-lead">异步任务的可靠性不在于“多查几次”，而在于用明确状态机解释每个响应，让 HTTP attempt、Retry 等待和 poll sleep 共同服从一个不可突破的总 deadline；SSE 则用一条受控长响应持续交付事件。</p>
+        <div class="pills"><span class="pill">建议 1.5～2.5 小时</span><span class="pill">前置：完成第08天门禁</span><span class="pill">只运行离线测试</span><span class="pill">核心：polling.py / streaming.py</span></div>
+        <div class="hero-outcome"><strong>完成标志：</strong>能为 success、failure、unknown 画出迁移；能说明 timeout 为什么不是第五种状态；能证明预算耗尽后不会再发请求，并正确关闭 SSE Response。</div>
+      </header>
+
+      <section id="goals" data-section>
+        <p class="kicker">01 · First principles</p><h2>真正的问题是“有限时间内如何可靠观察”，不是循环语法</h2>
+        <p class="lead">Polling 与 SSE 都处理“结果不会一次完整返回”的场景。Polling 获取多个离散响应；SSE 消费一个持续响应。两者共同约束是：必须知道何时完成、何时失败、何时停止以及谁负责释放资源。</p>
+        <div class="goals">
+          <div class="goal"><b>1</b><div><h3>区分状态与结果</h3><p>掌握 pending、success、failure、unknown，并把 timeout 放在 deadline 终止层。</p></div></div>
+          <div class="goal"><b>2</b><div><h3>守住唯一预算</h3><p>理解 transport timeout、Retry wait、poll sleep 都消费同一 poll_timeout。</p></div></div>
+          <div class="goal"><b>3</b><div><h3>读懂嵌套尝试</h3><p>区分外层 PollingTransition 与内层 HTTP Retry attempt。</p></div></div>
+          <div class="goal"><b>4</b><div><h3>管理流式生命周期</h3><p>解释为何禁用响应体日志、如何识别 [DONE]，以及为何必须 finally close。</p></div></div>
+        </div>
+        <div class="constraint"><strong>TOC 因果链：</strong>把每次 GET、Retry 和 sleep 各自设置超时 → 三套局部时间都“合理”但总和失控 → deadline 后仍发请求或接受迟到成功 → 用例拖长且最终事实错误。解除约束的方法是先建立一个绝对 deadline，再让所有内部动作只消费剩余预算。</div>
+      </section>
+
+      <section id="model" data-section>
+        <p class="kicker">02 · Two axes</p><h2>响应状态描述“看到了什么”，终止结果描述“为什么结束”</h2>
+        <div class="two-axis">
+          <div class="axis state"><h3>状态机轴：PollingState</h3><p>每个被成功解析并评估的响应，只会映射到四种状态之一。</p><div class="chips"><span class="chip pending">pending</span><span class="chip success">success</span><span class="chip failure">failure</span><span class="chip unknown">unknown</span></div></div>
+          <div class="axis outcome"><h3>生命周期轴：Polling outcome</h3><p>一次 Polling 会话可以因状态、预算或外部中断而结束。</p><div class="chips"><span class="chip success">success</span><span class="chip failure">failure</span><span class="chip unknown">unknown</span><span class="chip timeout">timeout</span><span class="chip timeout">interrupted</span></div></div>
+        </div>
+        <div class="formula">timeout ≠ PollingState<small>它表示“deadline 已耗尽”，可以发生在已经观测到若干 pending 之后，甚至发生在迟到的 succeeded 响应被观测之后。</small></div>
+        <div class="callout danger"><strong>关键合同：</strong>响应先被解析并记入 transitions，随后检查剩余预算；若此时 remaining ≤ 0，立即抛 PollingTimeoutError。即使 raw status 是 succeeded，也不能把越过 deadline 的结果改写为成功。</div>
+      </section>
+
+      <section id="policy" data-section>
+        <p class="kicker">03 · Policy contract</p><h2>PollingPolicy 把业务状态翻译成稳定框架状态</h2>
+        <p class="lead">直接调用 <code>poll_get()</code> 必须显式传入冻结的 PollingPolicy。媒体 Task 已通过公共能力提供 DEFAULT_MEDIA_POLLING_POLICY，业务用例不要再复制轮询循环。</p>
+        <div class="table-wrap"><table class="policy-table"><thead><tr><th>字段</th><th>默认值</th><th>含义</th></tr></thead><tbody>
+          <tr><td>status_json_path</td><td>$.status</td><td>提取原始业务状态；路径必须以 $ 开头。</td></tr>
+          <tr><td>pending</td><td>queued, running</td><td>继续等待并进入下一轮。</td></tr>
+          <tr><td>success</td><td>succeeded</td><td>返回最终 Response。</td></tr>
+          <tr><td>failure</td><td>failed, cancelled</td><td>抛 PollingFailedError。</td></tr>
+          <tr><td>result_json_path</td><td>None</td><td>提取值不为 None 时直接判成功，优先于 status 集合。</td></tr>
+          <tr><td>error_json_path</td><td>$.error</td><td>提取值不为 None 时优先判失败，优先级最高。</td></tr>
+          <tr><td>unknown</td><td>fail</td><td>fail 产生 UNKNOWN；pending 与 ignore 当前都映射为 PENDING。</td></tr>
+        </tbody></table></div>
+        <h3>直接调用的标准写法</h3>
+        <pre><code>from common import PollingPolicy
+
+policy = PollingPolicy(
+    status_json_path="$.status",
+    pending={"queued", "running"},
+    success={"succeeded"},
+    failure={"failed", "cancelled"},
+)
+
+response = self.request.poll_get(
+    f"/v1/tasks/{task_id}",
+    poll_interval=2,
+    poll_timeout=900,
+    polling_policy=policy,
+)</code></pre>
+        <div class="callout info"><strong>输入门禁：</strong>poll_interval 和最终 timeout 必须大于 0；旧的 success_json_path/failure_json_path 参数不再是入口。状态字段、结果字段和错误字段都由 Policy 统一描述。</div>
+      </section>
+
+      <section id="evaluation" data-section>
+        <p class="kicker">04 · Evaluation priority</p><h2>先看 error，再看 result，最后才查 status 集合</h2>
+        <div class="priority"><div class="priority-node"><b>1. 解析 JSON</b><small>非法 JSON 抛脱敏 AssertionError</small></div><div class="arrow">→</div><div class="priority-node"><b>2. error_json_path</b><small>值非 None：FAILURE</small></div><div class="arrow">→</div><div class="priority-node"><b>3. result_json_path</b><small>值非 None：SUCCESS</small></div><div class="arrow">→</div><div class="priority-node"><b>4. status sets</b><small>pending / success / failure</small></div><div class="arrow">→</div><div class="priority-node"><b>5. unknown rule</b><small>UNKNOWN 或 PENDING</small></div></div>
+        <div class="callout warn"><strong>为什么 error 优先：</strong>若响应同时出现 <code>status="succeeded"</code> 与值不为 None 的 error，不能因状态文字好看就忽略明确错误。相反，值不为 None 的 result 可以把仍为 running 的响应提升为 success，但前提是没有 error。</div>
+        <h3>分类实验</h3>
+        <p class="lead">按默认路径与题目给定 unknown 规则，选择评估结果。</p>
+        <div class="decision-lab">
+          <div class="decision-row" data-answer="failure"><span><strong>status=succeeded，result 有值，error 有值</strong>：错误字段优先。</span><select><option value="">请选择</option><option value="pending">PENDING</option><option value="success">SUCCESS</option><option value="failure">FAILURE</option><option value="unknown">UNKNOWN</option></select><span class="answer"></span></div>
+          <div class="decision-row" data-answer="success"><span><strong>status=running，result.urls 有值，无 error</strong>：结果字段优先于状态集合。</span><select><option value="">请选择</option><option value="pending">PENDING</option><option value="success">SUCCESS</option><option value="failure">FAILURE</option><option value="unknown">UNKNOWN</option></select><span class="answer"></span></div>
+          <div class="decision-row" data-answer="pending"><span><strong>status=queued，无 result/error</strong>：命中 pending 集合。</span><select><option value="">请选择</option><option value="pending">PENDING</option><option value="success">SUCCESS</option><option value="failure">FAILURE</option><option value="unknown">UNKNOWN</option></select><span class="answer"></span></div>
+          <div class="decision-row" data-answer="unknown"><span><strong>status=paused，unknown=fail</strong>：默认拒绝未知状态。</span><select><option value="">请选择</option><option value="pending">PENDING</option><option value="success">SUCCESS</option><option value="failure">FAILURE</option><option value="unknown">UNKNOWN</option></select><span class="answer"></span></div>
+          <div class="decision-row" data-answer="pending"><span><strong>status=paused，unknown=pending</strong>：继续观察但保留 raw_status。</span><select><option value="">请选择</option><option value="pending">PENDING</option><option value="success">SUCCESS</option><option value="failure">FAILURE</option><option value="unknown">UNKNOWN</option></select><span class="answer"></span></div>
+        </div>
+        <button class="primary" id="check-decisions" type="button" style="margin-top:16px">检查分类</button><div class="feedback" id="decision-feedback" aria-live="polite"></div>
+      </section>
+
+      <section id="transitions" data-section>
+        <p class="kicker">05 · State transition player</p><h2>三条状态路径 + 一条 deadline 终止路径</h2>
+        <div class="state-cards">
+          <div class="state-card pending"><span class="badge">PENDING</span><h3>继续观察</h3><p>记录 transition，sleep 不超过 remaining，然后尝试下一轮。</p></div>
+          <div class="state-card success"><span class="badge">SUCCESS</span><h3>正常返回</h3><p>附加完整 transitions 与最终响应，结束 Polling。</p></div>
+          <div class="state-card failure"><span class="badge">FAILURE</span><h3>业务失败</h3><p>抛 PollingFailedError，保留 error_value、最后响应与迁移。</p></div>
+          <div class="state-card unknown"><span class="badge">UNKNOWN</span><h3>协议漂移</h3><p>默认抛 PollingUnknownStateError，避免把新状态无限当作等待。</p></div>
+        </div>
+        <div class="tabs"><button class="tab active" type="button" data-path="success">success 路径</button><button class="tab" type="button" data-path="failure">failure 路径</button><button class="tab" type="button" data-path="unknown">unknown 路径</button><button class="tab" type="button" data-path="timeout">timeout 路径</button></div>
+        <div class="player" id="player"></div>
+        <div class="callout violet"><strong>画图规则：</strong>success、failure、unknown 都能画成 PollingState 迁移；timeout 应画成“已观测状态序列 → deadline 边界 → PollingTimeoutError”，不能伪造一个 PollingState.TIMEOUT。</div>
+      </section>
+
+      <section id="deadline" data-section>
+        <p class="kicker">06 · One budget</p><h2>总 deadline 是唯一账本，内部动作只能花剩余额度</h2>
+        <div class="formula">deadline = started_at + poll_timeout；remaining = deadline - monotonic_now<small>任何 transport、Retry wait 或 poll sleep 都不能拥有独立于 remaining 的额外时间。</small></div>
+        <div class="budget">
+          <div class="controls">
+            <div class="field"><label for="total">poll_timeout（秒）</label><input id="total" type="number" min="0.1" step="0.1" value="5"></div>
+            <div class="field"><label for="elapsed">当前累计耗时（秒）</label><input id="elapsed" type="number" min="0" step="0.1" value="1.2"></div>
+            <div class="field"><label for="http-timeout">配置的 HTTP timeout</label><input id="http-timeout" type="number" min="0" step="0.1" value="10"></div>
+            <div class="field"><label for="retry-wait">候选 Retry wait</label><input id="retry-wait" type="number" min="0" step="0.1" value="0.8"></div>
+            <div class="field"><label for="poll-interval">poll_interval</label><input id="poll-interval" type="number" min="0" step="0.1" value="2"></div>
+          </div>
+          <div class="budget-output" aria-live="polite">
+            <small>当前 checkpoint</small><div class="budget-value" id="budget-value">剩余 3.8 秒</div><div id="budget-action">可进入受限 HTTP attempt</div><div class="budget-track"><div class="budget-used" id="budget-used"></div></div>
+            <div class="ledger"><div class="ledger-row"><span>transport timeout 截断</span><strong id="http-result">3.8 秒</strong></div><div class="ledger-row"><span>Retry wait 是否可执行</span><strong id="retry-result">是</strong></div><div class="ledger-row"><span>本轮最大 poll sleep</span><strong id="sleep-result">2 秒</strong></div><div class="ledger-row"><span>候选等待消费后的剩余（未模拟HTTP耗时）</span><strong id="final-result">1 秒</strong></div></div>
+          </div>
+        </div>
+        <div class="cards">
+          <div class="card"><h3>请求前</h3><p>若 remaining ≤ 0，RetryExecutor/timeout clamp 在 transport 前终止，不发送网络请求。</p></div>
+          <div class="card"><h3>请求中</h3><p>单次 timeout 被截断为配置值与 remaining 的较小值；tuple timeout 的每一项同样截断。</p></div>
+          <div class="card"><h3>响应后</h3><p>先记录评估结果，再检查 remaining；迟到的 success 仍是 timeout。</p></div>
+          <div class="card"><h3>等待前</h3><p>Retry wait 必须严格小于 remaining；poll sleep 使用 min(interval, remaining)。</p></div>
+        </div>
+        <div class="callout danger"><strong>停止证明：</strong>timeout 用例在抛错后连续读取两次服务计数，第二次必须与第一次相等。这证明 deadline 终止后没有后台轮询继续发送请求。</div>
+      </section>
+
+      <section id="retry" data-section>
+        <p class="kicker">07 · Nested attempts</p><h2>Polling 的一次观察，内部可以包含多个 HTTP Retry attempts</h2>
+        <div class="nested">
+          <div class="nested-box outer"><h3>外层 Polling attempt</h3><p>目标是得到一个可评估的业务状态响应。每个评估结果生成一个 PollingTransition。</p><ul><li>编号：PollingTransition.attempt_index</li><li>等待：poll_interval</li><li>结果：PollingState</li></ul></div>
+          <div class="nested-middle">包含<br>→</div>
+          <div class="nested-box inner"><h3>内层 Request Group / Retry</h3><p>目标是从瞬时 HTTP 故障中恢复。一个外层观察可能实际发送多次 HTTP。</p><ul><li>编号：RequestContext attempt_index</li><li>等待：Retry backoff / Retry-After</li><li>结果：最终 Response 或异常</li></ul></div>
+        </div>
+        <div class="callout info"><strong>离线成功场景：</strong>服务端实际返回 503、queued、running、succeeded，共 4 个 HTTP 响应；503 在首个 Request Group 内被 Retry 挽救，因此 PollingSession 只观测到 pending、pending、success 三个状态。HTTP attempt 数不等于 Polling transition 数。</div>
+        <div class="callout warn"><strong>预算协作：</strong>内层 RetryExecutor 接收同一个 absolute deadline。候选 backoff 若不落在剩余时间内，会抛 RetryDeadlineExceeded，由外层转换成 PollingTimeoutError；不会先睡完再发现超时。</div>
+      </section>
+
+      <section id="evidence" data-section>
+        <p class="kicker">08 · Evidence</p><h2>迁移序列既是诊断证据，也是异常上下文</h2>
+        <div class="evidence-grid">
+          <div class="evidence-card"><h3>PollingTransition</h3><p>保存外层 attempt_index、相对耗时、PollingState、raw_status 和 HTTP 状态码。</p><strong>用于重建状态轨迹。</strong></div>
+          <div class="evidence-card"><h3>PollingFailedError</h3><p>保存 path、last_status、last_response、transitions 与 error_value。</p><strong>用于解释业务终态失败。</strong></div>
+          <div class="evidence-card"><h3>PollingUnknownStateError</h3><p>保存未知 raw_status 与完整迁移，暴露服务端协议漂移。</p><strong>默认不静默等待。</strong></div>
+          <div class="evidence-card"><h3>PollingTimeoutError</h3><p>保存 timeout、最后状态/响应和迁移；响应文本统一脱敏并截断。</p><strong>用于证明预算终止位置。</strong></div>
+        </div>
+        <div class="callout good"><strong>日志边界：</strong>中间 poll 响应不逐个作为最终附件挂载；结束时在最后 logger 上挂完整 transitions 与最终响应。观察/附件失败仍不应改写业务状态机事实。</div>
+        <h3>阅读顺序</h3>
+        <div class="cards">
+          <div class="card"><h3>1. 纯状态判断</h3><p>Policy、Evaluation、Transition 和异常。</p><div class="paths"><span class="path">common/polling.py</span><span class="path">tests/test_polling_state_machine.py</span></div></div>
+          <div class="card"><h3>2. 总预算控制</h3><p>请求、评估、deadline、sleep 与 Retry 协作。</p><div class="paths"><span class="path">common/base_request.py</span><span class="path">common/retry_executor.py</span></div></div>
+          <div class="card"><h3>3. 业务分类</h3><p>success/failure/unknown/timeout 的完整 loopback 生命周期。</p><div class="paths"><span class="path">module/offline_framework_example/test_polling.py</span></div></div>
+          <div class="card"><h3>4. 流式原语</h3><p>逐行观察、终态与关闭责任。</p><div class="paths"><span class="path">common/streaming.py</span><span class="path">tests/test_stream_fault_simulation.py</span></div></div>
+        </div>
+      </section>
+
+      <section id="sse" data-section>
+        <p class="kicker">09 · Streaming lifecycle</p><h2>SSE 是一条长响应：Header 成功不代表流已经完成</h2>
+        <div class="stream-flow"><div class="stream-node"><b>POST stream=True</b><small>只获取响应头与流句柄</small></div><div class="arrow">→</div><div class="stream-node"><b>绑定 Stream lease</b><small>operation 暂不完成</small></div><div class="arrow">→</div><div class="stream-node"><b>iter_sse_lines</b><small>逐行 UTF-8 解码与观察</small></div><div class="arrow">→</div><div class="stream-node"><b>[DONE] / 中断 / 错误</b><small>确定 stream outcome</small></div><div class="arrow">→</div><div class="stream-node"><b>finally close</b><small>释放连接资源</small></div></div>
+        <div class="stream-grid">
+          <div class="stream-card"><h3>为何 <code>_attach_log=False</code></h3><p>普通响应日志可能读取 <code>response.text/content</code>。对流式响应这样做会提前消费 body，导致业务消费者读不到 chunk。</p></div>
+          <div class="stream-card"><h3>iter_sse_lines 做什么</h3><p>跳过空行；bytes 用 UTF-8 replacement 解码；逐行发中性观察事件；识别 <code>data: [DONE]</code>。</p></div>
+          <div class="stream-card"><h3>它不做什么</h3><p>不替业务解析 JSON、不验证每个 chunk 契约，也不自动关闭 Response。Task/用例仍是资源所有者。</p></div>
+          <div class="stream-card"><h3>为何必须 finally close</h3><p>正常完成、非法 chunk、提前断流、主动中断都必须释放底层连接，不能遗留到 teardown 后。</p></div>
+        </div>
+        <div class="code-pair">
+          <div><h3>Request：不要提前读 body</h3><pre><code>return self.post(
+    "/v1/chat/completions",
+    json=payload,
+    stream=True,
+    headers={"Accept": "text/event-stream"},
+    _attach_log=False,
+    runtime_metadata=runtime_metadata(
+        RuntimeOperationKind.SSE,
+        name="chat_completion_stream",
+        role=RuntimeTrafficRole.WORKLOAD,
+    ),
+)</code></pre></div>
+          <div><h3>Task：消费与关闭同一所有者</h3><pre><code>try:
+    for line in iter_sse_lines(response):
+        assert line.startswith("data:")
+        if line == "data: [DONE]":
+            break
+finally:
+    response.close()</code></pre></div>
+        </div>
+        <div class="table-wrap"><table class="stream-table"><thead><tr><th>消费事实</th><th>Stream outcome</th><th>要求</th></tr></thead><tbody>
+          <tr><td>观测到 data: [DONE]</td><td>complete</td><td>业务仍需完成断言并关闭 Response。</td></tr>
+          <tr><td>流自然耗尽但没有 [DONE]</td><td>interrupted</td><td>业务应明确断言缺失终止标记。</td></tr>
+          <tr><td>消费者提前 close iterator</td><td>interrupted</td><td>保留主动中断事实。</td></tr>
+          <tr><td>读取中抛 ChunkedEncodingError 等</td><td>error</td><td>原异常继续抛出，Response finally 关闭。</td></tr>
+          <tr><td>成功响应从未消费</td><td>not_consumed</td><td>运行收口时记录完整性问题。</td></tr>
+          <tr><td>非 2xx 流式响应</td><td>error / failed</td><td>在响应头阶段完成失败，不消费 body。</td></tr>
+        </tbody></table></div>
+      </section>
+
+      <section id="practice" data-section>
+        <p class="kicker">10 · Offline practice</p><h2>用四类 Polling 场景和流式故障模拟建立证据</h2>
+        <p class="lead">主实践只访问 127.0.0.1 随机端口；SSE 补充实践使用 FakeStreamResponse，不调用真实接口。<code>module/protocol_testing</code> 仅作协议分层只读分析。</p>
+        <div class="commands">
+          <div class="command"><div class="command-head"><strong>主实践：Polling业务分类</strong><span>大纲要求</span></div><pre><code>.\.venv\Scripts\python.exe -m pytest module/offline_framework_example/test_polling.py -vv</code></pre></div>
+          <div class="command"><div class="command-head"><strong>补充：状态机与deadline单元合同</strong><span>建议</span></div><pre><code>.\.venv\Scripts\python.exe -m pytest tests/test_polling_state_machine.py tests/test_base_request_retry_polling.py -k "polling" -q</code></pre></div>
+          <div class="command"><div class="command-head"><strong>补充：SSE故障与资源关闭</strong><span>建议</span></div><pre><code>.\.venv\Scripts\python.exe -m pytest tests/test_stream_fault_simulation.py -q</code></pre></div>
+        </div>
+        <h3>当日产出</h3>
+        <div class="notes-grid">
+          <label>Success 迁移<textarea data-note="success" placeholder="例如：queued(PENDING) → running(PENDING) → succeeded(SUCCESS) → return。"></textarea></label>
+          <label>Failure / Unknown 迁移<textarea data-note="terminal" placeholder="分别写出异常类型、last_status、last_response 与 transitions。"></textarea></label>
+          <label>Timeout 终止图<textarea data-note="timeout" placeholder="写成 pending 序列 → deadline 耗尽 → PollingTimeoutError，不画第五种状态。"></textarea></label>
+          <label>SSE 生命周期<textarea data-note="sse" placeholder="说明 stream=True、_attach_log=False、iter_sse_lines、[DONE] 与 finally close。"></textarea></label>
+        </div>
+      </section>
+
+      <section id="quiz" data-section>
+        <p class="kicker">11 · Knowledge check</p><h2>知识自测</h2><p class="lead">答对 5 题视为达标。重点判断事实层级和预算归属。</p>
+        <div class="quiz-list">
+          <fieldset class="quiz" data-answer="c"><legend>1. timeout 在当前 Polling 模型中是什么？</legend><div class="options"><label><input type="radio" name="q1" value="a">第五种 PollingState</label><label><input type="radio" name="q1" value="b">一种 unknown 策略</label><label><input type="radio" name="q1" value="c">deadline 耗尽后的会话终止结果</label></div><div class="explanation">答案 C。状态只有 pending/success/failure/unknown。</div></fieldset>
+          <fieldset class="quiz" data-answer="a"><legend>2. 响应同时有非空 error、非空 result 和 status=succeeded，判定为何？</legend><div class="options"><label><input type="radio" name="q2" value="a">FAILURE</label><label><input type="radio" name="q2" value="b">SUCCESS</label><label><input type="radio" name="q2" value="c">UNKNOWN</label></div><div class="explanation">答案 A。error_json_path 的优先级最高。</div></fieldset>
+          <fieldset class="quiz" data-answer="b"><legend>3. succeeded 响应返回时已经超过 deadline，应如何处理？</legend><div class="options"><label><input type="radio" name="q3" value="a">接受迟到成功</label><label><input type="radio" name="q3" value="b">记录 transition 后抛 PollingTimeoutError</label><label><input type="radio" name="q3" value="c">再请求一次确认</label></div><div class="explanation">答案 B。deadline 事实优先，不能事后扩展合同。</div></fieldset>
+          <fieldset class="quiz" data-answer="c"><legend>4. Retry backoff 为2秒，但 Polling 只剩1秒，会发生什么？</legend><div class="options"><label><input type="radio" name="q4" value="a">先睡2秒</label><label><input type="radio" name="q4" value="b">截断成1秒后继续</label><label><input type="radio" name="q4" value="c">不sleep、不发下一attempt，转换为PollingTimeoutError</label></div><div class="explanation">答案 C。Retry wait 必须严格落在同一 deadline 内。</div></fieldset>
+          <fieldset class="quiz" data-answer="a"><legend>5. 流式 Request 为什么使用 _attach_log=False？</legend><div class="options"><label><input type="radio" name="q5" value="a">避免日志提前读取并消费响应体</label><label><input type="radio" name="q5" value="b">绕过所有状态码观察</label><label><input type="radio" name="q5" value="c">允许不关闭Response</label></div><div class="explanation">答案 A。状态、Header、终态仍可记录，body 由业务消费者逐行读取。</div></fieldset>
+          <fieldset class="quiz" data-answer="b"><legend>6. iter_sse_lines 自然耗尽但未看到 [DONE]，且调用方应做什么？</legend><div class="options"><label><input type="radio" name="q6" value="a">视为complete且无需关闭</label><label><input type="radio" name="q6" value="b">记录interrupted，业务断言缺失终态，并finally关闭Response</label><label><input type="radio" name="q6" value="c">自动改成PollingTimeoutError</label></div><div class="explanation">答案 B。SSE 与 Polling 是不同控制流，但都必须保留真实终止事实。</div></fieldset>
+        </div>
+        <button class="primary" id="submit-quiz" type="button" style="margin-top:16px">提交自测</button><div class="summary" id="quiz-summary" aria-live="polite">尚未提交。</div>
+      </section>
+
+      <section id="gate" data-section>
+        <p class="kicker">12 · Exit gate</p><h2>本课门禁：能证明停止，才进入上下文与并发</h2>
+        <div class="gate-list">
+          <label class="gate"><input type="checkbox" data-gate="states"><span>我能区分四种 PollingState，并说明 timeout 不是第五种状态。</span></label>
+          <label class="gate"><input type="checkbox" data-gate="priority"><span>我能写出 error → result → status → unknown 的真实判定优先级。</span></label>
+          <label class="gate"><input type="checkbox" data-gate="deadline"><span>我能解释 transport、Retry wait、poll sleep 如何共享唯一 deadline。</span></label>
+          <label class="gate"><input type="checkbox" data-gate="nested"><span>我能区分 Polling transition 与 HTTP Retry attempt，并解释迟到成功为何仍超时。</span></label>
+          <label class="gate"><input type="checkbox" data-gate="sse"><span>我已运行离线测试，能解释 SSE 不提前消费 body 且必须 finally close。</span></label>
+        </div>
+        <div class="callout good"><strong>一句话验收：</strong>Polling 用状态机解释离散观察，用一个绝对 deadline 约束所有内部时间；SSE 用一个显式所有者消费并关闭长响应。两者都不能用“最终看起来成功”覆盖真实终止边界。</div>
+        <div class="footer"><div class="footer-links"><a class="button" href="第08天-请求重试策略.html">← 上一课</a><a class="button" href="../接口测试框架四周学习课程.html">返回课程大纲</a><a class="button" href="第10天-测试上下文资源清理与并发隔离.html">下一课 →</a></div></div>
+      </section>
+    </article>
+  </main>
+  <script>
+    (function(){
+      var prefix="api-case-course-day09-";
+      var paths={
+        success:{title:"Success：稳定成功主链",nodes:[["Poll 1","queued → PENDING"],["sleep","min(interval, remaining)"],["Poll 2","running → PENDING"],["sleep","仍消费同一预算"],["Poll 3","succeeded → SUCCESS"],["return","最终 Response"]],fact:"这是 PollingState 迁移：PENDING → PENDING → SUCCESS。"},
+        failure:{title:"Failure：业务终态失败",nodes:[["Poll 1","queued → PENDING"],["sleep","继续观察"],["Poll 2","error/status failed"],["FAILURE","记录 error_value"],["raise","PollingFailedError"]],fact:"异常保留 path、last_status、last_response、error_value 与全部 transitions。"},
+        unknown:{title:"Unknown：协议出现未声明状态",nodes:[["Poll 1","queued → PENDING"],["sleep","继续观察"],["Poll 2","paused 未命中集合"],["UNKNOWN","unknown=fail"],["raise","PollingUnknownStateError"]],fact:"默认快速暴露协议漂移；unknown=pending/ignore 才继续等待。"},
+        timeout:{title:"Timeout：不是第五种状态",nodes:[["Poll 1","running → PENDING"],["Poll N","仍是 PENDING"],["deadline","remaining ≤ 0"],["终止边界","不再发送请求"],["raise","PollingTimeoutError"]],fact:"正确图形是已观测状态序列 → deadline 终止；不存在 PollingState.TIMEOUT。",terminal:true}
+      };
+      var player=document.getElementById("player");
+      function renderPath(key){var path=paths[key];var nodes=path.nodes.map(function(item,index){var cls=path.terminal&&index>=2?"timeline-node terminal":"timeline-node";return '<div class="'+cls+'"><b>'+item[0]+'</b><small>'+item[1]+'</small></div>';}).join('<div class="arrow">→</div>');player.innerHTML='<h3>'+path.title+'</h3><div class="timeline">'+nodes+'</div><div class="player-fact"><strong>事实：</strong>'+path.fact+'</div>';}
+      document.querySelectorAll(".tab").forEach(function(button){button.addEventListener("click",function(){document.querySelectorAll(".tab").forEach(function(item){item.classList.remove("active");});button.classList.add("active");renderPath(button.dataset.path);});});renderPath("success");
+      document.getElementById("check-decisions").addEventListener("click",function(){var rows=Array.from(document.querySelectorAll(".decision-row"));var score=0;rows.forEach(function(row){var ok=row.querySelector("select").value===row.dataset.answer;var out=row.querySelector(".answer");out.textContent=ok?"✓":"✗";out.style.color=ok?"var(--green)":"var(--red)";if(ok)score++;});var feedback=document.getElementById("decision-feedback");feedback.textContent=score===rows.length?"5/5：分类正确，判定顺序没有被 status 字段误导。":score+"/5：请按 error → result → status → unknown 重查。";feedback.style.color=score===rows.length?"var(--green)":"var(--amber)";});
+      function numberValue(id,fallback){var value=Number(document.getElementById(id).value);return Number.isFinite(value)?Math.max(0,value):fallback;}function fmt(value){return Number(value.toFixed(3)).toString();}
+      function calculateBudget(){var total=Math.max(.001,numberValue("total",5));var elapsed=numberValue("elapsed",0);var configured=numberValue("http-timeout",0);var retry=numberValue("retry-wait",0);var interval=numberValue("poll-interval",0);var remaining=total-elapsed;var used=Math.min(100,Math.max(0,elapsed/total*100));document.getElementById("budget-used").style.width=used+"%";if(remaining<=0){document.getElementById("budget-value").textContent="预算已耗尽";document.getElementById("budget-action").textContent="请求前终止：不得再发送 transport";document.getElementById("http-result").textContent="不发送";document.getElementById("retry-result").textContent="否";document.getElementById("sleep-result").textContent="0 秒";document.getElementById("final-result").textContent="0 秒";return;}var http=Math.min(configured,remaining);var canRetry=retry<remaining;var afterRetry=canRetry?remaining-retry:remaining;var sleep=Math.min(interval,afterRetry);var final=Math.max(0,afterRetry-sleep);document.getElementById("budget-value").textContent="剩余 "+fmt(remaining)+" 秒";document.getElementById("budget-action").textContent="HTTP timeout 必须截断到剩余预算";document.getElementById("http-result").textContent=fmt(http)+" 秒";document.getElementById("retry-result").textContent=canRetry?"是，最多 "+fmt(retry)+" 秒":"否，候选等待不小于 remaining";document.getElementById("sleep-result").textContent=fmt(sleep)+" 秒";document.getElementById("final-result").textContent=fmt(final)+" 秒";}
+      ["total","elapsed","http-timeout","retry-wait","poll-interval"].forEach(function(id){document.getElementById(id).addEventListener("input",calculateBudget);});calculateBudget();
+      var notes=Array.from(document.querySelectorAll("[data-note]"));notes.forEach(function(note){note.value=localStorage.getItem(prefix+"note-"+note.dataset.note)||"";note.addEventListener("input",function(){localStorage.setItem(prefix+"note-"+note.dataset.note,note.value);});});
+      var gates=Array.from(document.querySelectorAll("[data-gate]"));function updateGate(){var done=gates.filter(function(item){return item.checked;}).length;document.getElementById("gate-text").textContent=done+"/"+gates.length;document.getElementById("gate-value").style.width=(done/gates.length*100)+"%";}gates.forEach(function(gate){gate.checked=localStorage.getItem(prefix+"gate-"+gate.dataset.gate)==="1";gate.addEventListener("change",function(){localStorage.setItem(prefix+"gate-"+gate.dataset.gate,gate.checked?"1":"0");updateGate();});});updateGate();
+      document.getElementById("submit-quiz").addEventListener("click",function(){var cards=Array.from(document.querySelectorAll(".quiz"));var score=0;cards.forEach(function(card){var selected=card.querySelector("input:checked");var ok=selected&&selected.value===card.dataset.answer;card.classList.toggle("correct",Boolean(ok));card.classList.toggle("wrong",!ok);if(ok)score++;});var output=document.getElementById("quiz-summary");output.textContent=score>=5?score+"/6：达标。请完成离线实践和门禁。":score+"/6：未达标。回看状态/结果、deadline与SSE所有权。";output.style.background=score>=5?"var(--green-soft)":"var(--amber-soft)";output.style.color=score>=5?"var(--green)":"var(--amber)";localStorage.setItem(prefix+"quiz",String(score));});
+      document.getElementById("reset").addEventListener("click",function(){if(!confirm("确认清除第9课的笔记、门禁与自测记录？"))return;Object.keys(localStorage).filter(function(key){return key.startsWith(prefix);}).forEach(function(key){localStorage.removeItem(key);});notes.forEach(function(note){note.value="";});gates.forEach(function(gate){gate.checked=false;});document.querySelectorAll(".quiz").forEach(function(card){card.classList.remove("correct","wrong");});var summary=document.getElementById("quiz-summary");summary.textContent="尚未提交。";summary.removeAttribute("style");document.querySelectorAll(".decision-row").forEach(function(row){row.querySelector("select").value="";row.querySelector(".answer").textContent="";});document.getElementById("decision-feedback").textContent="";updateGate();});
+      document.getElementById("menu").addEventListener("click",function(){document.body.classList.toggle("nav-open");});document.getElementById("nav-list").addEventListener("click",function(){document.body.classList.remove("nav-open");});
+      var links=Array.from(document.querySelectorAll(".nav-list a"));var map=new Map(links.map(function(link){return[link.getAttribute("href").slice(1),link];}));var observer=new IntersectionObserver(function(entries){var visible=entries.filter(function(entry){return entry.isIntersecting;}).sort(function(a,b){return a.boundingClientRect.top-b.boundingClientRect.top;});if(!visible.length)return;links.forEach(function(link){link.classList.remove("active");});var current=map.get(visible[0].target.id);if(current)current.classList.add("active");},{rootMargin:"-8% 0px -78% 0px",threshold:[0,1]});document.querySelectorAll("[data-section]").forEach(function(section){observer.observe(section);});
+      function progress(){var max=document.documentElement.scrollHeight-innerHeight;document.getElementById("page-progress").style.width=(max>0?scrollY/max*100:0)+"%";}addEventListener("scroll",progress,{passive:true});progress();
+    })();
+  </script>
+</body>
+</html>

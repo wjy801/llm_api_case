@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="接口测试框架四周学习课程第8天：Retry策略、幂等资格、退避预算与显式恢复">
+  <title>第08天｜请求重试策略</title>
+  <style>
+    :root{color-scheme:light;--ink:#172033;--muted:#5d6a7d;--line:#dce4ef;--paper:#fff;--canvas:#f4f6fa;--blue:#2457d6;--blue2:#183e9b;--blue-soft:#eaf1ff;--green:#16794a;--green-soft:#e7f8ef;--amber:#9a5b08;--amber-soft:#fff4d9;--red:#b4233e;--red-soft:#fff0f2;--violet:#6d43b5;--violet-soft:#f3edff;--nav:288px;--shadow:0 18px 52px rgba(34,49,80,.1)}
+    *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:28px}body{margin:0;background:var(--canvas);color:var(--ink);font:16px/1.75 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}button,input,select,textarea{font:inherit}a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}code{border-radius:5px;padding:.12em .38em;background:#edf2f8;color:#a52150;font:.9em/1.5 "Cascadia Code",Consolas,monospace}pre{margin:0;overflow:auto;border-radius:12px;padding:20px;background:#111827;color:#e7edf7;line-height:1.65}pre code{padding:0;background:transparent;color:inherit}h2{margin:0 0 14px;font-size:clamp(27px,3.4vw,38px);line-height:1.25;letter-spacing:-.025em}h3{margin:24px 0 9px;line-height:1.35}p{margin:9px 0}ul,ol{padding-left:1.45em}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid var(--line);padding:12px 13px;text-align:left;vertical-align:top}th{background:#f6f8fc;color:#34435a}
+    .page-progress{position:fixed;inset:0 0 auto;z-index:60;height:4px;background:#dbe5f5}.page-progress span{display:block;width:0;height:100%;background:linear-gradient(90deg,#f59e0b,#2563eb)}.side{position:fixed;inset:4px auto 0 0;z-index:30;width:var(--nav);height:calc(100vh - 4px);padding:24px 18px 36px;overflow:auto;background:#111a2e;color:#dbe6f7}.mark{padding:0 10px 18px;border-bottom:1px solid #2b3852}.mark small{color:#fbbf24;letter-spacing:.12em}.mark h2{margin:5px 0 7px;color:#fff;font-size:20px;line-height:1.35;letter-spacing:0}.mark p{margin:0;color:#9eb0c9;font-size:13px}.nav-list{display:grid;gap:3px;margin-top:18px}.nav-list a{display:grid;grid-template-columns:25px minmax(0,1fr);gap:8px;border-radius:8px;padding:9px 10px;color:#c9d5e7;font-size:13px;line-height:1.35}.nav-list a:hover{background:#1d2942;color:#fff;text-decoration:none}.nav-list a.active{background:#a85f08;color:#fff}.num{color:#f9c96d}.side-meter{margin:22px 10px}.meter-row{display:flex;justify-content:space-between;margin-bottom:7px;color:#a9b8ce;font-size:12px}.meter-track{height:7px;overflow:hidden;border-radius:99px;background:#344159}.meter-value{width:0;height:100%;background:#fbbf24;transition:width .2s}
+    .main{margin-left:var(--nav);padding:34px 42px 80px}.topbar{display:flex;justify-content:space-between;align-items:center;max-width:1120px;margin:0 auto 18px}.crumbs{color:var(--muted);font-size:14px}.crumbs span{margin:0 7px;color:#9aa7b8}.toolbar,.footer-links{display:flex;gap:8px;flex-wrap:wrap}.button,.menu,.primary{border-radius:9px;padding:8px 12px;cursor:pointer}.button,.menu{border:1px solid var(--line);background:var(--paper);color:var(--muted);box-shadow:0 3px 12px rgba(31,48,79,.05)}.button:hover{color:var(--blue);text-decoration:none}.menu{display:none}.primary{border:0;background:var(--blue);color:#fff;font-weight:750}.primary:hover{background:var(--blue2)}.lesson{max-width:1120px;margin:auto;border:1px solid #e4eaf2;border-radius:20px;background:var(--paper);box-shadow:var(--shadow)}
+    .hero{position:relative;overflow:hidden;padding:68px 72px 58px;border-radius:20px 20px 0 0;background:radial-gradient(circle at 86% 17%,rgba(251,191,36,.28),transparent 27%),linear-gradient(135deg,#1a2446,#294d96 58%,#9a5b08);color:#fff}.hero:after{content:"08";position:absolute;right:34px;bottom:-56px;color:rgba(255,255,255,.08);font:800 210px/1 system-ui}.eyebrow{margin:0 0 10px;color:#fde68a;font-weight:800;letter-spacing:.12em}.hero h1{position:relative;z-index:1;max-width:890px;margin:0;font-size:clamp(38px,5vw,60px);line-height:1.14;letter-spacing:-.04em}.hero-lead{position:relative;z-index:1;max-width:850px;margin:20px 0 0;color:#e8efff;font-size:18px}.pills{position:relative;z-index:1;display:flex;flex-wrap:wrap;gap:10px;margin-top:27px}.pill{border:1px solid rgba(255,255,255,.27);border-radius:99px;padding:6px 11px;background:rgba(255,255,255,.1);font-size:13px}.hero-outcome{position:relative;z-index:1;max-width:870px;margin-top:29px;border-left:4px solid #fbbf24;border-radius:0 10px 10px 0;padding:14px 18px;background:rgba(11,20,43,.3)}
+    section{padding:54px 72px;border-top:1px solid var(--line)}.kicker{margin:0 0 8px;color:var(--blue);font-size:13px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.lead{max-width:900px;color:var(--muted);font-size:17px}.goals,.cards,.four-gates,.evidence-grid,.notes-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px;margin-top:22px}.goal,.card,.gate-card,.evidence-card{border:1px solid var(--line);border-radius:14px;padding:19px;background:#fff}.goal{display:flex;gap:14px}.goal>b{display:grid;place-items:center;flex:0 0 34px;height:34px;border-radius:50%;background:var(--amber-soft);color:var(--amber)}.goal h3,.card h3,.gate-card h3,.evidence-card h3{margin:0 0 7px;font-size:17px}.goal p,.card p,.gate-card p,.evidence-card p{margin:0;color:var(--muted)}.constraint{margin-top:22px;border-left:4px solid var(--amber);border-radius:0 10px 10px 0;padding:15px 18px;background:var(--amber-soft)}.formula{margin:20px 0;border:1px solid #cdd9ef;border-radius:14px;padding:20px;background:linear-gradient(135deg,#f6f9ff,#fffaf0);text-align:center;font-weight:800;font-size:18px}.formula small{display:block;margin-top:6px;color:var(--muted);font-weight:500;font-size:14px}
+    .flow{display:flex;align-items:stretch;gap:9px;margin:24px 0;overflow:auto;padding-bottom:4px}.flow-node{min-width:145px;border:1px solid var(--line);border-radius:12px;padding:14px;background:#fff}.flow-node b{display:block;color:var(--blue)}.flow-node small{color:var(--muted)}.arrow{display:grid;place-items:center;color:#98a5b9;font-weight:900}.gate-card{position:relative;padding-top:42px}.gate-card .badge{position:absolute;left:18px;top:14px;border-radius:99px;padding:2px 8px;background:var(--blue-soft);color:var(--blue);font-size:12px;font-weight:800}.callout{margin:18px 0;border-radius:12px;padding:15px 17px}.info{background:var(--blue-soft);color:#183d8f}.warn{background:var(--amber-soft);color:#754506}.danger{background:var(--red-soft);color:#8b2035}.good{background:var(--green-soft);color:#145e3b}.table-wrap{margin-top:20px;overflow:auto;border:1px solid var(--line);border-radius:14px}.policy-table{min-width:790px}.policy-table td:first-child{white-space:nowrap;font-family:"Cascadia Code",Consolas,monospace;color:#a52150}.policy-table td:nth-child(2){white-space:nowrap}
+    .rule-split{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:22px}.rule-box{border-radius:14px;padding:20px}.rule-box.safe{border:1px solid #a8dfc1;background:var(--green-soft)}.rule-box.risky{border:1px solid #f0b5c0;background:var(--red-soft)}.rule-box h3{margin-top:0}.decision-chain{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-top:22px}.decision-step{border:1px solid var(--line);border-radius:12px;padding:16px;background:#fff;text-align:center}.decision-step b{display:block;margin-bottom:6px;color:var(--blue)}.decision-step span{color:var(--muted);font-size:14px}.signal-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:22px}.signal{border:1px solid var(--line);border-radius:13px;padding:18px}.signal.yes{border-top:4px solid var(--green)}.signal.no{border-top:4px solid var(--red)}.signal.result{border-top:4px solid var(--violet)}.signal h3{margin-top:0}.signal ul{margin-bottom:0}.result-table{min-width:760px}
+    .calculator{display:grid;grid-template-columns:minmax(260px,.85fr) minmax(320px,1.15fr);gap:18px;margin-top:23px}.controls,.calc-output{border:1px solid var(--line);border-radius:14px;padding:21px}.controls{display:grid;grid-template-columns:1fr 1fr;gap:13px}.field{display:grid;gap:5px}.field.full{grid-column:1/-1}.field label{color:#3f4d62;font-size:13px;font-weight:750}.field input,.field select{width:100%;border:1px solid #c9d4e4;border-radius:8px;padding:9px 10px;background:#fff}.checkline{display:flex;gap:8px;align-items:center;color:var(--muted)}.calc-output{background:linear-gradient(145deg,#15213d,#243f79);color:#fff}.calc-output small{color:#bdd0ee}.delay-value{margin:12px 0 4px;color:#fde68a;font-size:31px;font-weight:850}.delay-trace{margin-top:16px;border-top:1px solid rgba(255,255,255,.18);padding-top:14px;color:#dbe7fb}
+    .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:20px 0 12px}.tab{border:1px solid var(--line);border-radius:99px;padding:7px 12px;background:#fff;color:var(--muted);cursor:pointer}.tab.active{border-color:var(--blue);background:var(--blue);color:#fff}.player{border:1px solid var(--line);border-radius:14px;padding:21px;background:#f8faff}.player h3{margin-top:0}.timeline{display:flex;gap:9px;overflow:auto;padding:8px 0}.timeline-node{min-width:148px;border:1px solid #ccd7e8;border-radius:11px;padding:13px;background:#fff}.timeline-node b{display:block;color:var(--blue)}.timeline-node small{color:var(--muted)}.player-fact{margin-top:14px;border-left:4px solid var(--violet);padding:12px 15px;background:var(--violet-soft);color:#553394}.evidence-card strong{display:block;margin-top:8px}.paths{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}.path{border-radius:6px;padding:5px 8px;background:#edf2f8;color:#3f4d62;font:12px/1.4 "Cascadia Code",Consolas,monospace}
+    .commands{display:grid;gap:14px;margin-top:20px}.command{border:1px solid var(--line);border-radius:14px;overflow:hidden}.command-head{display:flex;justify-content:space-between;gap:12px;padding:10px 15px;background:#f3f6fa;color:#48566c;font-size:14px}.command pre{border-radius:0}.notes-grid textarea{width:100%;min-height:125px;resize:vertical;border:1px solid #cbd6e5;border-radius:10px;padding:11px;background:#fcfdff}.notes-grid label{display:grid;gap:7px;color:#3f4d62;font-weight:750}.decision-lab{display:grid;gap:10px;margin-top:20px}.decision-row{display:grid;grid-template-columns:minmax(0,1fr) 170px 42px;gap:11px;align-items:center;border:1px solid var(--line);border-radius:11px;padding:12px 14px}.decision-row select{border:1px solid #cbd6e5;border-radius:8px;padding:7px;background:#fff}.decision-row .answer{font-weight:900;text-align:center}.feedback{min-height:27px;margin-top:12px;font-weight:750}
+    .quiz-list{display:grid;gap:15px;margin-top:20px}.quiz{border:1px solid var(--line);border-radius:14px;padding:20px}.quiz legend{padding:0 5px;font-weight:750}.options{display:grid;gap:8px;margin-top:10px}.options label{display:flex;gap:8px;border-radius:8px;padding:8px 10px;cursor:pointer}.options label:hover{background:#f5f8fc}.explanation{display:none;margin-top:10px;border-radius:8px;padding:10px 12px;font-size:14px}.quiz.correct{border-color:#8dd9b3}.quiz.correct .explanation{display:block;background:var(--green-soft);color:#155e3b}.quiz.wrong{border-color:#f0a9b7}.quiz.wrong .explanation{display:block;background:var(--red-soft);color:#8c1d34}.summary{margin-top:16px;min-height:42px;border-radius:10px;padding:11px 14px;background:#f5f8fc}.gate-list{display:grid;gap:9px;margin:20px 0}.gate{display:flex;gap:10px;border:1px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer}.gate input{margin-top:.45em;accent-color:var(--blue)}.gate input:checked+span{color:var(--muted);text-decoration:line-through}.footer{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-top:30px;border-top:1px solid var(--line);padding-top:24px}.pending{border:1px dashed #aab7ca;border-radius:10px;padding:10px 14px;color:var(--muted)}
+    @media(max-width:980px){.side{transform:translateX(-100%);transition:transform .2s}.nav-open .side{transform:none}.main{margin-left:0;padding:25px 22px 60px}.menu{display:inline-block}.hero{padding:58px 45px 48px}section{padding:48px 45px}.signal-grid,.decision-chain{grid-template-columns:1fr 1fr}}
+    @media(max-width:680px){.crumbs{display:none}.toolbar{width:100%;justify-content:space-between}.lesson{border-radius:12px}.hero{padding:48px 22px 42px;border-radius:12px 12px 0 0}.hero:after{font-size:145px}section{padding:42px 22px}.goals,.cards,.four-gates,.evidence-grid,.notes-grid,.rule-split,.signal-grid,.calculator,.decision-chain{grid-template-columns:1fr}.controls{grid-template-columns:1fr}.field.full{grid-column:auto}.decision-row{grid-template-columns:1fr}.decision-row .answer{text-align:left}.footer{align-items:stretch;flex-direction:column}.footer-links{flex-direction:column}}
+  </style>
+</head>
+<body>
+  <div class="page-progress"><span id="page-progress"></span></div>
+  <aside class="side" id="side-nav">
+    <div class="mark"><small>接口测试框架课程</small><h2>第08天 · 显式恢复</h2><p>第2周 / 请求内核与可靠性能力</p></div>
+    <nav class="nav-list" id="nav-list" aria-label="本课目录">
+      <a href="#goals"><span class="num">01</span><span>问题与目标</span></a><a href="#model"><span class="num">02</span><span>四道重试闸门</span></a><a href="#policy"><span class="num">03</span><span>RetryPolicy合同</span></a><a href="#eligibility"><span class="num">04</span><span>方法与幂等资格</span></a><a href="#signals"><span class="num">05</span><span>故障分类与结果</span></a><a href="#delay"><span class="num">06</span><span>等待与预算</span></a><a href="#executor"><span class="num">07</span><span>执行器生命周期</span></a><a href="#evidence"><span class="num">08</span><span>记录与质量证据</span></a><a href="#practice"><span class="num">09</span><span>离线实践</span></a><a href="#decision"><span class="num">10</span><span>重试决策表</span></a><a href="#quiz"><span class="num">11</span><span>知识自测</span></a><a href="#gate"><span class="num">12</span><span>本课门禁</span></a>
+    </nav>
+    <div class="side-meter"><div class="meter-row"><span>门禁完成度</span><span id="gate-text">0/5</span></div><div class="meter-track"><div class="meter-value" id="gate-value"></div></div></div>
+  </aside>
+  <main class="main">
+    <div class="topbar"><div class="crumbs"><a href="../接口测试框架四周学习课程.html">课程大纲</a><span>/</span>第08天</div><div class="toolbar"><button class="menu" id="menu" type="button" aria-controls="side-nav">☰ 本课目录</button><a class="button" href="../接口测试框架四周学习课程.html">返回课程大纲</a><button class="button" id="reset" type="button">重置本课记录</button></div></div>
+    <article class="lesson">
+      <header class="hero">
+        <p class="eyebrow">DAY 08 · RETRY BY CONTRACT</p><h1>请求重试策略</h1>
+        <p class="hero-lead">重试不是“失败后再跑一次”，而是在业务意图可安全重复、故障具备瞬时性、次数与等待仍在预算内时，显式地再次执行同一请求。</p>
+        <div class="pills"><span class="pill">建议 1.5～2.5 小时</span><span class="pill">前置：完成第07天门禁</span><span class="pill">只运行确定性离线测试</span><span class="pill">核心：common/retry*.py</span></div>
+        <div class="hero-outcome"><strong>完成标志：</strong>面对 GET 500、GET 400、POST 有无幂等键、Timeout、SSL 和断言失败，你能先判断是否有重试资格，再解释等待、终止结果和证据。</div>
+      </header>
+
+      <section id="goals" data-section>
+        <p class="kicker">01 · First principles</p><h2>先回答“为什么可以再执行”，再讨论“重试几次”</h2>
+        <p class="lead">一次失败只说明当前 attempt 没有得到期望结果，不自动证明再次发送是安全、有效或值得的。成熟重试机制首先约束副作用和错误类型，其次才计算等待。</p>
+        <div class="goals">
+          <div class="goal"><b>1</b><div><h3>区分失败与资格</h3><p>显式策略、方法资格、故障类别和预算缺一不可。</p></div></div>
+          <div class="goal"><b>2</b><div><h3>守住幂等边界</h3><p>解释 GET/HEAD、POST 幂等键与 allow_post 的风险差异。</p></div></div>
+          <div class="goal"><b>3</b><div><h3>计算真实等待</h3><p>掌握 fixed/exponential、jitter、Retry-After 和 max_elapsed。</p></div></div>
+          <div class="goal"><b>4</b><div><h3>解释终止事实</h3><p>区分最后响应、原异常、attempt 记录和实际等待。</p></div></div>
+        </div>
+        <div class="constraint"><strong>TOC 约束链：</strong>瞬时失败 → 习惯性“全都重试” → POST 重复副作用、确定性缺陷被隐藏、执行时间失控 → 用例偶尔通过但证据失真。真正约束不是重试代码不会写，而是没有先建立恢复资格的决策顺序。</div>
+      </section>
+
+      <section id="model" data-section>
+        <p class="kicker">02 · Mental model</p><h2>RetryExecutor 前有资格闸门，循环内还有故障与预算闸门</h2>
+        <div class="formula">继续下一次 attempt = 显式策略 ∧ 方法有资格 ∧ 故障可恢复 ∧ 次数和等待仍在预算内<small>任意一项不成立，就不能把“再试一次”当成默认动作。</small></div>
+        <div class="four-gates">
+          <div class="gate-card"><span class="badge">闸门 1</span><h3>策略显式传入</h3><p>BaseRequest 默认不重试。RetryPolicy 自身虽有默认字段，请求没有传 retry_policy 仍只执行一次。</p></div>
+          <div class="gate-card"><span class="badge">闸门 2</span><h3>方法可安全重复</h3><p>默认允许 GET/HEAD；POST 需要请求级幂等键，或明确设置 allow_post=True。</p></div>
+          <div class="gate-card"><span class="badge">闸门 3</span><h3>故障可能瞬时恢复</h3><p>默认状态为 429、500、502、503、504；异常为 ConnectionError、Timeout，SSL 被排除。</p></div>
+          <div class="gate-card"><span class="badge">闸门 4</span><h3>仍有次数与时间</h3><p>尚未达到 max_attempts，且下一段等待不会突破 max_elapsed 或外层 deadline。</p></div>
+        </div>
+        <div class="flow"><div class="flow-node"><b>业务调用</b><small>一个 operation</small></div><div class="arrow">→</div><div class="flow-node"><b>Request Group</b><small>聚合 attempts</small></div><div class="arrow">→</div><div class="flow-node"><b>Attempt 1</b><small>独立 Context</small></div><div class="arrow">→</div><div class="flow-node"><b>分类 + 等待</b><small>记录并查预算</small></div><div class="arrow">→</div><div class="flow-node"><b>Attempt N</b><small>新 Context</small></div><div class="arrow">→</div><div class="flow-node"><b>最终事实</b><small>Response 或原异常</small></div></div>
+        <div class="callout info"><strong>计数语义：</strong><code>max_attempts=3</code> 表示最多三次总尝试，不是首次请求后再重试三次，因此最多只有两段等待。</div>
+      </section>
+
+      <section id="policy" data-section>
+        <p class="kicker">03 · Policy contract</p><h2>RetryPolicy 是冻结策略对象，不是全局自动开关</h2>
+        <p class="lead">策略位于 <code>common/retry.py</code>，以 frozen Pydantic model 表达，避免同一调用过程被其他代码悄悄改写。</p>
+        <div class="table-wrap"><table class="policy-table"><thead><tr><th>字段</th><th>默认值</th><th>真实含义</th></tr></thead><tbody>
+          <tr><td>max_attempts</td><td>3</td><td>包含首次请求的最大总尝试数，最小为 1。</td></tr>
+          <tr><td>retry_statuses</td><td>429, 500, 502, 503, 504</td><td>400、404 默认不触发恢复。</td></tr>
+          <tr><td>retry_exceptions</td><td>ConnectionError, Timeout</td><td>SSL、TooManyRedirects 显式禁止。</td></tr>
+          <tr><td>backoff</td><td>exponential</td><td>支持 fixed 与 exponential。</td></tr>
+          <tr><td>base_delay / max_delay</td><td>0.5 / 10.0 秒</td><td>计算基数与单段等待上限。</td></tr>
+          <tr><td>jitter</td><td>True</td><td>普通退避在 0 到上限间随机，降低并发惊群。</td></tr>
+          <tr><td>respect_retry_after</td><td>True</td><td>优先读取秒数或 HTTP-date，有效时不施加 jitter。</td></tr>
+          <tr><td>max_elapsed</td><td>30.0 秒</td><td>局部恢复的已耗时加下一段等待预算。</td></tr>
+          <tr><td>allowed_methods</td><td>GET, HEAD</td><td>默认有方法资格的集合，忽略大小写。</td></tr>
+          <tr><td>allow_post</td><td>False</td><td>无幂等键时是否仍显式允许 POST。</td></tr>
+          <tr><td>idempotency_header</td><td>Idempotency-Key</td><td>识别 POST 资格的 Header 名称。</td></tr>
+        </tbody></table></div>
+        <h3>最小显式用法</h3>
+        <pre><code>from common import RetryPolicy
+
+response = self.request.get(
+    "/v1/models",
+    retry_policy=RetryPolicy(
+        max_attempts=3,
+        base_delay=0.5,
+        jitter=False,
+    ),
+)</code></pre>
+        <div class="callout warn"><strong>不要混淆：</strong>“RetryPolicy 默认 max_attempts 为 3”与“BaseRequest 默认重试三次”是两件事。没有传策略时，BaseRequest 走单次请求路径。</div>
+      </section>
+
+      <section id="eligibility" data-section>
+        <p class="kicker">04 · Idempotency boundary</p><h2>幂等键赋予 POST 重试资格，但不会凭空创造幂等性</h2>
+        <div class="decision-chain"><div class="decision-step"><b>1. 规范方法名</b><span>转为大写</span></div><div class="decision-step"><b>2. 查 allowed_methods</b><span>默认 GET / HEAD</span></div><div class="decision-step"><b>3. POST 特判</b><span>allow_post 或幂等 Header</span></div><div class="decision-step"><b>4. 其他方法</b><span>默认只发一次</span></div></div>
+        <div class="rule-split">
+          <div class="rule-box safe"><h3>推荐：请求级幂等键</h3><p>每个写操作使用稳定、唯一且可追踪的键，由服务端保证同一键只提交一次。Header 只作用于本次请求，不污染 Session。</p><pre style="margin-top:14px"><code>response = self.request.post(
+    "/v1/idempotent-operation",
+    json=payload,
+    headers={"Idempotency-Key": operation_key},
+    retry_policy=policy,
+)</code></pre></div>
+          <div class="rule-box risky"><h3>高风险：allow_post=True</h3><p>这只是客户端“允许再次发送”的声明，不会生成幂等键，也不会阻止重复扣费、创建或写入。</p><p><strong>启用前必须证明：</strong>接口天然幂等，或服务端另有去重合同，并有测试保护。</p></div>
+        </div>
+        <div class="callout danger"><strong>安全边界：</strong>框架以 Header 名称存在作为资格信号，不验证值是否唯一，也不验证服务端是否真的去重。资格判断不能替代业务合同。</div>
+      </section>
+
+      <section id="signals" data-section>
+        <p class="kicker">05 · Failure classification</p><h2>响应、传输异常和确定性缺陷的终止方式不同</h2>
+        <div class="signal-grid">
+          <div class="signal yes"><h3>默认可恢复</h3><ul><li>HTTP 429</li><li>500 / 502 / 503 / 504</li><li>ConnectionError</li><li>Timeout</li></ul></div>
+          <div class="signal no"><h3>默认不可恢复</h3><ul><li>HTTP 400 / 404</li><li>SSLError</li><li>TooManyRedirects</li><li>断言失败和代码错误</li></ul></div>
+          <div class="signal result"><h3>终止结果</h3><ul><li>响应耗尽：最后 Response</li><li>异常耗尽：最后原异常</li><li>不可恢复响应：立即返回</li><li>不可恢复异常：立即抛出</li></ul></div>
+        </div>
+        <div class="table-wrap"><table class="result-table"><thead><tr><th>场景</th><th>是否等待</th><th>最终事实</th><th>原因</th></tr></thead><tbody>
+          <tr><td>GET + 400</td><td>否</td><td>400 Response</td><td>不在默认状态集合。</td></tr>
+          <tr><td>GET + 503，下一次成功</td><td>是</td><td>200 Response</td><td>状态、次数和预算都允许。</td></tr>
+          <tr><td>GET + 503，attempt 用尽</td><td>此前可能等待</td><td>最后 503 Response</td><td>响应路径不制造新异常。</td></tr>
+          <tr><td>GET + Timeout，attempt 用尽</td><td>此前可能等待</td><td>最后一次 Timeout</td><td>保留原失败类型与堆栈。</td></tr>
+          <tr><td>POST 无幂等资格 + 503</td><td>否</td><td>第一次 503 Response</td><td>方法闸门在循环前阻止重试。</td></tr>
+        </tbody></table></div>
+        <div class="callout info"><strong>断言失败为何不重试：</strong>业务断言通常在请求返回之后，不属于传输恢复循环；用重试掩盖断言失败会把确定性缺陷伪装成瞬时波动。</div>
+      </section>
+
+      <section id="delay" data-section>
+        <p class="kicker">06 · Backoff and budget</p><h2>等待由来源优先级与预算共同计算</h2>
+        <p class="lead">指数模式为 <code>base_delay × 2^(attempt_index - 1)</code>，再受 max_delay 限制。有效 Retry-After 优先，非法值回退到普通退避。</p>
+        <div class="calculator">
+          <div class="controls">
+            <div class="field"><label for="attempt">失败 attempt 编号</label><input id="attempt" type="number" min="1" max="10" value="2"></div>
+            <div class="field"><label for="backoff">backoff</label><select id="backoff"><option value="exponential">exponential</option><option value="fixed">fixed</option></select></div>
+            <div class="field"><label for="base-delay">base_delay（秒）</label><input id="base-delay" type="number" min="0" step="0.1" value="0.5"></div>
+            <div class="field"><label for="max-delay">max_delay（秒）</label><input id="max-delay" type="number" min="0" step="0.1" value="10"></div>
+            <div class="field full"><label for="retry-after">Retry-After 秒数（留空或非法则回退）</label><input id="retry-after" type="text" placeholder="例如 3"></div>
+            <label class="checkline field full"><input id="jitter" type="checkbox" checked> 普通退避启用 jitter</label>
+          </div>
+          <div class="calc-output" aria-live="polite"><small>当前计算结果</small><div class="delay-value" id="delay-value">0 ～ 1 秒</div><div id="delay-source">来源：指数退避，再应用 jitter</div><div class="delay-trace" id="delay-trace"></div></div>
+        </div>
+        <div class="cards">
+          <div class="card"><h3>Retry-After 优先</h3><p>支持非负秒数和 HTTP-date。有效时无 jitter，但仍受 max_delay 截断。</p></div>
+          <div class="card"><h3>max_elapsed 预判</h3><p>比较“当前已耗时 + 下一段等待”，越界便不 sleep、不进入下一 attempt。</p></div>
+          <div class="card"><h3>响应路径越界</h3><p>返回当前可恢复 Response，例如 503。</p></div>
+          <div class="card"><h3>异常路径越界</h3><p>重新抛出当前原异常，不用通用超时覆盖它。</p></div>
+        </div>
+        <div class="callout warn"><strong>与第9天衔接：</strong>max_elapsed 是一次 RetryExecutor 的局部预算；Polling 还有覆盖 HTTP attempt、Retry 等待和 poll sleep 的总 deadline。</div>
+      </section>
+
+      <section id="executor" data-section>
+        <p class="kicker">07 · Execution lifecycle</p><h2>每次 attempt 都有新 RequestContext，但共享一个 Request Group</h2>
+        <p class="lead">选择路径观察执行器。新 Context 使中间件与 attempt 属性隔离；Group 把同一业务请求的实际尝试聚合起来。</p>
+        <div class="tabs"><button class="tab active" type="button" data-path="response">503 → 200</button><button class="tab" type="button" data-path="exception">Timeout → Timeout</button><button class="tab" type="button" data-path="ineligible">POST 无幂等键</button></div>
+        <div class="player" id="player"></div>
+        <div class="callout good"><strong>职责边界：</strong>每个 attempt 都通过 BaseRequest._send() 执行中间件与 transport。RetryExecutor 只拥有编排，不接管 Context 构建、中间件和 HTTP 传输。</div>
+      </section>
+
+      <section id="evidence" data-section>
+        <p class="kicker">08 · Observable evidence</p><h2>Attempt、RetryAttemptRecord 与实际等待是三种事实</h2>
+        <div class="evidence-grid">
+          <div class="evidence-card"><h3>RequestContext</h3><p>每次发送都有独立 Context，包含 attempt_index 和 max_attempts。</p><strong>回答：第几次真实发送？</strong></div>
+          <div class="evidence-card"><h3>RetryAttemptRecord</h3><p>记录促使恢复判断的失败、原因、计算等待、状态码或异常。</p><strong>回答：为什么考虑继续？</strong></div>
+          <div class="evidence-card"><h3>Request Group</h3><p>聚合所有 Context、配置上限和真实执行的累计等待。</p><strong>回答：调用实际尝试多少次？</strong></div>
+          <div class="evidence-card"><h3>Allure / Quality</h3><p>日志挂载 records；Runtime Hooks 在 Quality 开启时映射事实，关闭时为 Noop。</p><strong>回答：如何下钻与聚合？</strong></div>
+        </div>
+        <div class="callout warn"><strong>细粒度陷阱：</strong>RetryAttemptRecord 在预算检查前生成，所以 max_elapsed 否决 sleep 后仍可能有“计算等待”；Request Group 的 retry_wait_seconds 只在真实 sleep 后增加。提议等待不等于已执行等待。</div>
+        <h3>代码阅读顺序</h3>
+        <div class="cards">
+          <div class="card"><h3>1. 策略与纯判断</h3><p>资格、故障分类、Retry-After 和 delay。</p><div class="paths"><span class="path">common/retry.py</span><span class="path">tests/test_retry_policy.py</span></div></div>
+          <div class="card"><h3>2. 编排循环</h3><p>attempts、预算、结果与 Context。</p><div class="paths"><span class="path">common/retry_executor.py</span><span class="path">tests/test_retry_executor.py</span></div></div>
+          <div class="card"><h3>3. BaseRequest 组合</h3><p>策略进入 Group、Middleware 和日志。</p><div class="paths"><span class="path">common/base_request.py</span><span class="path">tests/test_base_request_retry_polling.py</span></div></div>
+          <div class="card"><h3>4. 离线生命周期</h3><p>沿 Task → Request → loopback 服务验证。</p><div class="paths"><span class="path">module/offline_framework_example/test_retry.py</span></div></div>
+        </div>
+      </section>
+
+      <section id="practice" data-section>
+        <p class="kicker">09 · Offline practice</p><h2>运行确定性场景，用三层证据解释结果</h2>
+        <p class="lead">以下命令只访问替身或 127.0.0.1 随机端口，不调用真实付费接口。</p>
+        <div class="commands">
+          <div class="command"><div class="command-head"><strong>主实践：离线 Retry 分类</strong><span>大纲要求</span></div><pre><code>.\.venv\Scripts\python.exe -m pytest module/offline_framework_example/test_retry.py -vv</code></pre></div>
+          <div class="command"><div class="command-head"><strong>补充：策略与执行器单元合同</strong><span>建议</span></div><pre><code>.\.venv\Scripts\python.exe -m pytest tests/test_retry_policy.py tests/test_retry_executor.py -q</code></pre></div>
+          <div class="command"><div class="command-head"><strong>聚焦：POST 有无幂等键</strong><span>建议</span></div><pre><code>.\.venv\Scripts\python.exe -m pytest module/offline_framework_example/test_retry.py -k "idempotent_post" -vv</code></pre></div>
+        </div>
+        <div class="cards">
+          <div class="card"><h3>业务结果</h3><p>最终 Response/异常是什么，领域断言为何通过或失败？</p></div>
+          <div class="card"><h3>服务端计数</h3><p>endpoint_call_counts 是 1 还是 2，是否与资格一致？</p></div>
+          <div class="card"><h3>运行时事实</h3><p>Group 中有几个 Context，各自 attempt_index 是什么？</p></div>
+          <div class="card"><h3>隔离边界</h3><p>请求级幂等 Header 是否没有残留到 session.headers？</p></div>
+        </div>
+        <h3>当日产出</h3>
+        <div class="notes-grid">
+          <label>事实：一个恢复成功与一个禁止重试的结果<textarea data-note="fact" placeholder="记录 attempt 数、最终结果和服务调用计数。"></textarea></label>
+          <label>因果：为什么重试不是“失败后再跑一次”<textarea data-note="cause" placeholder="按策略、方法、故障、预算、最终事实写因果链。"></textarea></label>
+          <label>迁移：如何评审新的 POST 重试需求<textarea data-note="transfer" placeholder="先问服务端幂等合同与键生命周期，再问故障和预算。"></textarea></label>
+          <label>证据：实际查阅的代码与测试<textarea data-note="evidence" placeholder="记录文件、nodeid和关键断言；不要记录密钥或真实响应。"></textarea></label>
+        </div>
+      </section>
+
+      <section id="decision" data-section>
+        <p class="kicker">10 · Decision lab</p><h2>重试决策表：先判资格，再判故障</h2>
+        <p class="lead">统一前提：均显式传入默认 RetryPolicy，尚有剩余 attempt 且预算充足。选择当前失败是否触发下一次 attempt。</p>
+        <div class="decision-lab">
+          <div class="decision-row" data-answer="yes"><span><strong>GET 返回 500</strong>：方法与状态都符合。</span><select><option value="">请选择</option><option value="yes">允许重试</option><option value="no">不允许重试</option></select><span class="answer"></span></div>
+          <div class="decision-row" data-answer="no"><span><strong>GET 返回 400</strong>：方法有资格，状态不可恢复。</span><select><option value="">请选择</option><option value="yes">允许重试</option><option value="no">不允许重试</option></select><span class="answer"></span></div>
+          <div class="decision-row" data-answer="no"><span><strong>POST 返回 503，无幂等键</strong>：状态可恢复，方法无资格。</span><select><option value="">请选择</option><option value="yes">允许重试</option><option value="no">不允许重试</option></select><span class="answer"></span></div>
+          <div class="decision-row" data-answer="yes"><span><strong>POST 返回 503，有 Idempotency-Key</strong>：框架资格通过。</span><select><option value="">请选择</option><option value="yes">允许重试</option><option value="no">不允许重试</option></select><span class="answer"></span></div>
+          <div class="decision-row" data-answer="yes"><span><strong>GET 抛 ConnectTimeout</strong>：属于 requests.Timeout。</span><select><option value="">请选择</option><option value="yes">允许重试</option><option value="no">不允许重试</option></select><span class="answer"></span></div>
+          <div class="decision-row" data-answer="no"><span><strong>GET 抛 SSLError</strong>：被显式排除。</span><select><option value="">请选择</option><option value="yes">允许重试</option><option value="no">不允许重试</option></select><span class="answer"></span></div>
+          <div class="decision-row" data-answer="no"><span><strong>响应后的业务断言失败</strong>：不是传输恢复信号。</span><select><option value="">请选择</option><option value="yes">允许重试</option><option value="no">不允许重试</option></select><span class="answer"></span></div>
+        </div>
+        <button class="primary" id="check-decisions" type="button" style="margin-top:16px">检查决策表</button><div class="feedback" id="decision-feedback" aria-live="polite"></div>
+      </section>
+
+      <section id="quiz" data-section>
+        <p class="kicker">11 · Knowledge check</p><h2>知识自测</h2><p class="lead">答对 5 题视为达标。沿四道闸门判断，不以“提高成功率”为理由。</p>
+        <div class="quiz-list">
+          <fieldset class="quiz" data-answer="c"><legend>1. 创建 RetryPolicy 但没有传给请求，BaseRequest 执行几次？</legend><div class="options"><label><input type="radio" name="q1" value="a">最多3次</label><label><input type="radio" name="q1" value="b">按环境决定</label><label><input type="radio" name="q1" value="c">1次</label></div><div class="explanation">答案 C。只有显式收到 retry_policy 才进入 RetryExecutor。</div></fieldset>
+          <fieldset class="quiz" data-answer="b"><legend>2. max_attempts=3 的准确含义？</legend><div class="options"><label><input type="radio" name="q2" value="a">首次后再重试3次</label><label><input type="radio" name="q2" value="b">包含首次在内最多3次</label><label><input type="radio" name="q2" value="c">固定等待3秒</label></div><div class="explanation">答案 B。最多三次 transport attempt、两段等待。</div></fieldset>
+          <fieldset class="quiz" data-answer="a"><legend>3. POST 带 Idempotency-Key 后，框架证明什么？</legend><div class="options"><label><input type="radio" name="q3" value="a">方法资格通过，服务端幂等仍需合同保证</label><label><input type="radio" name="q3" value="b">服务端一定不会重复写</label><label><input type="radio" name="q3" value="c">所有4xx可重试</label></div><div class="explanation">答案 A。Header 是客户端资格信号，不是服务端去重证明。</div></fieldset>
+          <fieldset class="quiz" data-answer="c"><legend>4. 有效 Retry-After 与普通退避同时存在时如何处理？</legend><div class="options"><label><input type="radio" name="q4" value="a">相加并应用jitter</label><label><input type="radio" name="q4" value="b">忽略Retry-After</label><label><input type="radio" name="q4" value="c">优先Retry-After，无jitter，仍受max_delay限制</label></div><div class="explanation">答案 C。非法 Retry-After 才回退到 fixed/exponential。</div></fieldset>
+          <fieldset class="quiz" data-answer="b"><legend>5. 503 后等待会突破 max_elapsed，响应路径返回什么？</legend><div class="options"><label><input type="radio" name="q5" value="a">统一抛新超时</label><label><input type="radio" name="q5" value="b">当前503 Response，不sleep</label><label><input type="radio" name="q5" value="c">强制下一请求</label></div><div class="explanation">答案 B。max_elapsed 的响应路径保留当前 Response。</div></fieldset>
+          <fieldset class="quiz" data-answer="a"><legend>6. 哪个事实最能证明等待真的执行过？</legend><div class="options"><label><input type="radio" name="q6" value="a">Request Group 的 retry_wait_seconds</label><label><input type="radio" name="q6" value="b">策略 base_delay</label><label><input type="radio" name="q6" value="c">Record 的 wait_seconds</label></div><div class="explanation">答案 A。Record 可能在预算否决前生成，Group 只累计真实 sleep。</div></fieldset>
+        </div>
+        <button class="primary" id="submit-quiz" type="button" style="margin-top:16px">提交自测</button><div class="summary" id="quiz-summary" aria-live="polite">尚未提交。</div>
+      </section>
+
+      <section id="gate" data-section>
+        <p class="kicker">12 · Exit gate</p><h2>本课门禁：能做恢复决策，才进入 Polling 总 deadline</h2>
+        <div class="gate-list">
+          <label class="gate"><input type="checkbox" data-gate="four"><span>我能说出显式策略、方法资格、故障分类和预算四道闸门。</span></label>
+          <label class="gate"><input type="checkbox" data-gate="idempotency"><span>我能解释幂等键与 allow_post 的边界，并说明为何使用请求级 Header。</span></label>
+          <label class="gate"><input type="checkbox" data-gate="delay"><span>我能计算 fixed/exponential、Retry-After、jitter 与 max_elapsed。</span></label>
+          <label class="gate"><input type="checkbox" data-gate="outcome"><span>我能区分响应耗尽、异常耗尽、计算等待与实际等待。</span></label>
+          <label class="gate"><input type="checkbox" data-gate="practice"><span>我已运行离线分类用例，完成决策表与当日产出。</span></label>
+        </div>
+        <div class="callout good"><strong>一句话验收：</strong>重试是受幂等性、故障类型和时间预算约束的显式恢复策略；它不能修复确定性缺陷，也不能改变最终业务事实。</div>
+        <div class="footer"><div class="footer-links"><a class="button" href="第07天-请求中间件脱敏日志与资源捕获.html">← 上一课</a><a class="button" href="../接口测试框架四周学习课程.html">返回课程大纲</a><a class="button" href="第09天-轮询状态机与流式响应.html">下一课：轮询状态机与流式响应 →</a></div></div>
+      </section>
+    </article>
+  </main>
+  <script>
+    (function(){
+      var prefix="api-case-course-day08-";
+      var paths={
+        response:{title:"响应路径：503 被第二次 attempt 挽救",nodes:[["Attempt 1","新 Context，完整中间件"],["HTTP 503","命中 retry_statuses"],["Record","原因 + 计算等待"],["Budget + sleep","未越界才等待"],["Attempt 2","新 Context 再发送"],["HTTP 200","最终返回"]],fact:"一个 operation、一个 Request Group、两个 Context、一个促成重试的 Record。"},
+        exception:{title:"异常路径：最终仍抛出原 Timeout",nodes:[["Attempt 1","transport 抛 Timeout"],["Record","异常类型与原因"],["Budget + sleep","允许后继续"],["Attempt 2","新 Context"],["Timeout","达到 max_attempts"],["Raise","抛最后原异常"]],fact:"最终 attempt 不触发下一次，因此记录主要描述此前恢复决策；原异常不被通用包装替换。"},
+        ineligible:{title:"方法无资格：策略存在也只执行一次",nodes:[["POST","传 RetryPolicy"],["Method gate","无幂等键"],["Attempt 1","一个 Context"],["HTTP 503","状态资格无意义"],["Return","第一次 Response"]],fact:"Group 可保留 configured_max_attempts，但真实 attempt_count 是 1；配置上限不等于执行次数。"}
+      };
+      var player=document.getElementById("player");
+      function renderPath(key){var path=paths[key];var nodes=path.nodes.map(function(item){return '<div class="timeline-node"><b>'+item[0]+'</b><small>'+item[1]+'</small></div>';}).join('<div class="arrow">→</div>');player.innerHTML='<h3>'+path.title+'</h3><div class="timeline">'+nodes+'</div><div class="player-fact"><strong>执行事实：</strong>'+path.fact+'</div>';}
+      document.querySelectorAll(".tab").forEach(function(button){button.addEventListener("click",function(){document.querySelectorAll(".tab").forEach(function(item){item.classList.remove("active");});button.classList.add("active");renderPath(button.dataset.path);});});renderPath("response");
+      function num(id,fallback){var value=Number(document.getElementById(id).value);return Number.isFinite(value)?value:fallback;}function fmt(value){return Number(value.toFixed(4)).toString();}
+      function calculate(){var attempt=Math.max(1,Math.floor(num("attempt",1)));var base=Math.max(0,num("base-delay",0));var max=Math.max(0,num("max-delay",0));var mode=document.getElementById("backoff").value;var text=document.getElementById("retry-after").value.trim();var retry=text===""?NaN:Number(text);var valid=Number.isFinite(retry)&&retry>=0;var jitter=document.getElementById("jitter").checked;var raw,source,trace;if(valid){raw=retry;source="来源：有效 Retry-After，禁用 jitter";trace="Retry-After "+fmt(raw)+" 秒；受 max_delay "+fmt(max)+" 秒限制";}else{raw=mode==="fixed"?base:base*Math.pow(2,Math.max(0,attempt-1));source="来源："+(mode==="fixed"?"固定退避":"指数退避")+(jitter?"，应用 jitter":"，无 jitter");trace=mode==="fixed"?"固定值 "+fmt(base):fmt(base)+" × 2^("+attempt+" - 1) = "+fmt(raw);trace+="；上限 "+fmt(max);}var capped=Math.min(max,raw);var useJitter=!valid&&jitter&&capped>0;document.getElementById("delay-value").textContent=useJitter?"0 ～ "+fmt(capped)+" 秒":fmt(capped)+" 秒";document.getElementById("delay-source").textContent=source;document.getElementById("delay-trace").textContent=trace+(useJitter?"；区间 [0, "+fmt(capped)+"]":"；最终 "+fmt(capped)+" 秒");}
+      ["attempt","backoff","base-delay","max-delay","retry-after","jitter"].forEach(function(id){document.getElementById(id).addEventListener("input",calculate);document.getElementById(id).addEventListener("change",calculate);});calculate();
+      document.getElementById("check-decisions").addEventListener("click",function(){var rows=Array.from(document.querySelectorAll(".decision-row"));var score=0;rows.forEach(function(row){var ok=row.querySelector("select").value===row.dataset.answer;var result=row.querySelector(".answer");result.textContent=ok?"✓":"✗";result.style.color=ok?"var(--green)":"var(--red)";if(ok)score++;});var feedback=document.getElementById("decision-feedback");feedback.textContent=score===rows.length?"7/7：决策正确。你先判断资格，再判断故障。":score+"/7：请按“策略 → 方法 → 故障 → 次数/预算”重查。";feedback.style.color=score===rows.length?"var(--green)":"var(--amber)";});
+      var notes=Array.from(document.querySelectorAll("[data-note]"));notes.forEach(function(note){note.value=localStorage.getItem(prefix+"note-"+note.dataset.note)||"";note.addEventListener("input",function(){localStorage.setItem(prefix+"note-"+note.dataset.note,note.value);});});
+      var gates=Array.from(document.querySelectorAll("[data-gate]"));function updateGate(){var done=gates.filter(function(item){return item.checked;}).length;document.getElementById("gate-text").textContent=done+"/"+gates.length;document.getElementById("gate-value").style.width=(done/gates.length*100)+"%";}gates.forEach(function(gate){gate.checked=localStorage.getItem(prefix+"gate-"+gate.dataset.gate)==="1";gate.addEventListener("change",function(){localStorage.setItem(prefix+"gate-"+gate.dataset.gate,gate.checked?"1":"0");updateGate();});});updateGate();
+      document.getElementById("submit-quiz").addEventListener("click",function(){var cards=Array.from(document.querySelectorAll(".quiz"));var score=0;cards.forEach(function(card){var selected=card.querySelector("input:checked");var ok=selected&&selected.value===card.dataset.answer;card.classList.toggle("correct",Boolean(ok));card.classList.toggle("wrong",!ok);if(ok)score++;});var output=document.getElementById("quiz-summary");output.textContent=score>=5?score+"/6：达标。请完成离线实践和门禁。":score+"/6：未达标。回看四道闸门、结果与证据。";output.style.background=score>=5?"var(--green-soft)":"var(--amber-soft)";output.style.color=score>=5?"var(--green)":"var(--amber)";localStorage.setItem(prefix+"quiz",String(score));});
+      document.getElementById("reset").addEventListener("click",function(){if(!confirm("确认清除第8课的笔记、门禁与自测记录？"))return;Object.keys(localStorage).filter(function(key){return key.startsWith(prefix);}).forEach(function(key){localStorage.removeItem(key);});notes.forEach(function(note){note.value="";});gates.forEach(function(gate){gate.checked=false;});document.querySelectorAll(".quiz").forEach(function(card){card.classList.remove("correct","wrong");});var summary=document.getElementById("quiz-summary");summary.textContent="尚未提交。";summary.removeAttribute("style");document.querySelectorAll(".decision-row").forEach(function(row){row.querySelector("select").value="";row.querySelector(".answer").textContent="";});document.getElementById("decision-feedback").textContent="";updateGate();});
+      document.getElementById("menu").addEventListener("click",function(){document.body.classList.toggle("nav-open");});document.getElementById("nav-list").addEventListener("click",function(){document.body.classList.remove("nav-open");});
+      var links=Array.from(document.querySelectorAll(".nav-list a"));var map=new Map(links.map(function(link){return[link.getAttribute("href").slice(1),link];}));var observer=new IntersectionObserver(function(entries){var visible=entries.filter(function(entry){return entry.isIntersecting;}).sort(function(a,b){return a.boundingClientRect.top-b.boundingClientRect.top;});if(!visible.length)return;links.forEach(function(link){link.classList.remove("active");});var current=map.get(visible[0].target.id);if(current)current.classList.add("active");},{rootMargin:"-8% 0px -78% 0px",threshold:[0,1]});document.querySelectorAll("[data-section]").forEach(function(section){observer.observe(section);});
+      function progress(){var max=document.documentElement.scrollHeight-innerHeight;document.getElementById("page-progress").style.width=(max>0?scrollY/max*100:0)+"%";}addEventListener("scroll",progress,{passive:true});progress();
+    })();
+  </script>
+</body>
+</html>
