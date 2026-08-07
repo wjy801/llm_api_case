@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="接口测试框架四周学习课程第11天：稳定Runner入口、CLI参数边界、pytest参数分相与collect-only安全门">
+  <title>第11天｜稳定入口与命令行参数</title>
+  <style>
+    :root{color-scheme:light;--ink:#172033;--muted:#5d6a7d;--line:#dbe4ef;--paper:#fff;--canvas:#f5f7fa;--blue:#2256d5;--blue2:#173e9d;--blue-soft:#eaf1ff;--indigo:#4f46a5;--indigo-soft:#eeedff;--green:#17784a;--green-soft:#e7f8ef;--amber:#985b0b;--amber-soft:#fff4dc;--red:#b4233e;--red-soft:#fff0f2;--cyan:#087a8f;--cyan-soft:#e5f8fb;--nav:290px;--shadow:0 18px 52px rgba(31,49,74,.1)}
+    *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:28px}body{margin:0;background:var(--canvas);color:var(--ink);font:16px/1.75 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}button,input,select,textarea{font:inherit}a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}code{border-radius:5px;padding:.12em .38em;background:#edf2f8;color:#a52150;font:.9em/1.5 "Cascadia Code",Consolas,monospace}pre{margin:0;overflow:auto;border-radius:12px;padding:20px;background:#111827;color:#e7edf7;line-height:1.65}pre code{padding:0;background:transparent;color:inherit}h2{margin:0 0 14px;font-size:clamp(27px,3.4vw,38px);line-height:1.25;letter-spacing:-.025em}h3{margin:24px 0 9px;line-height:1.35}p{margin:9px 0}ul,ol{padding-left:1.45em}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid var(--line);padding:12px 13px;text-align:left;vertical-align:top}th{background:#f5f8fb;color:#34435a}
+    .page-progress{position:fixed;inset:0 0 auto;z-index:60;height:4px;background:#dce8ed}.page-progress span{display:block;width:0;height:100%;background:linear-gradient(90deg,#6366f1,#2563eb,#06b6d4)}.side{position:fixed;inset:4px auto 0 0;z-index:30;width:var(--nav);height:calc(100vh - 4px);padding:24px 18px 36px;overflow:auto;background:#11182d;color:#dbe6f7}.mark{padding:0 10px 18px;border-bottom:1px solid #2b3a53}.mark small{color:#a5b4fc;letter-spacing:.12em}.mark h2{margin:5px 0 7px;color:#fff;font-size:20px;line-height:1.35;letter-spacing:0}.mark p{margin:0;color:#9eb0c9;font-size:13px}.nav-list{display:grid;gap:3px;margin-top:18px}.nav-list a{display:grid;grid-template-columns:25px minmax(0,1fr);gap:8px;border-radius:8px;padding:9px 10px;color:#c9d5e7;font-size:13px;line-height:1.35}.nav-list a:hover{background:#1c2b45;color:#fff;text-decoration:none}.nav-list a.active{background:var(--indigo);color:#fff}.num{color:#a5b4fc}.side-meter{margin:22px 10px}.meter-row{display:flex;justify-content:space-between;margin-bottom:7px;color:#a9b8ce;font-size:12px}.meter-track{height:7px;overflow:hidden;border-radius:99px;background:#34445d}.meter-value{width:0;height:100%;background:#818cf8;transition:width .2s}
+    .main{margin-left:var(--nav);padding:34px 42px 80px}.topbar{display:flex;justify-content:space-between;align-items:center;max-width:1120px;margin:0 auto 18px}.crumbs{color:var(--muted);font-size:14px}.crumbs span{margin:0 7px;color:#9aa7b8}.toolbar,.footer-links{display:flex;gap:8px;flex-wrap:wrap}.button,.menu,.primary{border-radius:9px;padding:8px 12px;cursor:pointer}.button,.menu{border:1px solid var(--line);background:var(--paper);color:var(--muted);box-shadow:0 3px 12px rgba(31,48,79,.05)}.button:hover{color:var(--blue);text-decoration:none}.menu{display:none}.primary{border:0;background:var(--blue);color:#fff;font-weight:750}.primary:hover{background:var(--blue2)}.lesson{max-width:1120px;margin:auto;border:1px solid #e2eaf0;border-radius:20px;background:var(--paper);box-shadow:var(--shadow)}
+    .hero{position:relative;overflow:hidden;padding:68px 72px 58px;border-radius:20px 20px 0 0;background:radial-gradient(circle at 87% 17%,rgba(165,180,252,.28),transparent 28%),linear-gradient(135deg,#161d3c,#334b91 55%,#087a8f);color:#fff}.hero:after{content:"11";position:absolute;right:24px;bottom:-56px;color:rgba(255,255,255,.08);font:800 210px/1 system-ui}.eyebrow{margin:0 0 10px;color:#c7d2fe;font-weight:800;letter-spacing:.12em}.hero h1{position:relative;z-index:1;max-width:920px;margin:0;font-size:clamp(38px,5vw,59px);line-height:1.14;letter-spacing:-.04em}.hero-lead{position:relative;z-index:1;max-width:900px;margin:20px 0 0;color:#e8edff;font-size:18px}.pills{position:relative;z-index:1;display:flex;flex-wrap:wrap;gap:10px;margin-top:27px}.pill{border:1px solid rgba(255,255,255,.27);border-radius:99px;padding:6px 11px;background:rgba(255,255,255,.1);font-size:13px}.hero-outcome{position:relative;z-index:1;max-width:920px;margin-top:29px;border-left:4px solid #a5b4fc;border-radius:0 10px 10px 0;padding:14px 18px;background:rgba(10,27,47,.32)}
+    section{padding:54px 72px;border-top:1px solid var(--line)}.kicker{margin:0 0 8px;color:var(--indigo);font-size:13px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.lead{max-width:930px;color:var(--muted);font-size:17px}.goals,.cards,.boundary-grid,.target-grid,.notes-grid,.failure-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px;margin-top:22px}.goal,.card,.boundary-card,.target-card,.failure-card{border:1px solid var(--line);border-radius:14px;padding:19px;background:#fff}.goal{display:flex;gap:14px}.goal>b{display:grid;place-items:center;flex:0 0 34px;height:34px;border-radius:50%;background:var(--indigo-soft);color:var(--indigo)}.goal h3,.card h3,.boundary-card h3,.target-card h3,.failure-card h3{margin:0 0 7px;font-size:17px}.goal p,.card p,.boundary-card p,.target-card p,.failure-card p{margin:0;color:var(--muted)}.constraint{margin-top:22px;border-left:4px solid var(--indigo);border-radius:0 10px 10px 0;padding:15px 18px;background:var(--indigo-soft);color:#3e3487}.callout{margin:18px 0;border-radius:12px;padding:15px 17px}.info{background:var(--blue-soft);color:#183d8f}.warn{background:var(--amber-soft);color:#754506}.danger{background:var(--red-soft);color:#8b2035}.good{background:var(--green-soft);color:#145e3b}.cyan{background:var(--cyan-soft);color:#075c6c}
+    .causal,.flow,.priority{display:flex;align-items:stretch;gap:9px;margin:23px 0;overflow:auto}.causal-node,.flow-node,.priority-node{min-width:170px;border:1px solid var(--line);border-radius:12px;padding:15px;background:#fff}.causal-node b,.flow-node b,.priority-node b{display:block;color:var(--indigo)}.causal-node small,.flow-node small,.priority-node small{color:var(--muted)}.arrow{display:grid;place-items:center;color:#98a5b9;font-weight:900}.formula{margin:20px 0;border:1px solid #cbdce5;border-radius:14px;padding:20px;background:linear-gradient(135deg,#f3f2ff,#eefaff);text-align:center;font-weight:800;font-size:18px}.formula small{display:block;margin-top:6px;color:var(--muted);font-weight:500;font-size:14px}.code-pair{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-top:20px}.code-pair h3{margin-top:0}.export-list{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:20px}.export{border:1px solid var(--line);border-radius:10px;padding:14px;background:#f9fbfd;text-align:center}.export code{font-weight:800}.thin-rule{margin-top:20px;border:1px dashed #aab7ca;border-radius:12px;padding:16px;color:var(--muted)}
+    .layer-flow{display:grid;grid-template-columns:repeat(6,minmax(155px,1fr));gap:9px;margin:22px 0;overflow:auto}.layer{position:relative;border:1px solid var(--line);border-radius:12px;padding:16px;background:#fff}.layer:not(:last-child):after{content:"→";position:absolute;right:-9px;top:50%;z-index:2;color:#8795aa;font-weight:900}.layer b{display:block;color:var(--indigo)}.layer small{color:var(--muted)}.layer.owner{border-color:#a7afe9;background:var(--indigo-soft)}.table-wrap{margin-top:20px;overflow:auto;border:1px solid var(--line);border-radius:14px}.contract-table{min-width:850px}.contract-table td:first-child{white-space:nowrap;font-family:"Cascadia Code",Consolas,monospace;color:#a52150}.boundary-card.framework{border-top:4px solid var(--indigo)}.boundary-card.pytest{border-top:4px solid var(--cyan)}.tag-list{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}.tag{border-radius:99px;padding:5px 9px;font-size:12px;font-weight:750}.tag.framework{background:var(--indigo-soft);color:var(--indigo)}.tag.pytest{background:var(--cyan-soft);color:var(--cyan)}.tag.shared{background:var(--amber-soft);color:var(--amber)}
+    .precedence{display:flex;align-items:stretch;gap:9px;margin:22px 0;overflow:auto}.precedence-node{min-width:200px;border:1px solid var(--line);border-radius:12px;padding:16px;background:#fff}.precedence-node strong{display:block;color:var(--indigo)}.precedence-node small{color:var(--muted)}.precedence-node.default{border-color:#e2bd7b;background:var(--amber-soft)}.safety-banner{border:1px solid #edb4bf;border-radius:14px;padding:18px;background:var(--red-soft);color:#892139}.safety-banner code{background:rgba(255,255,255,.55)}
+    .phase-grid{display:grid;grid-template-columns:1fr 1fr;gap:17px;margin-top:22px}.phase{border:1px solid var(--line);border-radius:15px;overflow:hidden}.phase h3{margin:0;padding:15px 18px}.phase.collection h3{background:var(--indigo-soft);color:var(--indigo)}.phase.execution h3{background:var(--cyan-soft);color:var(--cyan)}.phase-body{padding:18px}.token-row{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0}.token{border-radius:7px;padding:5px 8px;background:#edf2f8;color:#40516a;font:12px/1.4 "Cascadia Code",Consolas,monospace}.token.only{background:var(--indigo-soft);color:var(--indigo)}.token.exec{background:var(--cyan-soft);color:var(--cyan)}.token.both{background:var(--amber-soft);color:var(--amber)}.phase-fact{border-top:1px solid var(--line);padding-top:11px;color:var(--muted);font-size:14px}.partition{min-width:880px}.partition td:nth-child(2),.partition td:nth-child(3),.partition td:nth-child(4){text-align:center}.yes{color:var(--green);font-weight:900}.no{color:#a3acb9}.control{color:var(--amber);font-weight:800}
+    .plan-box{border:1px solid var(--line);border-radius:14px;padding:21px;background:linear-gradient(145deg,#f8f8ff,#f1fbfd);margin-top:22px}.plan-row{display:grid;grid-template-columns:180px 1fr;gap:14px;border-top:1px solid var(--line);padding:10px 0}.plan-row:first-of-type{border-top:0}.plan-row b{color:var(--indigo)}.immutable{border-left:4px solid var(--green);margin-top:14px;padding:11px 14px;background:var(--green-soft);color:#155e3b}
+    .short-circuit{display:grid;grid-template-columns:repeat(5,minmax(160px,1fr));gap:9px;margin:22px 0;overflow:auto}.short-node{border:1px solid var(--line);border-radius:12px;padding:15px;background:#fff}.short-node b{display:block;color:var(--indigo)}.short-node small{color:var(--muted)}.short-node.stop{border-color:#8dd9b3;background:var(--green-soft)}.no-side-effects{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:18px}.effect{border:1px solid #a9ddc1;border-radius:10px;padding:13px;background:#f5fcf8;color:#216441;text-align:center}
+    .router{margin-top:22px;border:1px solid var(--line);border-radius:15px;overflow:hidden}.router-head{padding:16px 19px;background:#f3f5ff}.router-controls{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:18px}.router-controls select{width:100%;border:1px solid #cbd6e5;border-radius:9px;padding:10px;background:#fff}.route-output{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:0 18px 18px}.route-box{border:1px solid var(--line);border-radius:10px;padding:13px;background:#fff}.route-box b{display:block;color:var(--indigo);font-size:13px}.route-box span{display:block;margin-top:5px;color:var(--muted);font-size:13px;word-break:break-word}.decision-lab{display:grid;gap:10px;margin-top:20px}.decision-row{display:grid;grid-template-columns:minmax(0,1fr) 190px 42px;gap:11px;align-items:center;border:1px solid var(--line);border-radius:11px;padding:12px 14px}.decision-row select{border:1px solid #cbd6e5;border-radius:8px;padding:7px;background:#fff}.decision-row .answer{font-weight:900;text-align:center}.feedback{min-height:27px;margin-top:12px;font-weight:750}.failure-card b{display:block;color:var(--red);margin-bottom:5px}.failure-card .fix{margin-top:11px;border-top:1px solid var(--line);padding-top:10px;color:var(--green)}
+    .commands{display:grid;gap:14px;margin-top:20px}.command{border:1px solid var(--line);border-radius:14px;overflow:hidden}.command-head{display:flex;justify-content:space-between;gap:12px;padding:10px 15px;background:#f3f6fa;color:#48566c;font-size:14px}.command pre{border-radius:0}.compare-output{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-top:20px}.output-card{border:1px solid var(--line);border-radius:12px;padding:17px}.output-card b{display:block;color:var(--indigo)}.output-card p{color:var(--muted)}.notes-grid textarea{width:100%;min-height:125px;resize:vertical;border:1px solid #cbd6e5;border-radius:10px;padding:11px;background:#fcfdff}.notes-grid label{display:grid;gap:7px;color:#3f4d62;font-weight:750}
+    .quiz-list{display:grid;gap:15px;margin-top:20px}.quiz{border:1px solid var(--line);border-radius:14px;padding:20px}.quiz legend{padding:0 5px;font-weight:750}.options{display:grid;gap:8px;margin-top:10px}.options label{display:flex;gap:8px;border-radius:8px;padding:8px 10px;cursor:pointer}.options label:hover{background:#f5f8fc}.explanation{display:none;margin-top:10px;border-radius:8px;padding:10px 12px;font-size:14px}.quiz.correct{border-color:#8dd9b3}.quiz.correct .explanation{display:block;background:var(--green-soft);color:#155e3b}.quiz.wrong{border-color:#f0a9b7}.quiz.wrong .explanation{display:block;background:var(--red-soft);color:#8c1d34}.summary{margin-top:16px;min-height:42px;border-radius:10px;padding:11px 14px;background:#f5f8fc}.gate-list{display:grid;gap:9px;margin:20px 0}.gate{display:flex;gap:10px;border:1px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer}.gate input{margin-top:.45em;accent-color:var(--indigo)}.gate input:checked+span{color:var(--muted);text-decoration:line-through}.footer{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-top:30px;border-top:1px solid var(--line);padding-top:24px}.pending-next{border:1px dashed #aab7ca;border-radius:10px;padding:10px 14px;color:var(--muted)}
+    @media(max-width:1100px){.export-list{grid-template-columns:1fr 1fr}.layer-flow{grid-template-columns:repeat(6,180px)}}
+    @media(max-width:980px){.side{transform:translateX(-100%);transition:transform .2s}.nav-open .side{transform:none}.main{margin-left:0;padding:25px 22px 60px}.menu{display:inline-block}.hero{padding:58px 45px 48px}section{padding:48px 45px}}
+    @media(max-width:690px){.crumbs{display:none}.toolbar{width:100%;justify-content:space-between}.lesson{border-radius:12px}.hero{padding:48px 22px 42px;border-radius:12px 12px 0 0}.hero:after{font-size:145px}section{padding:42px 22px}.goals,.cards,.boundary-grid,.target-grid,.notes-grid,.failure-grid,.code-pair,.phase-grid,.compare-output{grid-template-columns:1fr}.export-list,.no-side-effects,.route-output{grid-template-columns:1fr 1fr}.router-controls,.decision-row,.plan-row{grid-template-columns:1fr}.decision-row .answer{text-align:left}.footer{align-items:stretch;flex-direction:column}.footer-links{flex-direction:column}}
+  </style>
+</head>
+<body>
+  <div class="page-progress"><span id="page-progress"></span></div>
+  <aside class="side" id="side-nav">
+    <div class="mark"><small>接口测试框架课程</small><h2>第11天 · 参数权威边界</h2><p>第3周 / Runner、执行事实与报告</p></div>
+    <nav class="nav-list" id="nav-list" aria-label="本课目录">
+      <a href="#goals"><span class="num">01</span><span>约束与学习目标</span></a><a href="#entry"><span class="num">02</span><span>稳定薄入口</span></a><a href="#flow"><span class="num">03</span><span>参数调用主线</span></a><a href="#boundary"><span class="num">04</span><span>框架/pytest边界</span></a><a href="#target"><span class="num">05</span><span>target优先级</span></a><a href="#partition"><span class="num">06</span><span>参数分相</span></a><a href="#selection"><span class="num">07</span><span>选择条件与计划</span></a><a href="#collect"><span class="num">08</span><span>collect-only安全门</span></a><a href="#lab"><span class="num">09</span><span>参数路由实验室</span></a><a href="#practice"><span class="num">10</span><span>离线实践</span></a><a href="#quiz"><span class="num">11</span><span>知识自测</span></a><a href="#gate"><span class="num">12</span><span>本课门禁</span></a>
+    </nav>
+    <div class="side-meter"><div class="meter-row"><span>门禁完成度</span><span id="gate-text">0/5</span></div><div class="meter-track"><div class="meter-value" id="gate-value"></div></div></div>
+  </aside>
+  <main class="main">
+    <div class="topbar"><div class="crumbs"><a href="../接口测试框架四周学习课程.html">课程大纲</a><span>/</span>第11天</div><div class="toolbar"><button class="menu" id="menu" type="button" aria-controls="side-nav">☰ 本课目录</button><a class="button" href="../接口测试框架四周学习课程.html">返回课程大纲</a><button class="button" id="reset" type="button">重置本课记录</button></div></div>
+    <article class="lesson">
+      <header class="hero">
+        <p class="eyebrow">DAY 11 · ONE STABLE ENTRY, ONE PARAMETER AUTHORITY</p><h1>稳定入口与命令行参数</h1>
+        <p class="hero-lead">Runner 的第一职责不是“启动 pytest”，而是把用户意图变成唯一、可解释的参数计划：哪些参数决定编排，哪些参数决定选测，哪些参数只在正式执行生效。</p>
+        <div class="pills"><span class="pill">建议 1.5～2 小时</span><span class="pill">前置：完成第2周门禁</span><span class="pill">实践只做离线收集</span><span class="pill">核心：run_master.py / cli.py / pytest_execution.py</span></div>
+        <div class="hero-outcome"><strong>完成标志：</strong>能解释根入口为何保持薄；能把 target、<code>-n</code>、<code>-k</code>、<code>-m</code>、<code>--ignore</code>、<code>--collect-only</code> 路由到正确层；能画出用户参数到最终 pytest 收集参数和不可变用例计划的转换。</div>
+      </header>
+
+      <section id="goals" data-section>
+        <p class="kicker">01 · First principles &amp; TOC</p><h2>参数不是字符串列表，而是用户对执行边界的声明</h2>
+        <p class="lead">同一个 <code>-k polling</code> 如果收集时用一次、执行时又解释一次，最终执行集可能随插件、环境和文件变化而漂移。可靠 Runner 必须让选测只发生一次，然后只消费计划。</p>
+        <div class="goals">
+          <div class="goal"><b>1</b><div><h3>入口稳定</h3><p>外部只依赖少量公共符号，内部拆分不迫使 Jenkins 和用户改命令。</p></div></div>
+          <div class="goal"><b>2</b><div><h3>参数有主</h3><p>编排参数由 CLI 消费，pytest 参数透传后再按阶段分配。</p></div></div>
+          <div class="goal"><b>3</b><div><h3>选测唯一</h3><p>target、-k、-m、--ignore 共同进入同一次权威收集。</p></div></div>
+          <div class="goal"><b>4</b><div><h3>预检无副作用</h3><p>collect-only 只形成并展示计划，不进入正式执行与质量生命周期。</p></div></div>
+        </div>
+        <div class="causal"><div class="causal-node"><b>参数被多层重复解释</b><small>CLI、Runner、pytest各猜一次</small></div><div class="arrow">→</div><div class="causal-node"><b>收集集与执行集漂移</b><small>条件或插件行为不一致</small></div><div class="arrow">→</div><div class="causal-node"><b>报告数量无法守恒</b><small>计划与事实对不上</small></div><div class="arrow">→</div><div class="causal-node"><b>结果不可审计</b><small>无法回答“为什么跑了它”</small></div></div>
+        <div class="constraint"><strong>TOC 当前约束：</strong>不是 pytest 启动速度，而是“参数权威来源”不清。先固定根入口与参数所有者，再讨论第12天的权威收集和并串行集合守恒。</div>
+      </section>
+
+      <section id="entry" data-section>
+        <p class="kicker">02 · Stable facade</p><h2><code>run_master.py</code> 为什么必须薄</h2>
+        <p class="lead">它是本地用户和 Jenkins 共同依赖的门牌号。门牌稳定，房间内部才能持续重构。当前根文件只做公共重导出、UTF-8进程默认值和退出码交还。</p>
+        <div class="export-list"><div class="export"><code>run</code></div><div class="export"><code>main</code></div><div class="export"><code>PROJECT_ROOT</code></div><div class="export"><code>DEFAULT_ALLURE_RESULTS_DIR</code></div></div>
+        <div class="code-pair">
+          <div><h3>根入口真实结构</h3><pre><code>from run_orchestration import (
+    DEFAULT_ALLURE_RESULTS_DIR,
+    PROJECT_ROOT,
+    main,
+    run,
+)
+
+if __name__ == "__main__":
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    os.environ.setdefault("PYTHONUTF8", "1")
+    raise SystemExit(main(sys.argv[1:]))</code></pre></div>
+          <div><h3>架构门禁验证什么</h3><pre><code>assert run_master.run is run_orchestration.run
+assert run_master.main is run_orchestration.main
+assert tuple(inspect.signature(run_master.run).parameters) == (
+    "test_path", "extra_pytest_args",
+    "numprocesses", "dist", "serial_marker",
+)
+
+# 根入口不得直接导入 pytest 或 quality 实现</code></pre></div>
+        </div>
+        <div class="thin-rule"><strong>薄不等于无价值：</strong>根入口冻结的是外部合同和依赖方向。若把收集、Allure、Quality、分池逻辑塞回这里，每个内部变化都会放大成入口变化。</div>
+      </section>
+
+      <section id="flow" data-section>
+        <p class="kicker">03 · Call flow</p><h2>从命令行到不可变 nodeid 计划</h2>
+        <p class="lead">每一层只做一种翻译。识别到职责所有者，比记住文件名更重要。</p>
+        <div class="layer-flow">
+          <div class="layer"><b>run_master.py</b><small>传入 sys.argv[1:]</small></div>
+          <div class="layer owner"><b>cli.main</b><small>parse_args + 调 runner.run</small></div>
+          <div class="layer"><b>argparse</b><small>框架参数 / pytest余量</small></div>
+          <div class="layer owner"><b>partition</b><small>收集相 / 执行相</small></div>
+          <div class="layer owner"><b>pytest collect</b><small>唯一选择与marker读取</small></div>
+          <div class="layer"><b>Runner plan</b><small>最终nodeid/marker</small></div>
+        </div>
+        <pre><code>用户输入
+→ main(argv)
+→ parse_known_args(argv)
+→ runner.run(test_path, extra_pytest_args, numprocesses, dist, serial_marker)
+→ partition_pytest_args(extra_pytest_args)
+→ collect_test_case_items(test_path, collection_args)
+→ tuple[CollectedTestCase(nodeid, markers)]
+→ 后续执行只消费 nodeid 计划</code></pre>
+        <div class="callout info"><strong>两个公开入口：</strong>命令行走 <code>main(argv)</code>；Python 调用可直接使用 <code>run(test_path, extra_pytest_args, ...)</code>。二者最终进入同一个 Runner，不建立第二套执行逻辑。</div>
+      </section>
+
+      <section id="boundary" data-section>
+        <p class="kicker">04 · Parser boundary</p><h2><code>parse_known_args()</code> 划分框架参数与 pytest 参数</h2>
+        <p class="lead">框架只声明自己必须拥有的参数；未识别的余量原样交给 pytest 参数规划器。这样不需要复制 pytest 的完整 parser，也能继续支持插件参数。</p>
+        <div class="boundary-grid">
+          <div class="boundary-card framework"><h3>框架/编排层消费</h3><p>决定收集根、并发池和串行标记，pytest 不能替 Runner 决定这些。</p><div class="tag-list"><span class="tag framework">target</span><span class="tag framework">--test-path</span><span class="tag framework">-n / --numprocesses</span><span class="tag framework">--dist</span><span class="tag framework">--serial-marker</span><span class="tag framework">--parallel-first</span></div></div>
+          <div class="boundary-card pytest"><h3>pytest余量</h3><p>选择、显示、插件和产物参数先进入 <code>extra_pytest_args</code>，再按收集相和执行相分配。</p><div class="tag-list"><span class="tag pytest">-k</span><span class="tag pytest">-m</span><span class="tag pytest">--ignore</span><span class="tag pytest">--collect-only</span><span class="tag pytest">-q</span><span class="tag pytest">--alluredir</span></div></div>
+        </div>
+        <div class="table-wrap"><table class="contract-table"><thead><tr><th>参数</th><th>第一所有者</th><th>为什么</th><th>最终去向</th></tr></thead><tbody>
+          <tr><td>target / --test-path</td><td>CLI</td><td>定义权威收集根目录。</td><td><code>runner.run(test_path=...)</code></td></tr>
+          <tr><td>-n / --numprocesses</td><td>CLI + Runner</td><td>启用parallel-first并决定worker数。</td><td>仅并发执行池重新注入pytest。</td></tr>
+          <tr><td>--dist</td><td>CLI + Runner</td><td>只对xdist并发池有意义。</td><td>并发池执行参数。</td></tr>
+          <tr><td>--serial-marker</td><td>CLI + scheduling</td><td>决定哪种marker进入串行池。</td><td>分池算法，不发给pytest。</td></tr>
+          <tr><td>--parallel-first</td><td>CLI</td><td>兼容标志；当前传入-n已启用并发优先。</td><td>不改变额外行为。</td></tr>
+          <tr><td>-k / -m / --ignore</td><td>pytest collection</td><td>必须参与最终用例选择。</td><td>只进收集相。</td></tr>
+          <tr><td>-q / 插件未知参数</td><td>pytest</td><td>Runner不重写未知插件合同。</td><td>默认同时进入收集与执行相。</td></tr>
+        </tbody></table></div>
+        <div class="callout warn"><strong>边界代价：</strong>框架未知的拼写错误也会透传给 pytest，最终由 pytest 返回 usage error。<code>parse_known_args()</code> 的目标是兼容 pytest 生态，不是静默接受错误。</div>
+      </section>
+
+      <section id="target" data-section>
+        <p class="kicker">05 · Target resolution</p><h2>目标优先级很简单，默认值却可能很昂贵</h2>
+        <p class="lead"><code>parsed_args.test_path = parsed_args.test_path or parsed_args.target or "module"</code>。显式选项优先于位置参数；两者都没有时收集整个业务模块目录。</p>
+        <div class="precedence"><div class="precedence-node"><strong>1 · --test-path</strong><small>最高优先级，适合显式配置调用</small></div><div class="arrow">否则 →</div><div class="precedence-node"><strong>2 · positional target</strong><small>日常命令最简写法</small></div><div class="arrow">否则 →</div><div class="precedence-node default"><strong>3 · module</strong><small>默认收集全部业务模块</small></div></div>
+        <div class="target-grid">
+          <div class="target-card"><h3>显式离线目标</h3><pre><code>run_master.py module/offline_framework_example --collect-only -q</code></pre><p>学习环境推荐。只收集确定性loopback业务用例。</p></div>
+          <div class="target-card"><h3>选项覆盖位置参数</h3><pre><code>run_master.py module/smoke --test-path module/offline_framework_example --collect-only</code></pre><p>最终 test_path 是 <code>module/offline_framework_example</code>。</p></div>
+        </div>
+        <div class="safety-banner"><strong>安全门：</strong>不要在学习或未授权环境裸跑 <code>run_master.py</code>。默认 <code>module/</code> 可能包含真实接口、付费调用、账号余额和共享状态场景。当前课程实践必须显式指定离线模块并使用 <code>--collect-only</code>。</div>
+      </section>
+
+      <section id="partition" data-section>
+        <p class="kicker">06 · Phase partition</p><h2>同一参数列表为什么必须拆成收集相与执行相</h2>
+        <p class="lead">收集相回答“跑谁”，执行相回答“怎么跑、产物写哪”。如果把选择条件再次带入执行相，就出现第二次选测；如果把 Allure/JUnit 参数带入收集相，就可能产生预检副作用。</p>
+        <div class="phase-grid">
+          <div class="phase collection"><h3>Collection args</h3><div class="phase-body"><p>选择条件和通用pytest参数。</p><div class="token-row"><span class="token only">-k selected</span><span class="token only">-m smoke</span><span class="token only">--ignore=x</span><span class="token both">-q</span></div><div class="phase-fact">collector 自己固定加入 <code>--collect-only -q -o addopts=</code>。</div></div></div>
+          <div class="phase execution"><h3>Execution args</h3><div class="phase-body"><p>产物、xdist和通用pytest参数。</p><div class="token-row"><span class="token exec">--junitxml=x</span><span class="token exec">--alluredir=x</span><span class="token exec">--dist=load</span><span class="token both">-q</span></div><div class="phase-fact">正式执行前面直接放已计划 nodeid，不再附加 selection args。</div></div></div>
+        </div>
+        <div class="table-wrap"><table class="partition"><thead><tr><th>类别</th><th>收集相</th><th>执行相</th><th>另存事实</th><th>设计原因</th></tr></thead><tbody>
+          <tr><td>-k / -m / --ignore / --deselect</td><td class="yes">✓</td><td class="no">—</td><td class="yes">selection_args</td><td>唯一选测并写入执行事实。</td></tr>
+          <tr><td>--junitxml / --alluredir / -n / --dist</td><td class="no">—</td><td class="yes">✓</td><td class="no">—</td><td>只影响执行和产物。</td></tr>
+          <tr><td>--clean-alluredir</td><td class="no">—</td><td class="yes">✓</td><td class="no">—</td><td>预检不得清理产物。</td></tr>
+          <tr><td>--collect-only / --co / --collectonly</td><td class="control">控制位</td><td class="no">—</td><td class="yes">collect_only=True</td><td>Runner短路，不进入执行池。</td></tr>
+          <tr><td>未知/插件参数，例如 -q</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">—</td><td>不重实现pytest完整parser。</td></tr>
+        </tbody></table></div>
+        <div class="code-pair">
+          <div><h3>输入</h3><pre><code>[
+  "-q", "-k", "selected",
+  "--ignore=tests/ignored",
+  "--junitxml=reports/result.xml",
+  "--alluredir", "custom-allure",
+  "--collect-only",
+]</code></pre></div>
+          <div><h3>输出计划</h3><pre><code>collect_only = True
+selection_args = (
+  "-k", "selected", "--ignore=tests/ignored"
+)
+collection_args = (
+  "-q", "-k", "selected", "--ignore=tests/ignored"
+)
+execution_args = (
+  "-q", "--junitxml=reports/result.xml",
+  "--alluredir", "custom-allure"
+)</code></pre></div>
+        </div>
+      </section>
+
+      <section id="selection" data-section>
+        <p class="kicker">07 · Selection authority</p><h2>target、选择表达式与marker在一次收集中汇合</h2>
+        <p class="lead">pytest 才是 nodeid 和 marker 的权威解释器。Runner 不用文件扫描或正则猜用例；它调用一次 <code>pytest.main()</code> 并通过 collector 插件读取最终 items。</p>
+        <div class="flow"><div class="flow-node"><b>target</b><small>收集根路径</small></div><div class="arrow">+</div><div class="flow-node"><b>-k / -m</b><small>关键词与marker表达式</small></div><div class="arrow">+</div><div class="flow-node"><b>--ignore / deselect</b><small>排除条件</small></div><div class="arrow">→</div><div class="flow-node"><b>pytest items</b><small>最终nodeid与markers</small></div><div class="arrow">→</div><div class="flow-node"><b>immutable plan</b><small>执行只消费nodeid</small></div></div>
+        <div class="plan-box"><h3>收集器真实调用</h3><div class="plan-row"><b>固定安全参数</b><span><code>--collect-only -q -o addopts=</code>：关闭项目pytest.ini的默认addopts干扰。</span></div><div class="plan-row"><b>用户选择参数</b><span><code>*collection_args</code>：包含 -k、-m、--ignore 等。</span></div><div class="plan-row"><b>目标</b><span><code>str(test_path)</code>：作为最终收集根放在参数末尾。</span></div><div class="plan-row"><b>插件事实</b><span>每个 item 记录 <code>nodeid</code> 和 <code>iter_markers()</code> 的 marker 集合；重复 nodeid 直接报错。</span></div><div class="immutable"><strong>守恒前提：</strong>正式执行参数是 <code>[*planned_nodeids, *execution_args]</code>，不再放 -k/-m/--ignore。第12天的并串行分池只能划分这份计划，不能重新选测。</div></div>
+        <div class="callout cyan"><strong>三个真实门禁：</strong>临时创建两条用例后，<code>-k selected</code> 只收集一条；<code>-m serial</code> 只收集marker用例；<code>--ignore=path</code> 排除指定文件。三者都由权威pytest收集证明。</div>
+      </section>
+
+      <section id="collect" data-section>
+        <p class="kicker">08 · Safe preflight</p><h2><code>--collect-only</code> 是执行前安全门，不是“先跑一遍但不算”</h2>
+        <p class="lead">收集成功后 Runner 打印全部 nodeid、并发池数量和串行池数量，然后立即返回 0。短路发生在 Allure 和 Quality 生命周期创建之前。</p>
+        <div class="short-circuit"><div class="short-node"><b>解析参数</b><small>识别collect_only</small></div><div class="short-node"><b>权威收集</b><small>得到case/marker</small></div><div class="short-node"><b>分池计算</b><small>只计算不执行</small></div><div class="short-node"><b>打印计划</b><small>总数/parallel/serial</small></div><div class="short-node stop"><b>RETURN 0</b><small>在执行生命周期前停止</small></div></div>
+        <div class="no-side-effects"><div class="effect">不启动业务执行池</div><div class="effect">不创建Quality run_id</div><div class="effect">不准备/合并Allure</div><div class="effect">不写execution-result.json</div></div>
+        <div class="callout warn"><strong>仍可能失败：</strong>collect-only 会真实导入测试模块并执行 pytest 收集钩子；语法错误、缺依赖、配置校验失败或空集合仍返回相应 pytest 退出码。它保证“不执行测试函数”，不保证“任何代码都不导入”。</div>
+      </section>
+
+      <section id="lab" data-section>
+        <p class="kicker">09 · Interactive lab</p><h2>参数路由实验室</h2>
+        <p class="lead">先选择一条命令观察四层结果，再完成边界判断。重点不是记表格，而是说出参数为何属于那一层。</p>
+        <div class="router">
+          <div class="router-head"><strong>命令计划编译器</strong></div>
+          <div class="router-controls"><select id="route-scenario" aria-label="选择命令场景"><option value="base">离线collect-only</option><option value="keyword">增加-k polling</option><option value="parallel">并发执行-n 2 --dist load</option><option value="artifact">自定义Allure与JUnit</option><option value="override">--test-path覆盖位置target</option></select><button class="primary" id="compile-route" type="button">编译计划</button></div>
+          <div class="route-output"><div class="route-box"><b>test_path</b><span id="route-target"></span></div><div class="route-box"><b>framework</b><span id="route-framework"></span></div><div class="route-box"><b>collection_args</b><span id="route-collection"></span></div><div class="route-box"><b>execution_args / control</b><span id="route-execution"></span></div></div>
+        </div>
+        <div class="decision-lab">
+          <div class="decision-row" data-answer="framework"><span><code>-n 2</code> 应先由谁消费？</span><select aria-label="判断1"><option value="">请选择</option><option value="framework">框架CLI/Runner</option><option value="collection">只进收集相</option><option value="both">收集与执行都原样透传</option></select><span class="answer"></span></div>
+          <div class="decision-row" data-answer="collection"><span><code>-m "smoke and not serial"</code> 应进入哪里？</span><select aria-label="判断2"><option value="">请选择</option><option value="framework">框架CLI/Runner</option><option value="collection">只进收集相</option><option value="both">收集与执行都原样透传</option></select><span class="answer"></span></div>
+          <div class="decision-row" data-answer="both"><span>Runner不认识的pytest插件显示参数，默认如何处理？</span><select aria-label="判断3"><option value="">请选择</option><option value="framework">框架CLI/Runner</option><option value="collection">只进收集相</option><option value="both">收集与执行都原样透传</option></select><span class="answer"></span></div>
+          <div class="decision-row" data-answer="collection"><span><code>--ignore=module/paid</code> 应进入哪里？</span><select aria-label="判断4"><option value="">请选择</option><option value="framework">框架CLI/Runner</option><option value="collection">只进收集相</option><option value="both">收集与执行都原样透传</option></select><span class="answer"></span></div>
+        </div>
+        <button class="primary" id="check-decisions" type="button" style="margin-top:14px">检查判断</button><div class="feedback" id="decision-feedback" aria-live="polite"></div>
+        <h3>常见故障的因果链</h3>
+        <div class="failure-grid"><div class="failure-card"><b>裸跑入口导致意外真实调用</b><p>未给target → 默认module → 正式执行全部业务用例。</p><div class="fix">学习环境显式离线target + collect-only。</div></div><div class="failure-card"><b>-k在执行阶段再次出现</b><p>选择条件重复解释 → 计划nodeid与实际执行可能不守恒。</p><div class="fix">selection args只进权威收集。</div></div><div class="failure-card"><b>收集阶段清理Allure目录</b><p>产物参数错误进入收集相 → 预检产生破坏性副作用。</p><div class="fix">alluredir/clean-alluredir只进执行相。</div></div><div class="failure-card"><b>框架手写pytest全量parser</b><p>插件新增参数 → Runner滞后或拒绝 → 兼容面持续扩大。</p><div class="fix">只声明框架所有参数，其余known-unknown透传。</div></div></div>
+      </section>
+
+      <section id="practice" data-section>
+        <p class="kicker">10 · Offline practice</p><h2>比较完整计划与关键词子集</h2>
+        <p class="lead">两条命令都只做收集，不运行HTTP业务。观察第二条如何在同一target上通过 <code>-k polling</code> 缩小nodeid计划，同时保持pool统计自洽。</p>
+        <div class="commands">
+          <div class="command"><div class="command-head"><strong>完整离线业务计划</strong><span>大纲指定</span></div><pre><code>..venvScriptspython.exe run_master.py module/offline_framework_example --collect-only -q</code></pre></div>
+          <div class="command"><div class="command-head"><strong>Polling关键词子集</strong><span>大纲指定</span></div><pre><code>..venvScriptspython.exe run_master.py module/offline_framework_example -k polling --collect-only -q</code></pre></div>
+          <div class="command"><div class="command-head"><strong>补充：入口与参数分相门禁</strong><span>建议</span></div><pre><code>..venvScriptspython.exe -m pytest tests/test_run_orchestration_public_contract.py tests/test_master_service_parallel_serial.py -q</code></pre></div>
+        </div>
+        <div class="compare-output"><div class="output-card"><b>完整计划应记录</b><p>Collected test cases、每条nodeid、Parallel pool cases、Serial pool cases，以及最终“tests collected”。</p></div><div class="output-card"><b>关键词计划应解释</b><p><code>-k polling</code> 位于 selection_args/collection_args；执行计划只保留被选中的明确nodeid。</p></div></div>
+        <div class="callout cyan"><strong>当前快照：</strong>完整离线计划为 23 项（23 parallel / 0 serial）；<code>-k polling</code> 后为 4 项（4 parallel / 0 serial）。数量用于发现意外丢失，长期合同仍是参数路由正确、计划唯一且集合自洽。</div>
+        <h3>当日产出</h3>
+        <div class="notes-grid"><label>参数转换图<textarea data-note="flow" placeholder="从argv开始，画出框架参数、pytest余量、collection_args、execution_args、nodeid计划。"></textarea></label><label>两次收集对比<textarea data-note="compare" placeholder="记录完整计划与-k polling计划的数量、nodeid范围和分池统计。"></textarea></label><label>安全边界<textarea data-note="safety" placeholder="解释为什么不带target的默认module在学习环境有风险，以及collect-only阻止了哪些副作用。"></textarea></label><label>所有者清单<textarea data-note="owners" placeholder="为target、-n、-k、--alluredir、未知插件参数分别写出第一所有者。"></textarea></label></div>
+      </section>
+
+      <section id="quiz" data-section>
+        <p class="kicker">11 · Knowledge check</p><h2>知识自测</h2><p class="lead">答对5题视为达标。每题都在检查参数所有者，而不是命令记忆。</p>
+        <div class="quiz-list">
+          <fieldset class="quiz" data-answer="b"><legend>1. <code>run_master.py</code> 保持薄的首要价值是什么？</legend><div class="options"><label><input type="radio" name="q1" value="a">减少一两毫秒导入时间</label><label><input type="radio" name="q1" value="b">冻结用户/Jenkins入口合同，并允许内部编排重构</label><label><input type="radio" name="q1" value="c">绕过run_orchestration</label></div><div class="explanation">答案B。根入口是稳定门面，不是逻辑堆放处。</div></fieldset>
+          <fieldset class="quiz" data-answer="c"><legend>2. 同时传位置target和<code>--test-path</code>时谁生效？</legend><div class="options"><label><input type="radio" name="q2" value="a">位置target</label><label><input type="radio" name="q2" value="b">两个目录合并</label><label><input type="radio" name="q2" value="c">--test-path</label></div><div class="explanation">答案C。解析式是test_path or target or module。</div></fieldset>
+          <fieldset class="quiz" data-answer="a"><legend>3. <code>-k polling</code> 为什么不应再次进入正式执行参数？</legend><div class="options"><label><input type="radio" name="q3" value="a">权威收集已将它编译为最终nodeid，再选一次会破坏计划守恒</label><label><input type="radio" name="q3" value="b">pytest不支持-k</label><label><input type="radio" name="q3" value="c">它只影响输出颜色</label></div><div class="explanation">答案A。选择条件只属于唯一收集相。</div></fieldset>
+          <fieldset class="quiz" data-answer="b"><legend>4. Runner不认识的pytest插件参数默认如何分配？</legend><div class="options"><label><input type="radio" name="q4" value="a">直接丢弃</label><label><input type="radio" name="q4" value="b">同时放入collection_args和execution_args</label><label><input type="radio" name="q4" value="c">当作target</label></div><div class="explanation">答案B。这样保留既有插件语义，不重写pytest完整parser。</div></fieldset>
+          <fieldset class="quiz" data-answer="c"><legend>5. collect-only成功后不会发生哪一项？</legend><div class="options"><label><input type="radio" name="q5" value="a">导入测试模块</label><label><input type="radio" name="q5" value="b">读取nodeid与marker</label><label><input type="radio" name="q5" value="c">启动正式业务执行池并创建Quality run</label></div><div class="explanation">答案C。收集仍会导入模块，但在执行生命周期前短路。</div></fieldset>
+          <fieldset class="quiz" data-answer="a"><legend>6. 学习环境裸跑<code>run_master.py</code>的主要风险是什么？</legend><div class="options"><label><input type="radio" name="q6" value="a">默认target=module，可能执行真实、付费或共享状态用例</label><label><input type="radio" name="q6" value="b">默认只运行一个空测试</label><label><input type="radio" name="q6" value="c">默认强制collect-only</label></div><div class="explanation">答案A。必须显式限定离线target。</div></fieldset>
+        </div>
+        <button class="primary" id="submit-quiz" type="button" style="margin-top:16px">提交自测</button><div class="summary" id="quiz-summary" aria-live="polite">尚未提交。</div>
+      </section>
+
+      <section id="gate" data-section>
+        <p class="kicker">12 · Exit gate</p><h2>本课门禁：先把用户意图编译成唯一计划</h2>
+        <div class="gate-list"><label class="gate"><input type="checkbox" data-gate="entry"><span>我能说明run_master.py的稳定导出、薄入口价值和禁止直接导入pytest/quality实现的原因。</span></label><label class="gate"><input type="checkbox" data-gate="boundary"><span>我能区分框架参数与pytest余量，并解释parse_known_args的兼容边界。</span></label><label class="gate"><input type="checkbox" data-gate="partition"><span>我能把选择、执行、collect-only和未知插件参数分配到正确相位。</span></label><label class="gate"><input type="checkbox" data-gate="safety"><span>我能解释target优先级、默认module风险与collect-only的真实副作用边界。</span></label><label class="gate"><input type="checkbox" data-gate="practice"><span>我已比较两次离线收集，并画出argv到最终nodeid计划的转换图。</span></label></div>
+        <div class="callout good"><strong>一句话验收：</strong>根入口只稳定公开合同；CLI拥有编排参数，pytest余量按收集相和执行相分离；所有选择条件在一次权威收集中编译为nodeid计划，collect-only在正式执行生命周期前安全短路。</div>
+        <div class="footer"><div class="footer-links"><a class="button" href="第10天-测试上下文资源清理与并发隔离.html">← 上一课</a><a class="button" href="../接口测试框架四周学习课程.html">返回课程大纲</a></div><span class="pending-next">下一课：权威收集与并串行调度（待生成）</span></div>
+      </section>
+    </article>
+  </main>
+  <script>
+    (function(){
+      var prefix="api-case-course-day11-";
+      var routes={
+        base:{target:"module/offline_framework_example",framework:"target=offline module",collection:"-q",execution:"collect_only=True；不执行"},
+        keyword:{target:"module/offline_framework_example",framework:"target=offline module",collection:"-k polling；-q",execution:"collect_only=True；selection_args=-k polling"},
+        parallel:{target:"module/offline_framework_example",framework:"numprocesses=2；dist=load",collection:"（无-n/--dist）",execution:"parallel pool注入-n 2 --dist load"},
+        artifact:{target:"module/offline_framework_example",framework:"target=offline module",collection:"-q（产物参数不进入）",execution:"--alluredir=custom；--junitxml=reports/x.xml"},
+        override:{target:"module/offline_framework_example",framework:"--test-path覆盖target=module/smoke",collection:"--collect-only控制位；-q",execution:"collect_only=True；不执行"}
+      };
+      function compileRoute(){var route=routes[document.getElementById("route-scenario").value];document.getElementById("route-target").textContent=route.target;document.getElementById("route-framework").textContent=route.framework;document.getElementById("route-collection").textContent=route.collection;document.getElementById("route-execution").textContent=route.execution;}document.getElementById("compile-route").addEventListener("click",compileRoute);document.getElementById("route-scenario").addEventListener("change",compileRoute);compileRoute();
+      document.getElementById("check-decisions").addEventListener("click",function(){var rows=Array.from(document.querySelectorAll(".decision-row"));var score=0;rows.forEach(function(row){var ok=row.querySelector("select").value===row.dataset.answer;var out=row.querySelector(".answer");out.textContent=ok?"✓":"✗";out.style.color=ok?"var(--green)":"var(--red)";if(ok)score++;});var feedback=document.getElementById("decision-feedback");feedback.textContent=score===rows.length?"4/4：参数所有者与相位判断正确。":score+"/4：先问参数改变的是编排、用例选择，还是两个pytest阶段都需要的通用行为。";feedback.style.color=score===rows.length?"var(--green)":"var(--amber)";});
+      var notes=Array.from(document.querySelectorAll("[data-note]"));notes.forEach(function(note){note.value=localStorage.getItem(prefix+"note-"+note.dataset.note)||"";note.addEventListener("input",function(){localStorage.setItem(prefix+"note-"+note.dataset.note,note.value);});});
+      var gates=Array.from(document.querySelectorAll("[data-gate]"));function updateGate(){var done=gates.filter(function(item){return item.checked;}).length;document.getElementById("gate-text").textContent=done+"/"+gates.length;document.getElementById("gate-value").style.width=(done/gates.length*100)+"%";}gates.forEach(function(gate){gate.checked=localStorage.getItem(prefix+"gate-"+gate.dataset.gate)==="1";gate.addEventListener("change",function(){localStorage.setItem(prefix+"gate-"+gate.dataset.gate,gate.checked?"1":"0");updateGate();});});updateGate();
+      document.getElementById("submit-quiz").addEventListener("click",function(){var cards=Array.from(document.querySelectorAll(".quiz"));var score=0;cards.forEach(function(card){var selected=card.querySelector("input:checked");var ok=selected&&selected.value===card.dataset.answer;card.classList.toggle("correct",Boolean(ok));card.classList.toggle("wrong",!ok);if(ok)score++;});var output=document.getElementById("quiz-summary");output.textContent=score>=5?score+"/6：达标。请完成两次离线收集和门禁。":score+"/6：未达标。回看稳定入口、参数所有者、分相与collect-only边界。";output.style.background=score>=5?"var(--green-soft)":"var(--amber-soft)";output.style.color=score>=5?"var(--green)":"var(--amber)";localStorage.setItem(prefix+"quiz",String(score));});
+      document.getElementById("reset").addEventListener("click",function(){if(!confirm("确认清除第11课的笔记、门禁与自测记录？"))return;Object.keys(localStorage).filter(function(key){return key.startsWith(prefix);}).forEach(function(key){localStorage.removeItem(key);});notes.forEach(function(note){note.value="";});gates.forEach(function(gate){gate.checked=false;});document.querySelectorAll(".quiz").forEach(function(card){card.classList.remove("correct","wrong");card.querySelectorAll("input").forEach(function(input){input.checked=false;});});var summary=document.getElementById("quiz-summary");summary.textContent="尚未提交。";summary.removeAttribute("style");document.querySelectorAll(".decision-row").forEach(function(row){row.querySelector("select").value="";row.querySelector(".answer").textContent="";row.querySelector(".answer").removeAttribute("style");});document.getElementById("decision-feedback").textContent="";document.getElementById("route-scenario").value="base";compileRoute();updateGate();});
+      document.getElementById("menu").addEventListener("click",function(){document.body.classList.toggle("nav-open");});document.getElementById("nav-list").addEventListener("click",function(){document.body.classList.remove("nav-open");});
+      var links=Array.from(document.querySelectorAll(".nav-list a"));var map=new Map(links.map(function(link){return[link.getAttribute("href").slice(1),link];}));var observer=new IntersectionObserver(function(entries){var visible=entries.filter(function(entry){return entry.isIntersecting;}).sort(function(a,b){return a.boundingClientRect.top-b.boundingClientRect.top;});if(!visible.length)return;links.forEach(function(link){link.classList.remove("active");});var current=map.get(visible[0].target.id);if(current)current.classList.add("active");},{rootMargin:"-8% 0px -78% 0px",threshold:[0,1]});document.querySelectorAll("[data-section]").forEach(function(section){observer.observe(section);});
+      function progress(){var max=document.documentElement.scrollHeight-innerHeight;document.getElementById("page-progress").style.width=(max>0?scrollY/max*100:0)+"%";}addEventListener("scroll",progress,{passive:true});progress();
+    })();
+  </script>
+</body>
+</html>
