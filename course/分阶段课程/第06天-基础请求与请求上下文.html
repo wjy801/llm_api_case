@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="接口测试框架四周学习课程第6天：基础请求与请求上下文">
+  <title>第06天｜基础请求与请求上下文</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #5e6a7c;
+      --line: #dce4ef;
+      --paper: #fff;
+      --canvas: #f3f6fb;
+      --blue: #2358d5;
+      --blue-strong: #173f9e;
+      --blue-soft: #eaf1ff;
+      --cyan: #0e7490;
+      --cyan-soft: #e3f8fc;
+      --green: #16794a;
+      --green-soft: #e7f8ef;
+      --amber: #985b0b;
+      --amber-soft: #fff5dd;
+      --red: #b4233e;
+      --red-soft: #fff0f2;
+      --violet: #7047b8;
+      --violet-soft: #f3edff;
+      --nav-width: 280px;
+      --shadow: 0 18px 50px rgba(33,50,84,.10);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 28px; }
+    body { margin: 0; background: var(--canvas); color: var(--ink); font: 16px/1.75 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; }
+    button, select, textarea { font: inherit; }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code { border-radius: 5px; padding: .12em .38em; background: #edf2f8; color: #a52150; font: .9em/1.5 "Cascadia Code",Consolas,monospace; }
+    pre { margin: 0; overflow: auto; border-radius: 12px; padding: 20px; background: #111827; color: #e7edf7; line-height: 1.65; }
+    pre code { padding: 0; background: transparent; color: inherit; }
+
+    .page-progress { position: fixed; inset: 0 0 auto 0; z-index: 60; height: 4px; background: #dbe5f5; }
+    .page-progress > span { display: block; width: 0; height: 100%; background: linear-gradient(90deg,#2563eb,#06b6d4); transition: width .1s linear; }
+    .layout { min-height: 100vh; }
+    .side-nav { position: fixed; inset: 4px auto 0 0; z-index: 30; width: var(--nav-width); padding: 24px 18px 36px; overflow-y: auto; background: #101a30; color: #dbe6f7; }
+    .course-mark { padding: 0 10px 18px; border-bottom: 1px solid #293753; }
+    .course-mark small { color: #7dd3fc; letter-spacing: .12em; }
+    .course-mark h2 { margin: 5px 0 7px; color: #fff; font-size: 20px; line-height: 1.35; }
+    .course-mark p { margin: 0; color: #9eb0c9; font-size: 13px; }
+    .nav-list { display: grid; gap: 3px; margin-top: 18px; }
+    .nav-list a { display: grid; grid-template-columns: 24px minmax(0,1fr); gap: 8px; align-items: start; border-radius: 8px; padding: 9px 10px; color: #c9d5e7; font-size: 13px; line-height: 1.35; }
+    .nav-list a:hover { background: #1c2943; color: #fff; text-decoration: none; }
+    .nav-list a.active { background: #2456cf; color: #fff; }
+    .nav-number { color: #82a8ff; font-variant-numeric: tabular-nums; }
+    .nav-list a.active .nav-number { color: #fff; }
+    .side-progress { margin: 22px 10px 0; }
+    .side-progress-row { display: flex; justify-content: space-between; margin-bottom: 7px; color: #a9b8ce; font-size: 12px; }
+    .side-progress-track { height: 7px; overflow: hidden; border-radius: 99px; background: #32415d; }
+    .side-progress-value { width: 0; height: 100%; border-radius: inherit; background: #38bdf8; transition: width .2s ease; }
+
+    .main { margin-left: var(--nav-width); padding: 34px 42px 80px; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; max-width: 1100px; margin: 0 auto 18px; }
+    .crumbs { color: var(--muted); font-size: 14px; }
+    .crumbs span { margin: 0 7px; color: #9aa7b8; }
+    .toolbar { display: flex; gap: 8px; }
+    .outline-button, .menu-button, .ghost-button { border: 1px solid var(--line); border-radius: 9px; padding: 8px 12px; background: var(--paper); color: var(--muted); cursor: pointer; box-shadow: 0 3px 12px rgba(31,48,79,.05); }
+    .menu-button { display: none; }
+    .outline-button:hover, .ghost-button:hover { border-color: #a8bad7; color: var(--blue); text-decoration: none; }
+    .lesson { max-width: 1100px; margin: 0 auto; border: 1px solid #e4eaf2; border-radius: 20px; background: var(--paper); box-shadow: var(--shadow); }
+    .hero { position: relative; overflow: hidden; padding: 68px 72px 58px; border-radius: 20px 20px 0 0; background: radial-gradient(circle at 87% 18%,rgba(56,189,248,.22),transparent 27%),linear-gradient(135deg,#10214a,#1d4d8f 60%,#0e7490); color: #fff; }
+    .hero::after { content: "06"; position: absolute; right: 38px; bottom: -54px; color: rgba(255,255,255,.08); font: 800 210px/1 system-ui,sans-serif; }
+    .eyebrow { margin: 0 0 10px; color: #a5f3fc; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    .hero h1 { position: relative; z-index: 1; max-width: 880px; margin: 0; font-size: clamp(36px,5vw,58px); line-height: 1.16; letter-spacing: -.035em; }
+    .hero-lead { position: relative; z-index: 1; max-width: 820px; margin: 20px 0 0; color: #dbeafe; font-size: 18px; }
+    .hero-meta { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+    .pill { border: 1px solid rgba(255,255,255,.25); border-radius: 99px; padding: 6px 11px; background: rgba(255,255,255,.10); color: #fff; font-size: 13px; }
+    .hero-outcome { position: relative; z-index: 1; max-width: 820px; margin-top: 30px; border-left: 4px solid #67e8f9; border-radius: 0 10px 10px 0; padding: 14px 18px; background: rgba(7,24,55,.35); }
+
+    section { padding: 58px 72px; border-top: 1px solid var(--line); }
+    section:first-of-type { border-top: 0; }
+    .section-kicker { margin: 0 0 4px; color: var(--blue); font-size: 13px; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }
+    section h2 { margin: 0 0 13px; font-size: 31px; line-height: 1.3; letter-spacing: -.02em; }
+    section h3 { margin: 1.7em 0 .65em; font-size: 21px; }
+    .section-lead { max-width: 890px; margin: 0 0 28px; color: var(--muted); font-size: 17px; }
+    .callout { border-radius: 12px; padding: 17px 19px; }
+    .callout strong { display: block; margin-bottom: 3px; }
+    .callout.blue { border-left: 4px solid var(--blue); background: var(--blue-soft); }
+    .callout.amber { border-left: 4px solid #e59a22; background: var(--amber-soft); }
+    .callout.green { border-left: 4px solid var(--green); background: var(--green-soft); }
+    .callout.red { border-left: 4px solid var(--red); background: var(--red-soft); }
+
+    .objective-grid, .reading-grid, .contrast-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+    .objective-card, .reading-card, .contrast-card { border: 1px solid var(--line); border-radius: 14px; padding: 20px; background: #fff; }
+    .objective-card { display: grid; grid-template-columns: 34px minmax(0,1fr); gap: 12px; }
+    .objective-index { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: var(--blue-soft); color: var(--blue); font-weight: 800; }
+    .objective-card h3, .reading-card h3, .contrast-card h3 { margin: 0 0 6px; font-size: 17px; }
+    .objective-card p, .reading-card p, .contrast-card p { margin: 0; color: var(--muted); font-size: 14px; }
+    .path-stack { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+    .path-chip { border-radius: 7px; padding: 5px 8px; background: #f0f4f9; color: #334155; font: 12px/1.4 "Cascadia Code",Consolas,monospace; }
+
+    .constraint-flow, .single-source-flow { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 24px; margin: 24px 0; }
+    .flow-node { position: relative; border: 1px solid var(--line); border-radius: 11px; padding: 14px 10px; background: #fff; text-align: center; font-size: 13px; font-weight: 700; }
+    .flow-node:not(:last-child)::after { content: "→"; position: absolute; left: calc(100% + 6px); top: 50%; color: var(--blue); font-size: 21px; transform: translateY(-50%); }
+
+    .source-map { display: grid; grid-template-columns: 1fr 70px 1.15fr 70px 1fr; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 16px; padding: 24px; background: #f8fafd; }
+    .source-node { border: 1px solid var(--line); border-radius: 13px; padding: 18px; background: #fff; }
+    .source-node.core { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(35,88,213,.09); }
+    .source-node h3 { margin: 0 0 5px; font-size: 17px; }
+    .source-node p { margin: 0; color: var(--muted); font-size: 13px; }
+    .source-arrow { color: var(--cyan); text-align: center; font-weight: 800; }
+
+    .context-shell { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: #f8fafd; }
+    .context-tabs { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 8px; padding: 18px; }
+    .context-button { border: 1px solid var(--line); border-radius: 10px; padding: 11px 7px; background: #fff; color: var(--muted); cursor: pointer; font-size: 12px; }
+    .context-button b { display: block; color: var(--ink); font-size: 14px; }
+    .context-button.active { border-color: var(--blue); background: var(--blue-soft); color: var(--blue); }
+    .context-detail { min-height: 260px; border-top: 1px solid var(--line); padding: 24px; background: #fff; }
+    .context-detail h3 { margin: 0 0 7px; }
+    .context-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-top: 17px; }
+    .context-fact { border-radius: 10px; padding: 14px; background: #f5f8fc; }
+    .context-fact b { display: block; margin-bottom: 3px; }
+    .context-fact span { color: var(--muted); font-size: 13px; }
+
+    .parameter-shell { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; }
+    .parameter-head { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; padding: 18px; background: #f8fafd; }
+    .parameter-card { border-top: 4px solid var(--blue); border-radius: 11px; padding: 16px; background: #fff; }
+    .parameter-card.control { border-top-color: var(--violet); }
+    .parameter-card.transport { border-top-color: var(--cyan); }
+    .parameter-card h3 { margin: 0 0 6px; font-size: 17px; }
+    .parameter-card p { margin: 0; color: var(--muted); font-size: 13px; }
+    .parameter-exercise { padding: 20px; }
+    .parameter-row { display: grid; grid-template-columns: minmax(0,1.25fr) minmax(220px,.75fr) 34px; gap: 12px; align-items: center; border-top: 1px solid var(--line); padding: 12px 0; }
+    .parameter-row:first-of-type { border-top: 0; }
+    .parameter-row select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: #fff; }
+    .parameter-result { font-size: 20px; text-align: center; }
+
+    .consume-flow { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 24px; margin-top: 22px; }
+    .consume-node { position: relative; border: 1px solid var(--line); border-radius: 12px; padding: 16px; background: #fff; text-align: center; }
+    .consume-node:not(:last-child)::after { content: "→"; position: absolute; left: calc(100% + 6px); top: 50%; color: var(--violet); font-size: 22px; transform: translateY(-50%); }
+    .consume-node b { display: block; }
+    .consume-node span { color: var(--muted); font-size: 12px; }
+
+    .step-shell { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: #f8fafd; }
+    .stepper { display: grid; grid-template-columns: repeat(8,minmax(0,1fr)); gap: 7px; padding: 18px; }
+    .step-button { border: 1px solid var(--line); border-radius: 10px; padding: 10px 6px; background: #fff; color: var(--muted); cursor: pointer; font-size: 11px; }
+    .step-button b { display: block; color: var(--ink); font-size: 14px; }
+    .step-button.active { border-color: var(--blue); background: var(--blue-soft); color: var(--blue); }
+    .step-detail { min-height: 245px; border-top: 1px solid var(--line); padding: 24px; background: #fff; }
+    .step-detail h3 { margin: 0 0 7px; }
+    .step-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 18px; }
+    .invariant-box { border-left: 4px solid var(--green); border-radius: 0 10px 10px 0; padding: 14px 16px; background: var(--green-soft); }
+    .invariant-box b { color: var(--green); }
+
+    .branch-shell { display: grid; grid-template-columns: 1fr 80px 1fr; gap: 16px; align-items: stretch; }
+    .branch-card { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: #fff; }
+    .branch-head { padding: 16px 18px; color: #fff; }
+    .branch-card.success .branch-head { background: var(--green); }
+    .branch-card.error .branch-head { background: var(--red); }
+    .branch-head h3 { margin: 0; font-size: 18px; }
+    .branch-body { padding: 18px; }
+    .branch-step { display: grid; grid-template-columns: 28px minmax(0,1fr); gap: 9px; margin: 9px 0; }
+    .branch-index { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: #f0f4f9; font-size: 12px; font-weight: 800; }
+    .branch-body p { margin: 0; color: var(--muted); font-size: 13px; }
+    .branch-divider { display: grid; place-items: center; color: var(--muted); font-weight: 800; }
+
+    .case-trace { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 22px; margin: 24px 0; }
+    .trace-node { position: relative; border: 1px solid var(--line); border-radius: 11px; padding: 14px 9px; background: #fff; text-align: center; font-size: 12px; }
+    .trace-node:not(:last-child)::after { content: "→"; position: absolute; left: calc(100% + 5px); top: 50%; color: var(--cyan); font-size: 20px; transform: translateY(-50%); }
+    .trace-node b { display: block; font-size: 13px; }
+    .trace-node span { color: var(--muted); }
+    .fact-table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px; }
+    .fact-table th, .fact-table td { border: 1px solid var(--line); padding: 11px 12px; text-align: left; vertical-align: top; }
+    .fact-table th { background: #f4f7fb; }
+
+    .debug-layout { display: grid; grid-template-columns: 1.1fr .9fr; gap: 18px; align-items: start; }
+    .command-card { position: relative; margin: 14px 0; }
+    .copy-button { position: absolute; top: 10px; right: 10px; z-index: 2; border: 1px solid #3b4a63; border-radius: 7px; padding: 5px 9px; background: #1f2937; color: #dbeafe; cursor: pointer; font-size: 12px; }
+    .copy-button:hover { background: #334155; }
+    .breakpoint-card { border: 1px solid var(--line); border-radius: 14px; padding: 18px; background: #f8fafd; }
+    .breakpoint-card h3 { margin: 0 0 8px; }
+    .breakpoint-card ol { margin-bottom: 0; }
+    .note-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin-top: 20px; }
+    .note-field label { display: block; margin-bottom: 6px; font-weight: 700; }
+    .note-field textarea { width: 100%; min-height: 105px; resize: vertical; border: 1px solid var(--line); border-radius: 10px; padding: 11px; color: var(--ink); }
+    .note-field textarea:focus { outline: 3px solid rgba(35,88,213,.12); border-color: var(--blue); }
+    .save-state { margin-top: 8px; color: var(--green); font-size: 12px; }
+
+    .toc-focus { border: 1px solid #ead7a7; border-radius: 14px; padding: 22px; background: #fffaf0; }
+    .routing-exercise { margin-top: 24px; }
+    .routing-row { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(220px,.7fr) 34px; gap: 12px; align-items: center; border-top: 1px solid var(--line); padding: 13px 0; }
+    .routing-row:first-of-type { border-top: 0; }
+    .routing-row select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: #fff; }
+    .routing-result { font-size: 20px; text-align: center; }
+    .primary-button { border: 0; border-radius: 9px; padding: 10px 16px; background: var(--blue); color: #fff; cursor: pointer; font-weight: 700; }
+    .primary-button:hover { background: var(--blue-strong); }
+    .exercise-feedback { margin-top: 12px; min-height: 28px; font-weight: 700; }
+
+    .quiz-list { display: grid; gap: 16px; }
+    .quiz-card { border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+    .quiz-card legend { padding: 0 5px; font-weight: 750; }
+    .quiz-options { display: grid; gap: 8px; margin-top: 10px; }
+    .quiz-options label { display: flex; gap: 8px; align-items: flex-start; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+    .quiz-options label:hover { background: #f5f8fc; }
+    .quiz-explanation { display: none; margin-top: 10px; border-radius: 8px; padding: 10px 12px; font-size: 14px; }
+    .quiz-card.correct { border-color: #8dd9b3; }
+    .quiz-card.correct .quiz-explanation { display: block; background: var(--green-soft); color: #155e3b; }
+    .quiz-card.wrong { border-color: #f0a9b7; }
+    .quiz-card.wrong .quiz-explanation { display: block; background: var(--red-soft); color: #8c1d34; }
+    .quiz-summary { margin-top: 16px; min-height: 42px; border-radius: 10px; padding: 11px 14px; background: #f5f8fc; }
+
+    .exit-list { display: grid; gap: 9px; margin: 20px 0; }
+    .exit-item { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; cursor: pointer; }
+    .exit-item input { margin-top: .45em; accent-color: var(--blue); }
+    .exit-item input:checked + span { color: var(--muted); text-decoration: line-through; }
+    .lesson-footer { display: flex; justify-content: space-between; gap: 14px; align-items: center; margin-top: 30px; border-top: 1px solid var(--line); padding-top: 24px; }
+    .footer-links { display: flex; flex-wrap: wrap; gap: 8px; }
+    .next-pending { border: 1px dashed #aab7ca; border-radius: 10px; padding: 10px 14px; color: var(--muted); }
+
+    @media (max-width:1050px) {
+      .constraint-flow, .single-source-flow { grid-template-columns: 1fr; gap: 10px; }
+      .flow-node:not(:last-child)::after { content: "↓"; left: 50%; top: calc(100% - 1px); transform: translateX(-50%); }
+      .source-map { grid-template-columns: 1fr; }
+      .source-arrow { transform: rotate(90deg); }
+      .context-tabs { grid-template-columns: repeat(3,minmax(0,1fr)); }
+      .stepper { grid-template-columns: repeat(4,minmax(0,1fr)); }
+      .case-trace { grid-template-columns: 1fr; gap: 10px; }
+      .trace-node:not(:last-child)::after { content: "↓"; left: 50%; top: calc(100% - 1px); transform: translateX(-50%); }
+    }
+    @media (max-width:900px) {
+      .side-nav { transform: translateX(-105%); transition: transform .2s ease; }
+      body.nav-open .side-nav { transform: translateX(0); }
+      .main { margin-left: 0; padding: 18px 18px 56px; }
+      .menu-button { display: inline-block; }
+      .hero, section { padding-left: 34px; padding-right: 34px; }
+      .context-grid, .parameter-head, .step-grid, .debug-layout { grid-template-columns: 1fr; }
+      .consume-flow { grid-template-columns: 1fr; gap: 10px; }
+      .consume-node:not(:last-child)::after { content: "↓"; left: 50%; top: calc(100% - 1px); transform: translateX(-50%); }
+      .branch-shell { grid-template-columns: 1fr; }
+      .branch-divider { transform: rotate(90deg); }
+    }
+    @media (max-width:650px) {
+      .topbar { align-items: flex-start; }
+      .crumbs { display: none; }
+      .toolbar { width: 100%; justify-content: space-between; }
+      .lesson { border-radius: 12px; }
+      .hero { padding: 48px 22px 42px; border-radius: 12px 12px 0 0; }
+      section { padding: 44px 22px; }
+      .objective-grid, .reading-grid, .contrast-grid, .context-tabs, .stepper, .note-grid { grid-template-columns: 1fr; }
+      .parameter-row, .routing-row { grid-template-columns: 1fr; }
+      .parameter-result, .routing-result { text-align: left; }
+      .fact-table { display: block; overflow-x: auto; }
+      .lesson-footer { align-items: stretch; flex-direction: column; }
+      .footer-links { flex-direction: column; }
+    }
+    @media print {
+      .side-nav,.topbar,.page-progress,.copy-button { display: none !important; }
+      .main { margin: 0; padding: 0; }
+      .lesson { max-width: none; border: 0; box-shadow: none; }
+      .hero { color: #111827; background: #eef4ff; }
+      .hero-lead,.eyebrow { color: #334155; }
+      section { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-progress" aria-hidden="true"><span id="page-progress-value"></span></div>
+  <div class="layout">
+    <aside class="side-nav" id="side-nav" aria-label="本课目录">
+      <div class="course-mark"><small>接口测试框架课程 · 第2周</small><h2>第06天</h2><p>基础请求与请求上下文</p></div>
+      <nav class="nav-list" id="nav-list">
+        <a href="#learning-goals"><span class="nav-number">01</span><span>目标与核心约束</span></a>
+        <a href="#single-source"><span class="nav-number">02</span><span>HTTP唯一实现源</span></a>
+        <a href="#context-anatomy"><span class="nav-number">03</span><span>RequestContext解剖</span></a>
+        <a href="#parameter-routing"><span class="nav-number">04</span><span>三类参数分流</span></a>
+        <a href="#success-flow"><span class="nav-number">05</span><span>成功请求主线</span></a>
+        <a href="#error-flow"><span class="nav-number">06</span><span>成功与异常分叉</span></a>
+        <a href="#offline-case"><span class="nav-number">07</span><span>离线POST跟踪</span></a>
+        <a href="#debug-lab"><span class="nav-number">08</span><span>调试实践</span></a>
+        <a href="#constraint-exercise"><span class="nav-number">09</span><span>边界决策练习</span></a>
+        <a href="#knowledge-check"><span class="nav-number">10</span><span>知识自测</span></a>
+        <a href="#exit-gate"><span class="nav-number">11</span><span>本课门禁</span></a>
+      </nav>
+      <div class="side-progress"><div class="side-progress-row"><span>门禁完成度</span><span id="gate-progress-text">0/5</span></div><div class="side-progress-track"><div class="side-progress-value" id="gate-progress-value"></div></div></div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar"><div class="crumbs"><a href="../接口测试框架四周学习课程.html">课程大纲</a><span>/</span>第06天</div><div class="toolbar"><button class="menu-button" id="menu-button" type="button" aria-controls="side-nav" aria-expanded="false">☰ 本课目录</button><a class="outline-button" href="../接口测试框架四周学习课程.html">返回课程大纲</a><button class="ghost-button" id="reset-button" type="button">重置本课记录</button></div></div>
+
+      <article class="lesson">
+        <header class="hero" id="top">
+          <p class="eyebrow">Week 2 · Day 6</p>
+          <h1>基础请求与请求上下文</h1>
+          <p class="hero-lead">今天从模块Request一路下钻到Session。重点不是记住BaseRequest的所有方法，而是理解：业务意图如何被翻译、框架控制项在哪里被消费，以及RequestContext怎样成为整条请求管线共享的事实载体。</p>
+          <div class="hero-meta"><span class="pill">建议用时 130～160分钟</span><span class="pill">难度：进阶</span><span class="pill">实践：单条离线POST调试</span><span class="pill">前置：通过第1周门禁</span></div>
+          <div class="hero-outcome"><strong>本课结果：</strong>你将能画出模块Request → BaseRequest → RequestContext → Middleware → Session → Response主线，并写出成功请求和传输异常请求的生命周期差异。</div>
+        </header>
+
+        <section id="learning-goals" data-section>
+          <p class="section-kicker">01 · 目标与核心约束</p>
+          <h2>请求内核的第一课：先分清数据属于谁</h2>
+          <p class="section-lead">请求失败往往不是HTTP本身复杂，而是业务参数、框架开关和传输参数在边界处混淆。</p>
+          <div class="objective-grid">
+            <div class="objective-card"><span class="objective-index">1</span><div><h3>理解唯一执行源</h3><p>所有模块HTTP最终都进入BaseRequest与同一Session执行链。</p></div></div>
+            <div class="objective-card"><span class="objective-index">2</span><div><h3>读懂RequestContext</h3><p>识别方法、原始路径、完整URL、传输kwargs、策略和attributes。</p></div></div>
+            <div class="objective-card"><span class="objective-index">3</span><div><h3>完成参数分流</h3><p>区分模块业务输入、框架控制项和requests传输参数。</p></div></div>
+            <div class="objective-card"><span class="objective-index">4</span><div><h3>解释两种终点</h3><p>Response成功返回与传输异常重新抛出共享哪些阶段、从哪里分叉。</p></div></div>
+          </div>
+
+          <h3>参数混淆的因果链</h3>
+          <div class="constraint-flow"><div class="flow-node">业务与控制项混传</div><div class="flow-node">框架字段进入HTTP</div><div class="flow-node">服务端协议被污染</div><div class="flow-node">日志与观察失真</div><div class="flow-node">失败难以归因</div></div>
+          <div class="callout blue"><strong>本课范围护栏</strong>今天只理解Middleware经过哪些钩子、Retry会创建多个Context；具体中间件顺序与fail-open在第7课，Retry资格与等待算法在第8课。</div>
+        </section>
+
+        <section id="single-source" data-section>
+          <p class="section-kicker">02 · HTTP唯一实现源</p>
+          <h2>模块描述差异，BaseRequest统一执行</h2>
+          <p class="section-lead">模块Request不创建新Session，也不复制日志、Retry和观察逻辑。它只把业务参数翻译成相对路径与公共调用参数。</p>
+
+          <div class="source-map">
+            <div class="source-node"><h3>模块Request</h3><p>保存相对路径；把payload、业务ID和单次Header翻译成post/get/delete调用。</p></div>
+            <div class="source-arrow">委托 →</div>
+            <div class="source-node core"><h3>BaseRequest</h3><p>拥有URL构造、默认Header、Context、Middleware、Session、Retry/Polling入口与运行观察。</p></div>
+            <div class="source-arrow">执行 →</div>
+            <div class="source-node"><h3>requests.Session</h3><p>只接收已经归一化的method、完整URL与标准传输kwargs。</p></div>
+          </div>
+
+          <div class="single-source-flow"><div class="flow-node">模块各自建Session</div><div class="flow-node">Header与超时不一致</div><div class="flow-node">日志/脱敏分叉</div><div class="flow-node">Retry行为不可比</div><div class="flow-node">故障证据碎片化</div></div>
+          <div class="callout red"><strong>练习禁止项</strong>不要为了“看清requests”另建一个<code>requests.Session()</code>。那会绕过你正要学习的Context、Middleware、观察与资源所有权。</div>
+
+          <div class="contrast-grid" style="margin-top:20px">
+            <div class="contrast-card"><h3>模块层必须坚持相对路径</h3><p>BaseRequest兼容绝对URL并不等于模块可以硬编码环境域名；模块路径只表达API合同，环境地址来自Settings。</p></div>
+            <div class="contrast-card"><h3>Session必须有唯一所有者</h3><p>BaseRequest构造Session并提供close；测试通过fixture或teardown关闭，延续第4课的所有权规则。</p></div>
+          </div>
+        </section>
+
+        <section id="context-anatomy" data-section>
+          <p class="section-kicker">03 · RequestContext解剖</p>
+          <h2>Context是一次HTTP attempt的共享事实包</h2>
+          <p class="section-lead">点击字段组。Middleware、日志和Runtime Hooks都围绕同一个Context协作，不需要各自重新解析调用参数。</p>
+
+          <div class="context-shell">
+            <div class="context-tabs" role="tablist" aria-label="RequestContext字段">
+              <button class="context-button active" type="button" data-context="identity" role="tab" aria-selected="true"><b>身份</b>method/path/url</button>
+              <button class="context-button" type="button" data-context="kwargs" role="tab" aria-selected="false"><b>传输</b>kwargs</button>
+              <button class="context-button" type="button" data-context="report" role="tab" aria-selected="false"><b>报告</b>日志与步骤名</button>
+              <button class="context-button" type="button" data-context="policy" role="tab" aria-selected="false"><b>策略</b>Retry/Polling</button>
+              <button class="context-button" type="button" data-context="attributes" role="tab" aria-selected="false"><b>扩展</b>attributes</button>
+            </div>
+            <div class="context-detail" id="context-detail" role="tabpanel" aria-live="polite"></div>
+          </div>
+
+          <h3>构造Context时发生的标准化</h3>
+          <div class="consume-flow">
+            <div class="consume-node"><b>复制kwargs</b><span>标准dict/list尽量deepcopy，保护调用方输入</span></div><div class="consume-node"><b>补齐timeout</b><span>没有显式值时使用Settings默认值</span></div><div class="consume-node"><b>裁剪剩余预算</b><span>存在deadline时不能超过剩余时间</span></div><div class="consume-node"><b>合并Header</b><span>Session默认值 + 单次请求Header</span></div>
+          </div>
+          <div class="callout green" style="margin-top:20px"><strong>可变性边界</strong>普通payload会被深拷贝后交给Middleware；这正是<code>test_middleware_does_not_mutate_original_payload</code>能够验证调用方字典不变的基础。</div>
+        </section>
+
+        <section id="parameter-routing" data-section>
+          <p class="section-kicker">04 · 三类参数分流</p>
+          <h2>同一个函数调用里，参数有三个不同终点</h2>
+          <p class="section-lead">先看三类定义，再完成分流练习。重点观察<code>runtime_metadata</code>和<code>retry_policy</code>会在Session之前被消费。</p>
+
+          <div class="parameter-shell">
+            <div class="parameter-head">
+              <div class="parameter-card"><h3>模块业务输入</h3><p>payload、task_id、audit_name等领域参数。模块Request负责把它们翻译成路径、json或单次Header。</p></div>
+              <div class="parameter-card control"><h3>框架控制参数</h3><p>runtime_metadata、retry_policy、polling_policy、日志/Session Header控制项。它们驱动框架，不属于服务协议。</p></div>
+              <div class="parameter-card transport"><h3>requests传输参数</h3><p>json、params、data、headers、timeout、stream等标准参数，进入Context后传给Session。</p></div>
+            </div>
+            <div class="parameter-exercise">
+              <div class="parameter-row" data-answer="business"><span><code>payload</code>传入OfflineFrameworkRequest.echo()</span><select aria-label="payload分类"><option value="">请选择</option><option value="business">模块业务输入</option><option value="control">框架控制参数</option><option value="transport">requests传输参数</option></select><span class="parameter-result"></span></div>
+              <div class="parameter-row" data-answer="transport"><span><code>json=payload</code>传入BaseRequest.post()</span><select aria-label="json分类"><option value="">请选择</option><option value="business">模块业务输入</option><option value="control">框架控制参数</option><option value="transport">requests传输参数</option></select><span class="parameter-result"></span></div>
+              <div class="parameter-row" data-answer="control"><span><code>runtime_metadata</code></span><select aria-label="runtime metadata分类"><option value="">请选择</option><option value="business">模块业务输入</option><option value="control">框架控制参数</option><option value="transport">requests传输参数</option></select><span class="parameter-result"></span></div>
+              <div class="parameter-row" data-answer="control"><span><code>retry_policy</code></span><select aria-label="Retry Policy分类"><option value="">请选择</option><option value="business">模块业务输入</option><option value="control">框架控制参数</option><option value="transport">requests传输参数</option></select><span class="parameter-result"></span></div>
+              <div class="parameter-row" data-answer="transport"><span><code>headers={"X-Audit-Name": audit_name}</code></span><select aria-label="headers分类"><option value="">请选择</option><option value="business">模块业务输入</option><option value="control">框架控制参数</option><option value="transport">requests传输参数</option></select><span class="parameter-result"></span></div>
+              <div class="parameter-row" data-answer="transport"><span><code>timeout=1</code>进入Context</span><select aria-label="timeout分类"><option value="">请选择</option><option value="business">模块业务输入</option><option value="control">框架控制参数</option><option value="transport">requests传输参数</option></select><span class="parameter-result"></span></div>
+              <button class="primary-button" id="check-parameters" type="button">检查分流</button>
+              <div class="exercise-feedback" id="parameter-feedback" aria-live="polite"></div>
+            </div>
+          </div>
+
+          <div class="callout blue" style="margin-top:20px"><strong>关键证据</strong>离线请求管线用例明确断言<code>runtime_metadata</code>不在最终RequestContext.kwargs中；它已被RuntimeObserver消费，不会成为服务端HTTP参数。</div>
+        </section>
+
+        <section id="success-flow" data-section>
+          <p class="section-kicker">05 · 成功请求主线</p>
+          <h2>一次无Retry POST穿过八个阶段</h2>
+          <p class="section-lead">点击播放器跟踪<code>echo(payload)</code>。本课只观察Middleware钩子位置，不展开每个中间件内部算法。</p>
+
+          <div class="step-shell">
+            <div class="stepper" role="tablist" aria-label="成功请求执行步骤">
+              <button class="step-button active" type="button" data-step="0"><b>1</b>模块翻译</button><button class="step-button" type="button" data-step="1"><b>2</b>公共入口</button><button class="step-button" type="button" data-step="2"><b>3</b>观察身份</button><button class="step-button" type="button" data-step="3"><b>4</b>构造Context</button><button class="step-button" type="button" data-step="4"><b>5</b>Request Group</button><button class="step-button" type="button" data-step="5"><b>6</b>before</button><button class="step-button" type="button" data-step="6"><b>7</b>Session</button><button class="step-button" type="button" data-step="7"><b>8</b>after/返回</button>
+            </div>
+            <div class="step-detail" id="step-detail" role="tabpanel" aria-live="polite"></div>
+          </div>
+
+          <div class="callout amber" style="margin-top:20px"><strong>Request Group与Context不是同一层</strong>一次无Retry请求只有一个Context；启用Retry后，一个逻辑Request Group会绑定多个attempt Context。第8课再展开资格与等待。</div>
+        </section>
+
+        <section id="error-flow" data-section>
+          <p class="section-kicker">06 · 成功与异常分叉</p>
+          <h2>传输异常没有Response，但仍有完整观察终点</h2>
+          <p class="section-lead">两条路径共享Context和before_request，分叉点是<code>session.request()</code>返回Response还是抛异常。</p>
+
+          <div class="branch-shell">
+            <div class="branch-card success"><div class="branch-head"><h3>成功响应路径</h3></div><div class="branch-body"><div class="branch-step"><span class="branch-index">1</span><p>Session返回requests.Response。</p></div><div class="branch-step"><span class="branch-index">2</span><p>全部Middleware执行after_response。</p></div><div class="branch-step"><span class="branch-index">3</span><p>Request Group在finally结束。</p></div><div class="branch-step"><span class="branch-index">4</span><p>Operation记录Response与流式标记。</p></div><div class="branch-step"><span class="branch-index">5</span><p>同一个Response返回模块Task/Test。</p></div></div></div>
+            <div class="branch-divider">分叉</div>
+            <div class="branch-card error"><div class="branch-head"><h3>传输异常路径</h3></div><div class="branch-body"><div class="branch-step"><span class="branch-index">1</span><p>Session抛ConnectionError/Timeout等异常。</p></div><div class="branch-step"><span class="branch-index">2</span><p>Middleware执行on_exception。</p></div><div class="branch-step"><span class="branch-index">3</span><p>观察附件故障只作为note附加，不替换原异常。</p></div><div class="branch-step"><span class="branch-index">4</span><p>Request Group仍在finally结束。</p></div><div class="branch-step"><span class="branch-index">5</span><p>Operation finish_error并重新抛出原异常。</p></div></div></div>
+          </div>
+
+          <div class="callout red" style="margin-top:20px"><strong>不要把HTTP 4xx/5xx混同为传输异常</strong>只要Session成功返回Response，仍走after_response路径；状态码是否可接受由业务断言或Retry策略继续判断。</div>
+        </section>
+
+        <section id="offline-case" data-section>
+          <p class="section-kicker">07 · 离线POST跟踪</p>
+          <h2>把echo请求映射到真实代码合同</h2>
+          <p class="section-lead">这条请求足够简单：无Retry、无Polling、无外部媒体，适合第一次下钻。</p>
+
+          <div class="case-trace"><div class="trace-node"><b>Task</b><span>submit_echo</span></div><div class="trace-node"><b>模块Request</b><span>echo(payload)</span></div><div class="trace-node"><b>BaseRequest</b><span>post → request</span></div><div class="trace-node"><b>Context</b><span>POST /v1/echo</span></div><div class="trace-node"><b>Session</b><span>本地HTTP</span></div><div class="trace-node"><b>Assertions</b><span>accepted</span></div></div>
+
+          <table class="fact-table">
+            <thead><tr><th>观察事实</th><th>当前值</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>base_url</td><td>本轮OfflineService随机loopback地址</td><td>模块只保存相对路径，环境地址由离线Settings提供。</td></tr>
+              <tr><td>method / path / protocol</td><td>POST /v1/echo / http</td><td>Request Group保留原始业务路径，而不是只保留完整URL。</td></tr>
+              <tr><td>configured_max_attempts</td><td>1</td><td>本请求没有传RetryPolicy，只有一个Context。</td></tr>
+              <tr><td>runtime metadata</td><td>HTTP / offline_echo / WORKLOAD</td><td>中性观察身份由模块Request提供。</td></tr>
+              <tr><td>Context kwargs</td><td>无runtime_metadata</td><td>控制项已消费，只保留Session需要的传输参数。</td></tr>
+              <tr><td>Session代理</td><td>trust_env=False</td><td>离线客户端禁止继承系统代理，保持loopback确定性。</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="debug-lab" data-section>
+          <p class="section-kicker">08 · 调试实践</p>
+          <h2>只跟踪一条POST，不修改请求实现</h2>
+          <p class="section-lead">在IDE中设置临时断点，运行稳定nodeid。观察完删除断点即可，不需要另建Session或复制请求代码。</p>
+
+          <div class="debug-layout">
+            <div>
+              <div class="command-card"><button class="copy-button" type="button">复制</button><pre><code>.\.venv\Scripts\python.exe -m pytest `
+  "module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline::test_request_uses_default_middleware_and_runtime_metadata" `
+  -q</code></pre></div>
+            </div>
+            <aside class="breakpoint-card"><h3>建议断点顺序</h3><ol><li><code>OfflineFrameworkRequest.echo()</code></li><li><code>BaseRequest.request()</code></li><li><code>_build_request_context()</code></li><li><code>_send()</code></li><li><code>session.request()</code>调用前后</li></ol></aside>
+          </div>
+
+          <h3>记录两个生命周期</h3>
+          <div class="note-grid">
+            <div class="note-field"><label for="note-success">成功请求从模块入口到Response的完整顺序</label><textarea id="note-success" data-note="success" placeholder="逐步写出操作、Context、Middleware、Session和返回"></textarea></div>
+            <div class="note-field"><label for="note-error">传输异常从Session到原异常重新抛出的顺序</label><textarea id="note-error" data-note="error" placeholder="写出on_exception、group.finish和operation.finish_error"></textarea></div>
+            <div class="note-field"><label for="note-context">断点中RequestContext的关键字段和值</label><textarea id="note-context" data-note="context" placeholder="method/path/url/kwargs/protocol/attributes"></textarea></div>
+            <div class="note-field"><label for="note-consumed">哪些输入没有进入最终Context.kwargs？为什么？</label><textarea id="note-consumed" data-note="consumed" placeholder="runtime_metadata、retry_policy、日志与Header继承控制"></textarea></div>
+          </div>
+          <p class="save-state" id="save-state">调试记录保存在浏览器本地。</p>
+
+          <h3>阅读顺序</h3>
+          <div class="reading-grid">
+            <div class="reading-card"><h3>1. Context数据结构</h3><p>先知道管线共享哪些事实，再进入执行代码。</p><div class="path-stack"><span class="path-chip">common/request_context.py</span></div></div>
+            <div class="reading-card"><h3>2. 公共执行主线</h3><p>只读构造、request、_build_request_context、_send和close。</p><div class="path-stack"><span class="path-chip">common/base_request.py</span></div></div>
+            <div class="reading-card"><h3>3. 模块翻译层</h3><p>观察相对路径、业务参数与中性metadata如何进入公共入口。</p><div class="path-stack"><span class="path-chip">module/offline_framework_example/request.py</span></div></div>
+            <div class="reading-card"><h3>4. 可执行合同</h3><p>用测试断言反向确认Context与Request Group事实。</p><div class="path-stack"><span class="path-chip">module/offline_framework_example/test_request_pipeline.py</span></div></div>
+          </div>
+        </section>
+
+        <section id="constraint-exercise" data-section>
+          <p class="section-kicker">09 · TOC边界决策</p>
+          <h2>当前约束：参数能传进去，却不知道应该在哪里被消费</h2>
+          <p class="section-lead">把每个变化放回唯一所有者。错误归属通常不会立刻报错，而会把控制字段泄漏到Session或把环境差异硬编码进模块。</p>
+
+          <div class="toc-focus"><strong>决策顺序</strong><p>先问“它表达业务、控制框架还是控制传输”，再问“消费后是否应继续向下”。框架控制项必须在Session边界之前消失。</p></div>
+          <div class="routing-exercise">
+            <div class="routing-row" data-answer="module"><span>把audit_name翻译成X-Audit-Name单次Header</span><select aria-label="audit name所有者"><option value="">请选择</option><option value="module">模块Request</option><option value="context">RequestContext</option><option value="session">requests.Session</option><option value="assertions">Assertions</option></select><span class="routing-result"></span></div>
+            <div class="routing-row" data-answer="base"><span>相对路径与Settings.base_url拼成完整URL</span><select aria-label="URL构造所有者"><option value="">请选择</option><option value="module">模块Request</option><option value="base">BaseRequest</option><option value="middleware">Middleware</option><option value="assertions">Assertions</option></select><span class="routing-result"></span></div>
+            <div class="routing-row" data-answer="observer"><span>消费runtime_metadata并建立Operation身份</span><select aria-label="metadata所有者"><option value="">请选择</option><option value="module">模块Request</option><option value="observer">RuntimeObserver</option><option value="session">requests.Session</option><option value="assertions">Assertions</option></select><span class="routing-result"></span></div>
+            <div class="routing-row" data-answer="context"><span>为Middleware保存脱敏副本、Logger和attempt属性</span><select aria-label="attributes所有者"><option value="">请选择</option><option value="module">模块Request</option><option value="context">RequestContext.attributes</option><option value="session">requests.Session.headers</option><option value="assertions">Assertions</option></select><span class="routing-result"></span></div>
+            <div class="routing-row" data-answer="session"><span>执行已经标准化的method、url和kwargs</span><select aria-label="HTTP执行所有者"><option value="">请选择</option><option value="module">模块Request</option><option value="context">RequestContext</option><option value="session">requests.Session</option><option value="assertions">Assertions</option></select><span class="routing-result"></span></div>
+            <div class="routing-row" data-answer="fixture"><span>测试结束后关闭BaseRequest持有的Session</span><select aria-label="Session关闭所有者"><option value="">请选择</option><option value="module">模块Request方法</option><option value="fixture">创建它的fixture/teardown</option><option value="session">服务端</option><option value="assertions">Assertions</option></select><span class="routing-result"></span></div>
+            <button class="primary-button" id="check-routing" type="button">检查边界</button>
+            <div class="exercise-feedback" id="routing-feedback" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <section id="knowledge-check" data-section>
+          <p class="section-kicker">10 · 知识自测</p>
+          <h2>确认你理解一次attempt的事实边界</h2>
+          <p class="section-lead">建议达到5/6再进入门禁。第7、8课都会建立在RequestContext与参数分流之上。</p>
+          <div class="quiz-list">
+            <fieldset class="quiz-card" data-answer="b"><legend>1. 为什么BaseRequest是HTTP执行的唯一公共实现源？</legend><div class="quiz-options"><label><input type="radio" name="q1" value="a">为了让所有模块使用同一业务路径</label><label><input type="radio" name="q1" value="b">统一Session、Context、Middleware、观察、Retry/Polling入口与资源关闭合同</label><label><input type="radio" name="q1" value="c">为了禁止模块定义Request子类</label></div><div class="quiz-explanation">正确答案是B。模块保留协议差异，但不复制公共执行机制。</div></fieldset>
+            <fieldset class="quiz-card" data-answer="c"><legend>2. <code>runtime_metadata</code>最终会发生什么？</legend><div class="quiz-options"><label><input type="radio" name="q2" value="a">作为JSON字段发送给服务端</label><label><input type="radio" name="q2" value="b">保存到Session.headers</label><label><input type="radio" name="q2" value="c">被RuntimeObserver消费并建立中性Operation身份，不进入Context.kwargs</label></div><div class="quiz-explanation">正确答案是C。离线请求管线有明确断言保护这一边界。</div></fieldset>
+            <fieldset class="quiz-card" data-answer="a"><legend>3. RequestContext中的<code>path</code>与<code>url</code>有什么区别？</legend><div class="quiz-options"><label><input type="radio" name="q3" value="a">path保留业务相对路径，url是与base_url组合后的完整地址</label><label><input type="radio" name="q3" value="b">两者永远完全相同</label><label><input type="radio" name="q3" value="c">path是响应路径，url是Schema路径</label></div><div class="quiz-explanation">正确答案是A。Request Group观察使用原始path，Session执行完整url。</div></fieldset>
+            <fieldset class="quiz-card" data-answer="b"><legend>4. 单次请求Header应如何处理？</legend><div class="quiz-options"><label><input type="radio" name="q4" value="a">先永久修改共享Session.headers</label><label><input type="radio" name="q4" value="b">作为本次headers参数传入，由Context与Session默认Header合并</label><label><input type="radio" name="q4" value="c">放进Assertions</label></div><div class="quiz-explanation">正确答案是B。这样不会让单次协议信息泄漏到后续请求。</div></fieldset>
+            <fieldset class="quiz-card" data-answer="c"><legend>5. Session返回HTTP 503时，是否属于传输异常路径？</legend><div class="quiz-options"><label><input type="radio" name="q5" value="a">是，任何非200都是ConnectionError</label><label><input type="radio" name="q5" value="b">是，因此没有Response</label><label><input type="radio" name="q5" value="c">否，Session已返回Response，仍走after_response；后续由Retry或断言判断</label></div><div class="quiz-explanation">正确答案是C。传输异常指Session调用抛异常而没有正常Response。</div></fieldset>
+            <fieldset class="quiz-card" data-answer="a"><legend>6. 一次启用Retry的逻辑请求与RequestContext是什么关系？</legend><div class="quiz-options"><label><input type="radio" name="q6" value="a">一个Request Group可绑定多个attempt Context</label><label><input type="radio" name="q6" value="b">全进程只创建一个Context</label><label><input type="radio" name="q6" value="c">每个Context拥有独立测试用例</label></div><div class="quiz-explanation">正确答案是A。每次attempt拥有自己的Context与attempt属性。</div></fieldset>
+          </div>
+          <button class="primary-button" id="submit-quiz" type="button" style="margin-top:16px">提交自测</button>
+          <div class="quiz-summary" id="quiz-summary" aria-live="polite">尚未提交。</div>
+        </section>
+
+        <section id="exit-gate" data-section>
+          <p class="section-kicker">11 · 本课门禁</p>
+          <h2>能跟踪请求事实，再进入Middleware</h2>
+          <p class="section-lead">门禁要求你能从模块入口讲到成功或异常终点，而不把框架控制项误认为服务协议。</p>
+          <div class="exit-list">
+            <label class="exit-item"><input type="checkbox" data-gate="source"><span>我能解释为什么模块Request保留差异，而BaseRequest是HTTP唯一公共实现源。</span></label>
+            <label class="exit-item"><input type="checkbox" data-gate="context"><span>我能写出RequestContext主要字段及构造时复制、超时和Header标准化过程。</span></label>
+            <label class="exit-item"><input type="checkbox" data-gate="parameters"><span>我能区分模块业务输入、框架控制参数和requests传输参数，并指出各自终点。</span></label>
+            <label class="exit-item"><input type="checkbox" data-gate="branches"><span>我能画出成功Response与传输异常在Session处的分叉及共同收尾。</span></label>
+            <label class="exit-item"><input type="checkbox" data-gate="debug"><span>我已跟踪离线echo POST，并记录成功和传输异常生命周期差异。</span></label>
+          </div>
+          <div class="callout green"><strong>当日产出</strong>一张请求主线图、一个带真实字段值的RequestContext快照，以及成功Response/传输异常两条生命周期对照表。</div>
+          <div class="lesson-footer"><div class="footer-links"><a class="outline-button" href="第05天-离线测试分层与分类用例.html">← 上一课</a><a class="outline-button" href="../接口测试框架四周学习课程.html">返回课程大纲</a><a class="outline-button" href="第07天-请求中间件脱敏日志与资源捕获.html">下一课：请求中间件、脱敏日志与资源捕获 →</a></div></div>
+        </section>
+      </article>
+    </main>
+  </div>
+
+  <script>
+    (() => {
+      const storagePrefix = "api-case-course-day06:";
+
+      const contextDetails = {
+        identity: { title: "身份字段：method / path / url / protocol", body: "method被标准化为大写；path保留模块传入的业务路径；url是与Settings.base_url组合后的完整地址；protocol区分http与sse。", input: "POST + /v1/echo", output: "POST / loopback完整URL / http", consumer: "Request Group、Middleware、Session与Runtime Hooks" },
+        kwargs: { title: "传输字段：kwargs", body: "保存将传给requests.Session.request的标准参数，例如json、params、data、headers、timeout、stream。普通可变对象在构造时尽量深拷贝。", input: "json=payload, headers=..., timeout=...", output: "复制、补默认值、合并Header后的字典", consumer: "Middleware读取/记录，Session最终执行" },
+        report: { title: "报告字段：attach_log与步骤名", body: "attach_log控制本attempt是否自动附加请求/响应；request_step_name与response_step_name提供报告步骤名称。", input: "默认接口请求 / 接口响应", output: "Logger使用的展示合同", consumer: "LoggingMiddleware与ApiCallLogger" },
+        policy: { title: "策略字段：retry_policy / polling_policy", body: "Context携带当前attempt所处的策略背景，供观察和日志解释；策略对象不是服务端请求参数。", input: "可选RetryPolicy与PollingPolicy", output: "可观察的执行策略上下文", consumer: "Retry/Polling执行链和运行时观察" },
+        attributes: { title: "扩展字段：attributes", body: "每个attempt独立的中性字典。Middleware写入脱敏kwargs与Logger，Retry写入attempt_index/max_attempts，观察层可以读取但不改变HTTP控制流。", input: "空字典", output: "本attempt的派生事实与协作对象", consumer: "Middleware、RetryExecutor与Runtime Hooks" },
+      };
+
+      const requestSteps = [
+        { title: "模块Request翻译业务输入", body: "echo(payload)选择相对路径/v1/echo，把业务payload翻译成json，并提供HTTP/offline_echo/WORKLOAD中性metadata。", invariant: "模块不创建Session，不硬编码环境域名" },
+        { title: "post()进入统一request()", body: "post只是薄方法，将method=POST、path和kwargs交给request()。get/put/patch/delete也共享这个入口。", invariant: "不同HTTP动词共享相同执行合同" },
+        { title: "消费控制项并启动Operation", body: "request()弹出_attach_log、retry_policy与_inherit_session_headers；RuntimeObserver再弹出runtime_metadata，创建中性Operation。", invariant: "框架控制项不会进入Session kwargs" },
+        { title: "构造RequestContext", body: "组合完整URL，复制kwargs，补默认timeout并受deadline约束，合并Session默认Header和单次Header。", invariant: "调用方普通payload保持不变" },
+        { title: "创建并绑定Request Group", body: "无Retry时configured_max_attempts=1，Group绑定唯一Context；finally保证无论结果如何都finish。", invariant: "逻辑请求组与attempt事实分离" },
+        { title: "执行before_request Middlewares", body: "所有默认Middleware按注册顺序读取或扩展同一个Context。今天只确认钩子位置，第7课再拆职责和fail-open。", invariant: "Middleware共享Context，不重新解析模块调用" },
+        { title: "Session执行标准化请求", body: "session.request(method=context.method, url=context.url, **context.kwargs)。这是实际网络边界。", invariant: "Session只接收requests兼容参数" },
+        { title: "after_response与Operation完成", body: "成功时Middleware处理Response，Group结束，Operation记录响应，原Response逐层返回模块Task和Test。", invariant: "观察不替换业务Response" },
+      ];
+
+      function renderContext(name){const item=contextDetails[name];document.getElementById("context-detail").innerHTML=`<h3>${item.title}</h3><p style="color:var(--muted)">${item.body}</p><div class="context-grid"><div class="context-fact"><b>进入时</b><span>${item.input}</span></div><div class="context-fact"><b>标准化结果</b><span>${item.output}</span></div><div class="context-fact"><b>主要消费者</b><span>${item.consumer}</span></div></div>`;}
+      const contextButtons=[...document.querySelectorAll(".context-button")];
+      for(const button of contextButtons)button.addEventListener("click",()=>{for(const item of contextButtons){const active=item===button;item.classList.toggle("active",active);item.setAttribute("aria-selected",String(active));}renderContext(button.dataset.context);});
+      renderContext("identity");
+
+      function checkRows(selector,resultSelector,feedbackId,total,successText,failureText){const rows=[...document.querySelectorAll(selector)];let correct=0;for(const row of rows){const ok=row.querySelector("select").value===row.dataset.answer;const result=row.querySelector(resultSelector);result.textContent=ok?"✓":"✕";result.style.color=ok?"var(--green)":"var(--red)";if(ok)correct+=1;}const feedback=document.getElementById(feedbackId);feedback.textContent=correct===total?`${total}/${total}：${successText}`:`${correct}/${total}：${failureText}`;feedback.style.color=correct===total?"var(--green)":"var(--amber)";}
+      document.getElementById("check-parameters").addEventListener("click",()=>checkRows(".parameter-row",".parameter-result","parameter-feedback",6,"参数终点判断正确。","先判断模块翻译、框架消费还是Session执行。"));
+      document.getElementById("check-routing").addEventListener("click",()=>checkRows(".routing-row",".routing-result","routing-feedback",6,"所有权边界正确。","回到单一实现源和Context职责重新判断。"));
+
+      function renderStep(index){const item=requestSteps[index];document.getElementById("step-detail").innerHTML=`<div class="step-grid"><div><h3>${index+1}. ${item.title}</h3><p style="color:var(--muted)">${item.body}</p></div><div class="invariant-box"><b>本阶段不变量</b><p>${item.invariant}</p></div></div>`;}
+      const stepButtons=[...document.querySelectorAll(".step-button")];
+      for(const button of stepButtons)button.addEventListener("click",()=>{for(const item of stepButtons)item.classList.toggle("active",item===button);renderStep(Number(button.dataset.step));});
+      renderStep(0);
+
+      for(const button of document.querySelectorAll(".copy-button"))button.addEventListener("click",async()=>{const text=button.parentElement.querySelector("pre").innerText;try{await navigator.clipboard.writeText(text);button.textContent="已复制";}catch(_){button.textContent="请手动复制";}setTimeout(()=>{button.textContent="复制";},1600);});
+
+      const noteFields=[...document.querySelectorAll("[data-note]")];
+      for(const field of noteFields){const key=storagePrefix+"note:"+field.dataset.note;field.value=localStorage.getItem(key)||"";field.addEventListener("input",()=>{localStorage.setItem(key,field.value);const state=document.getElementById("save-state");state.textContent="已自动保存。";clearTimeout(field._saveTimer);field._saveTimer=setTimeout(()=>{state.textContent="调试记录保存在浏览器本地。";},1200);});}
+
+      document.getElementById("submit-quiz").addEventListener("click",()=>{const cards=[...document.querySelectorAll(".quiz-card")];let correct=0;for(const card of cards){const selected=card.querySelector("input:checked")?.value;const ok=selected===card.dataset.answer;card.classList.toggle("correct",ok);card.classList.toggle("wrong",!ok);if(ok)correct+=1;}const summary=document.getElementById("quiz-summary");summary.textContent=correct>=5?`${correct}/6：达标。请完成本课门禁。`:`${correct}/6：未达标。建议回看参数分流、Context解剖与两条生命周期。`;summary.style.background=correct>=5?"var(--green-soft)":"var(--amber-soft)";summary.style.color=correct>=5?"var(--green)":"var(--amber)";localStorage.setItem(storagePrefix+"quiz-score",String(correct));});
+
+      const gateChecks=[...document.querySelectorAll("[data-gate]")];
+      function updateGateProgress(){const done=gateChecks.filter((item)=>item.checked).length;document.getElementById("gate-progress-text").textContent=`${done}/${gateChecks.length}`;document.getElementById("gate-progress-value").style.width=`${done/gateChecks.length*100}%`;}
+      for(const check of gateChecks){const key=storagePrefix+"gate:"+check.dataset.gate;check.checked=localStorage.getItem(key)==="true";check.addEventListener("change",()=>{localStorage.setItem(key,String(check.checked));updateGateProgress();});}
+      updateGateProgress();
+
+      document.getElementById("reset-button").addEventListener("click",()=>{if(!confirm("确认清除第6课的调试记录、门禁状态和自测分数？"))return;for(const key of Object.keys(localStorage)){if(key.startsWith(storagePrefix))localStorage.removeItem(key);}for(const field of noteFields)field.value="";for(const check of gateChecks)check.checked=false;for(const card of document.querySelectorAll(".quiz-card"))card.classList.remove("correct","wrong");document.getElementById("quiz-summary").textContent="尚未提交。";document.getElementById("quiz-summary").removeAttribute("style");updateGateProgress();});
+
+      const menuButton=document.getElementById("menu-button");
+      menuButton.addEventListener("click",()=>{const open=document.body.classList.toggle("nav-open");menuButton.setAttribute("aria-expanded",String(open));});
+      document.getElementById("nav-list").addEventListener("click",()=>{document.body.classList.remove("nav-open");menuButton.setAttribute("aria-expanded","false");});
+
+      const navLinks=[...document.querySelectorAll(".nav-list a")];
+      const navById=new Map(navLinks.map((link)=>[link.getAttribute("href").slice(1),link]));
+      const sections=[...document.querySelectorAll("[data-section]")];
+      const observer=new IntersectionObserver((entries)=>{const visible=entries.filter((entry)=>entry.isIntersecting).sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top);if(!visible.length)return;for(const link of navLinks)link.classList.remove("active");navById.get(visible[0].target.id)?.classList.add("active");},{rootMargin:"-8% 0px -78% 0px",threshold:[0,1]});
+      for(const section of sections)observer.observe(section);
+
+      const pageProgress=document.getElementById("page-progress-value");
+      function updatePageProgress(){const max=document.documentElement.scrollHeight-window.innerHeight;pageProgress.style.width=`${max>0?window.scrollY/max*100:0}%`;}
+      window.addEventListener("scroll",updatePageProgress,{passive:true});
+      updatePageProgress();
+    })();
+  </script>
+</body>
+</html>
