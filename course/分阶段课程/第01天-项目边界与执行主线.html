@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="接口测试框架四周学习课程第1天：项目边界与执行主线">
+  <meta name="description" content="接口测试框架源码架构与证据链六周课程第1天：项目边界与执行主线">
   <title>第01天｜项目边界与执行主线</title>
   <style>
     :root {
@@ -380,16 +380,17 @@
     }
   </style>
 </head>
-<body>
+<body data-day="01" data-shared-mode="extensions">
   <div class="page-progress" aria-hidden="true"><span id="page-progress-value"></span></div>
   <div class="layout">
     <aside class="side-nav" id="side-nav" aria-label="本课目录">
       <div class="course-mark">
-        <small>接口测试框架课程</small>
+          <small>接口测试框架源码架构与证据链六周课程 · 第1周</small>
         <h2>第01天</h2>
         <p>项目边界与执行主线</p>
       </div>
       <nav class="nav-list" id="nav-list">
+        <a href="#day0-readiness"><span class="nav-number">00</span><span>准备度记录</span></a>
         <a href="#learning-goals"><span class="nav-number">01</span><span>学习目标</span></a>
         <a href="#why-framework"><span class="nav-number">02</span><span>为什么需要框架</span></a>
         <a href="#architecture"><span class="nav-number">03</span><span>五层架构地图</span></a>
@@ -397,6 +398,7 @@
         <a href="#reading-map"><span class="nav-number">05</span><span>目录阅读地图</span></a>
         <a href="#offline-lab"><span class="nav-number">06</span><span>离线实践</span></a>
         <a href="#constraint-thinking"><span class="nav-number">07</span><span>约束与边界决策</span></a>
+        <a href="#design-boundary"><span class="nav-number">D</span><span>设计选择与边界</span></a>
         <a href="#knowledge-check"><span class="nav-number">08</span><span>知识自测</span></a>
         <a href="#exit-gate"><span class="nav-number">09</span><span>本课门禁</span></a>
       </nav>
@@ -408,10 +410,11 @@
 
     <main class="main">
       <div class="topbar">
-        <div class="crumbs"><a href="../接口测试框架四周学习课程.html">课程大纲</a><span>/</span>第01天</div>
+        <div class="crumbs"><a href="../接口测试框架六周学习课程.html">课程大纲</a><span>/</span>第01天</div>
         <div class="toolbar">
           <button class="menu-button" id="menu-button" type="button" aria-controls="side-nav" aria-expanded="false">☰ 本课目录</button>
-          <a class="outline-button" href="../接口测试框架四周学习课程.html">返回课程大纲</a>
+          <a class="outline-button" href="../接口测试框架六周学习课程.html#section-4">统一术语表</a>
+          <a class="outline-button" href="../接口测试框架六周学习课程.html">返回课程大纲</a>
           <button class="ghost-button" id="reset-button" type="button">重置本课记录</button>
         </div>
       </div>
@@ -429,6 +432,21 @@
           </div>
           <div class="hero-outcome"><strong>本课结果：</strong>你将能画出项目五层地图，解释正确依赖方向，并证明collect-only只形成执行计划、不进入正式执行与Quality生命周期。</div>
         </header>
+
+        <section id="day0-readiness" data-section>
+          <p class="section-kicker">00 · Day 0准备度记录</p>
+          <h2>先留下六项可复查记录，再开始画架构图</h2>
+          <p class="section-lead">准备度不足不阻止阅读第1～3周，但必须把缺口写清楚；这些记录会在进入第4周前成为补课清单。</p>
+          <div class="note-grid">
+            <label class="note-field"><span>1. nodeid与选择范围</span><textarea data-record="day0-nodeid" placeholder="记录命令、nodeid，以及为什么只选择这一条用例"></textarea></label>
+            <label class="note-field"><span>2. fixture生命周期</span><textarea data-record="day0-fixture" placeholder="记录fixture何时创建、何时被用例使用、何时清理"></textarea></label>
+            <label class="note-field"><span>3. 三类失败</span><textarea data-record="day0-failures" placeholder="各写一个HTTP业务失败、传输异常、断言失败的判断依据"></textarea></label>
+            <label class="note-field"><span>4. 类型标注与上下文管理器</span><textarea data-record="day0-python" placeholder="记录读到的输入输出类型，以及进入/退出上下文时发生什么"></textarea></label>
+            <label class="note-field"><span>5. JSON、JSONL与JUnit XML</span><textarea data-record="day0-formats" placeholder="分别说明对象、记录流和测试结果文档的结构差异"></textarea></label>
+            <label class="note-field"><span>6. 线程共享风险</span><textarea data-record="day0-concurrency" placeholder="记录一个数据竞争或资源污染场景及其隔离办法"></textarea></label>
+          </div>
+          <div class="callout amber"><strong>准备度判定</strong>不会的项不要写“已掌握”，而要写“缺口 + 补齐动作 + 预计完成时间”。</div>
+        </section>
 
         <section id="learning-goals" data-section>
           <p class="section-kicker">01 · 学习目标</p>
@@ -636,6 +654,17 @@
           </div>
         </section>
 
+        <section id="design-boundary" data-section>
+          <p class="section-kicker">Design Choice · Boundary</p>
+          <h2>设计选择与适用边界：先从稳定入口和collect-only建立全局地图</h2>
+          <div class="objective-grid">
+            <div class="objective-card"><span class="objective-index">现</span><div><strong>当前方案</strong><p>从<code>run_master.py</code>稳定入口追踪权威收集、分池与提前返回，再映射module、common、Runner、Quality、Reporting五层。</p></div></div>
+            <div class="objective-card"><span class="objective-index">替</span><div><strong>替代方案</strong><p>按目录逐文件阅读，或直接运行完整测试后从日志反推架构。</p></div></div>
+            <div class="objective-card"><span class="objective-index">因</span><div><strong>选择理由</strong><p>稳定入口暴露真实编排边界；collect-only保留收集事实又避开业务调用与Quality副作用，最适合第一天建立可验证地图。</p></div></div>
+            <div class="objective-card"><span class="objective-index">界</span><div><strong>不适用条件</strong><p>定位具体实现缺陷、资源泄漏或运行期状态错误时，只看collect-only不足，必须进入对应调用链并执行最小离线测试。</p></div></div>
+          </div>
+        </section>
+
         <section id="knowledge-check" data-section>
           <p class="section-kicker">08 · 知识自测</p>
           <h2>确认你理解的是机制，而不是记住了名词</h2>
@@ -687,13 +716,19 @@
             <label class="exit-item"><input type="checkbox" data-gate="collect"><span>我能按顺序讲清collect-only从稳定入口到提前返回的七个步骤。</span></label>
             <label class="exit-item"><input type="checkbox" data-gate="evidence"><span>我能区分collect-only产生的计划事实与它不会产生的执行/Quality产物。</span></label>
             <label class="exit-item"><input type="checkbox" data-gate="routing"><span>我能把业务场景、公共请求、执行调度、质量治理和报告展示归入正确层级。</span></label>
+            <label class="exit-item"><input type="checkbox" data-gate="record" data-gate-requires-record="gate-evidence"><span>已填写可复查的成果位置或口头讲解记录。</span></label>
           </div>
+
+          <div class="note-grid">
+            <label class="note-field"><span>成果位置或口头记录（必填）</span><textarea data-record="gate-evidence" placeholder="例如：docs/day01-architecture.md；或2026-08-08向同伴讲解，记录对方追问与自己的修正"></textarea></label>
+          </div>
+          <p data-record-status="gate-evidence" style="color:var(--amber);font-size:13px">尚未记录；仅勾选复选框不能通过门禁。</p>
 
           <div class="callout green"><strong>当日产出</strong>画一张五层架构图，每层写一句职责；再补一条collect-only执行箭头，明确标出提前返回位置。图不需要漂亮，但必须能解释。</div>
 
           <div class="lesson-footer">
-            <a class="outline-button" href="../接口测试框架四周学习课程.html">← 返回课程大纲</a>
-            <span class="next-pending">下一课：离线黄金路径与模块四件套（待生成）</span>
+            <a class="outline-button" href="../接口测试框架六周学习课程.html">← 返回课程大纲</a>
+            <a class="outline-button" href="第02天-离线黄金路径与模块四件套.html">下一课：离线黄金路径与模块四件套 →</a>
           </div>
         </section>
       </article>
@@ -702,7 +737,7 @@
 
   <script>
     (() => {
-      const storagePrefix = "api-case-course-day01:";
+      const storagePrefix = "api-case-course-v2-day01-";
 
       const layerDetails = {
         module: {
@@ -894,5 +929,6 @@
       updatePageProgress();
     })();
   </script>
+  <script src="六周课程页.js"></script>
 </body>
 </html>

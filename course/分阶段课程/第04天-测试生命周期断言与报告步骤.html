@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="接口测试框架四周学习课程第4天：测试生命周期、断言与报告步骤">
+  <meta name="description" content="接口测试框架源码架构与证据链六周课程第4天：测试生命周期、断言与报告步骤">
   <title>第04天｜测试生命周期、断言与报告步骤</title>
   <style>
     :root {
@@ -269,11 +269,11 @@
     }
   </style>
 </head>
-<body>
+<body data-day="04" data-shared-mode="extensions">
   <div class="page-progress" aria-hidden="true"><span id="page-progress-value"></span></div>
   <div class="layout">
     <aside class="side-nav" id="side-nav" aria-label="本课目录">
-      <div class="course-mark"><small>接口测试框架课程</small><h2>第04天</h2><p>测试生命周期、断言与报告步骤</p></div>
+      <div class="course-mark"><small>接口测试框架源码架构与证据链六周课程 · 第1周</small><h2>第04天</h2><p>测试生命周期、断言与报告步骤</p></div>
       <nav class="nav-list" id="nav-list">
         <a href="#learning-goals"><span class="nav-number">01</span><span>目标与核心约束</span></a>
         <a href="#lifecycle"><span class="nav-number">02</span><span>pytest生命周期</span></a>
@@ -284,6 +284,7 @@
         <a href="#allure-boundary"><span class="nav-number">07</span><span>Allure证据边界</span></a>
         <a href="#offline-lab"><span class="nav-number">08</span><span>离线实践</span></a>
         <a href="#constraint-exercise"><span class="nav-number">09</span><span>所有权练习</span></a>
+        <a href="#design-boundary"><span class="nav-number">D</span><span>设计选择与边界</span></a>
         <a href="#knowledge-check"><span class="nav-number">10</span><span>知识自测</span></a>
         <a href="#exit-gate"><span class="nav-number">11</span><span>本课门禁</span></a>
       </nav>
@@ -292,8 +293,8 @@
 
     <main class="main">
       <div class="topbar">
-        <div class="crumbs"><a href="../接口测试框架四周学习课程.html">课程大纲</a><span>/</span>第04天</div>
-        <div class="toolbar"><button class="menu-button" id="menu-button" type="button" aria-controls="side-nav" aria-expanded="false">☰ 本课目录</button><a class="outline-button" href="../接口测试框架四周学习课程.html">返回课程大纲</a><button class="ghost-button" id="reset-button" type="button">重置本课记录</button></div>
+        <div class="crumbs"><a href="../接口测试框架六周学习课程.html">课程大纲</a><span>/</span>第04天</div>
+        <div class="toolbar"><button class="menu-button" id="menu-button" type="button" aria-controls="side-nav" aria-expanded="false">☰ 本课目录</button><a class="outline-button" href="../接口测试框架六周学习课程.html#section-4">统一术语表</a><a class="outline-button" href="../接口测试框架六周学习课程.html">返回课程大纲</a><button class="ghost-button" id="reset-button" type="button">重置本课记录</button></div>
       </div>
 
       <article class="lesson">
@@ -520,6 +521,17 @@ assertions.assert_schema(response, success_schema)</code></pre>
           </div>
         </section>
 
+        <section id="design-boundary" data-section>
+          <p class="section-kicker">Design Choice · Boundary</p>
+          <h2>设计选择与适用边界：生命周期、领域断言和报告步骤各守一层</h2>
+          <div class="objective-grid">
+            <div class="objective-card"><span class="objective-index">现</span><div><strong>当前方案</strong><p>pytest fixture拥有资源创建与清理，Assertions封装合同语义，Allure步骤只组织可读证据。</p></div></div>
+            <div class="objective-card"><span class="objective-index">替</span><div><strong>替代方案</strong><p>在单个测试函数里用<code>try/finally</code>管理全部资源、原生assert表达所有语义，并手工拼接报告文本。</p></div></div>
+            <div class="objective-card"><span class="objective-index">因</span><div><strong>选择理由</strong><p>pytest保证失败路径仍收尾；领域断言提升诊断精度；报告步骤不接管业务判定，避免“报告通过”掩盖生命周期或合同问题。</p></div></div>
+            <div class="objective-card"><span class="objective-index">界</span><div><strong>不适用条件</strong><p>离开pytest运行的独立脚本没有fixture生命周期，此时应改用显式上下文管理器或资源对象，而不是照搬测试夹具。</p></div></div>
+          </div>
+        </section>
+
         <section id="knowledge-check" data-section>
           <p class="section-kicker">10 · 知识自测</p>
           <h2>确认你能解释失败路径</h2>
@@ -545,9 +557,12 @@ assertions.assert_schema(response, success_schema)</code></pre>
             <label class="exit-item"><input type="checkbox" data-gate="assertions"><span>我能组合状态码、关键值、JSONPath和Schema断言，并解释各层问题。</span></label>
             <label class="exit-item"><input type="checkbox" data-gate="evidence"><span>我能区分Task业务步骤与框架自动HTTP/Retry/Polling附件。</span></label>
             <label class="exit-item"><input type="checkbox" data-gate="lab"><span>我已完成离线实践、四阶段标注与失败路径Cleanup说明。</span></label>
+            <label class="exit-item"><input type="checkbox" data-gate="record" data-gate-requires-record="gate-evidence"><span>已填写可复查的成果位置或口头讲解记录。</span></label>
           </div>
+          <div class="note-grid"><label class="note-field"><span>成果位置或口头记录（必填）</span><textarea data-record="gate-evidence" placeholder="记录三泳道图路径，或口头讲解失败路径Cleanup时的追问与订正"></textarea></label></div>
+          <p data-record-status="gate-evidence" style="color:var(--amber);font-size:13px">尚未记录；仅勾选复选框不能通过门禁。</p>
           <div class="callout green"><strong>当日产出</strong>为一条真实用例画出“生命周期 + 四层断言 + Allure证据”三泳道图，并在Cleanup泳道标明每个资源的唯一所有者。</div>
-          <div class="lesson-footer"><div class="footer-links"><a class="outline-button" href="第03天-模块标准结构与任务能力.html">← 上一课</a><a class="outline-button" href="../接口测试框架四周学习课程.html">返回课程大纲</a></div><span class="next-pending">下一课：离线测试分层与分类用例（待生成）</span></div>
+          <div class="lesson-footer"><div class="footer-links"><a class="outline-button" href="第03天-模块标准结构与任务能力.html">← 上一课</a><a class="outline-button" href="../接口测试框架六周学习课程.html">返回课程大纲</a><a class="outline-button" href="第05天-离线测试分层与分类用例.html">下一课：离线测试分层与分类用例 →</a></div></div>
         </section>
       </article>
     </main>
@@ -555,7 +570,7 @@ assertions.assert_schema(response, success_schema)</code></pre>
 
   <script>
     (() => {
-      const storagePrefix = "api-case-course-day04:";
+      const storagePrefix = "api-case-course-v2-day04-";
 
       const phases = {
         collect: { title: "收集测试对象", body: "pytest导入模块并识别Test开头的类与test_开头的方法。带自定义__init__的测试类不会被收集。", owner: "pytest收集器", cleanup: "尚未创建用例资源" },
@@ -648,5 +663,6 @@ assertions.assert_schema(response, success_schema)</code></pre>
       updatePageProgress();
     })();
   </script>
+  <script src="六周课程页.js"></script>
 </body>
 </html>

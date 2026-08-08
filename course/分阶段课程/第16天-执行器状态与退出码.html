@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang='zh-CN'>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width,initial-scale=1'>
+  <meta name='description' content='接口测试框架源码架构与证据链六周课程第16天：Runner执行器状态、池级事实、pytest退出码与execution-result机器产物'>
+  <title>第16天｜执行器状态与退出码</title>
+  <link rel='stylesheet' href='六周课程页.css'>
+</head>
+<body data-day='16'>
+  <aside class='side' id='side'>
+    <div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第16天 · 执行事实不可美化</h2><p>第4周 / Runner与报告事实</p></div>
+    <nav class='nav'>
+      <a href='#question'><span class='num'>01</span><span>问题与学习边界</span></a>
+      <a href='#entry'><span class='num'>02</span><span>源码入口与对象</span></a>
+      <a href='#facts'><span class='num'>03</span><span>四层执行事实</span></a>
+      <a href='#pool'><span class='num'>04</span><span>池状态与结果模型</span></a>
+      <a href='#machine'><span class='num'>05</span><span>Runner状态机</span></a>
+      <a href='#exit'><span class='num'>06</span><span>停止策略与退出码</span></a>
+      <a href='#artifact'><span class='num'>07</span><span>机器产物提交</span></a>
+      <a href='#boundary'><span class='num'>08</span><span>职责边界</span></a>
+      <a href='#tests'><span class='num'>09</span><span>现有测试证据</span></a>
+      <a href='#design'><span class='num'>D</span><span>设计选择与边界</span></a>
+      <a href='#practice'><span class='num'>10</span><span>本轮产物实践</span></a>
+      <a href='#quiz'><span class='num'>11</span><span>知识自测</span></a>
+      <a href='#gate'><span class='num'>12</span><span>学习门禁</span></a>
+    </nav>
+    <div class='meter'><div class='meter-row'><span>门禁完成度</span><strong id='gate-text'>0/5</strong></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div>
+  </aside>
+
+  <main class='main'>
+    <div class='topbar'><div>接口测试框架源码架构与证据链六周课程 <span>›</span> 第4周 <span>›</span> Day 16</div><div class='toolbar'><button class='menu' id='menu'>目录</button><a class='button' href='../接口测试框架六周学习课程.html'>课程大纲</a><a class='button' href='../接口测试框架六周学习课程.html#section-4'>术语表</a><button class='button' id='reset'>清除本课记录</button></div></div>
+    <article class='lesson'>
+      <header class='hero'>
+        <p class='eyebrow'>WEEK 4 · DAY 16</p>
+        <h1>执行器状态与退出码</h1>
+        <p class='hero-lead'>沿着<code>runner.run()</code>追踪一次权威收集、分池执行、停止决策、退出码归并和机器事实提交，理解Runner为什么只保存执行事实，而不替Quality或流水线解释业务结论。</p>
+        <div class='pills'><span class='pill'>建议时长 2.5～3 小时</span><span class='pill'>Runner状态机</span><span class='pill'>PoolExecutionResult</span><span class='pill'>execution-result.json</span></div>
+        <div class='outcome'><strong>可核验产出：</strong>一张Runner阶段状态图、一张退出码决策表，以及本轮<code>reports/execution-result.json</code>字段核验记录。</div>
+      </header>
+
+      <section id='question' data-section>
+        <p class='kicker'>01 · First principles</p>
+        <h2>退出码是执行事实的压缩，不是错误文案</h2>
+        <p class='lead'>Runner真正要解决的问题不是“打印什么提示”，而是把多个阶段、多个池的原始结果守恒地压缩成一个进程退出码，同时保留足够的机器证据供后续系统解释。</p>
+        <div class='grid3'>
+          <div class='card'><h3>输入事实</h3><p>pytest参数、权威收集结果、nodeid计划、并发配置和串行标记。</p></div>
+          <div class='card'><h3>过程事实</h3><p>每个池是否计划、是否真正执行、原始pytest退出码、起止时间和JUnit路径。</p></div>
+          <div class='card'><h3>输出事实</h3><p>最终退出码与<code>execution-result.json</code>，但不在Runner内推导质量等级或流水线结论。</p></div>
+        </div>
+        <div class='callout warn'><strong>TOC约束：</strong>如果只看最终退出码，就丢失了“哪个池执行、哪个池未运行、是否因终止码短路”的关键信息；因此本课的核心约束是事实保真，而不是让结果看起来更简洁。</div>
+      </section>
+
+      <section id='entry' data-section>
+        <p class='kicker'>02 · Source entry</p>
+        <h2>从四个文件建立实现地图</h2>
+        <div class='table-wrap'><table><thead><tr><th>入口</th><th>所有权</th><th>本课关注点</th></tr></thead><tbody>
+          <tr><td><code>run_orchestration/runner.py</code></td><td>编排一次完整Runner运行</td><td><code>run()</code>、<code>_final_exit_code()</code>、<code>_write_execution_result()</code></td></tr>
+          <tr><td><code>run_orchestration/pytest_execution.py</code></td><td>pytest收集、执行与结果模型</td><td><code>CollectionResult</code>、<code>PoolExecutionResult</code>、<code>merge_exit_codes()</code></td></tr>
+          <tr><td><code>run_orchestration/scheduling.py</code></td><td>并发池与串行池分组</td><td>消费Day15的权威nodeid集合，不重新收集</td></tr>
+          <tr><td><code>run_orchestration/artifacts.py</code></td><td>Runner机器产物原子提交</td><td><code>RUNNER_EXECUTION_SCHEMA_VERSION</code>和<code>write_execution_result_atomic()</code></td></tr>
+        </tbody></table></div>
+        <div class='flow'><span>CLI参数</span><i>→</i><span>PytestArgumentPlan</span><i>→</i><span>CollectionResult</span><i>→</i><span>PoolExecutionResult[]</span><i>→</i><span>final_exit_code</span><i>→</i><span>execution-result.json</span></div>
+      </section>
+
+      <section id='facts' data-section>
+        <p class='kicker'>03 · Fact layers</p>
+        <h2>四层事实不能互相替代</h2>
+        <div class='table-wrap'><table><thead><tr><th>层级</th><th>对象或字段</th><th>回答的问题</th><th>不能替代</th></tr></thead><tbody>
+          <tr><td>收集层</td><td><code>CollectionResult.raw_pytest_exit_code</code>、<code>cases</code></td><td>选择表达式能否形成可执行集合？</td><td>不能说明测试是否执行成功</td></tr>
+          <tr><td>计划层</td><td><code>planned_nodeids</code>、并发池、串行池</td><td>本轮准备执行哪些nodeid？</td><td>不能证明这些nodeid已经运行</td></tr>
+          <tr><td>池执行层</td><td><code>PoolExecutionResult</code></td><td>每个池发生了什么？</td><td>不能单独代表整轮结果</td></tr>
+          <tr><td>进程层</td><td><code>final_exit_code</code></td><td>调用方应该把进程视为哪类pytest结果？</td><td>不能还原池级细节</td></tr>
+        </tbody></table></div>
+        <p>第一性原理上，Runner不能从“计划过”推导“执行过”，也不能从“某池失败”推导“后续池一定未运行”。这些结论必须由池状态、停止策略和原始退出码共同证明。</p>
+      </section>
+
+      <section id='pool' data-section>
+        <p class='kicker'>04 · Pool result model</p>
+        <h2>NOT_RUN、COMPLETED、ERROR描述执行器自身发生了什么</h2>
+        <div class='grid3'>
+          <div class='card'><h3><code>NOT_RUN</code></h3><p>池为空或前序终止码要求停止。没有开始、结束时间，也没有原始pytest退出码。</p></div>
+          <div class='card'><h3><code>COMPLETED</code></h3><p><code>pytest.main()</code>已经返回；即使返回1表示用例失败，执行器调用本身仍然完成。</p></div>
+          <div class='card'><h3><code>ERROR</code></h3><p>执行器封装层捕获到异常，无法得到可信的pytest原始退出码；<code>exception_type</code>保存异常类型。</p></div>
+        </div>
+        <p><code>PoolExecutionResult</code>同时保存<code>stage_id</code>、<code>planned_nodeids</code>、状态、原始退出码、起止时间、异常类型和JUnit路径。状态与退出码是两个维度：<code>COMPLETED + 1</code>表示pytest完成且存在测试失败，<code>ERROR + null</code>表示连pytest结果都未形成。</p>
+        <div class='callout good'><strong>判断规则：</strong>先问“执行器是否完成调用”，再问“pytest返回了什么”；不要把<code>ERROR</code>和测试失败退出码1混成同一种失败。</div>
+      </section>
+
+      <section id='machine' data-section>
+        <p class='kicker'>05 · Runner state machine</p>
+        <h2>一次运行按阶段迁移，不靠隐式回退</h2>
+        <ol>
+          <li><strong>参数分区：</strong><code>partition_pytest_args()</code>拆出收集参数、执行参数和<code>collect_only</code>；非法参数直接返回pytest usage error 4。</li>
+          <li><strong>权威收集：</strong><code>collect_test_case_items()</code>只执行一次收集；非0收集码直接成为本轮原始事实。</li>
+          <li><strong>分池：</strong>对唯一的<code>cases</code>调用<code>split_test_cases()</code>，形成互斥并集。</li>
+          <li><strong>collect-only短路：</strong>只打印池数量并返回0，不启动Allure、Quality或执行产物生命周期。</li>
+          <li><strong>生命周期准备：</strong>正式运行才准备Allure与Quality。</li>
+          <li><strong>执行池：</strong>无<code>-n</code>时全部作为serial-pool执行；有并发配置时先parallel-pool，再根据停止策略决定serial-pool。</li>
+          <li><strong>归并与提交：</strong>计算最终退出码，原子写入机器产物，最后在<code>finally</code>收口可选生命周期。</li>
+        </ol>
+        <div class='flow'><span>ARGUMENTS</span><i>→</i><span>COLLECTED</span><i>→</i><span>PLANNED</span><i>→</i><span>PARALLEL?</span><i>→</i><span>SERIAL?</span><i>→</i><span>COMMITTED</span></div>
+      </section>
+
+      <section id='exit' data-section>
+        <p class='kicker'>06 · Exit semantics</p>
+        <h2>终止码优先，测试失败其次，未知非零保守归一</h2>
+        <div class='table-wrap'><table><thead><tr><th>pytest码</th><th>语义</th><th>Runner行为</th></tr></thead><tbody>
+          <tr><td>0</td><td>成功</td><td>允许继续后续池</td></tr>
+          <tr><td>1</td><td>测试失败</td><td>仍可继续串行池，以收集更多真实测试事实</td></tr>
+          <tr><td>2</td><td>用户中断</td><td>终止后续池，最终码保持2</td></tr>
+          <tr><td>3</td><td>pytest内部错误</td><td>终止后续池，最终码保持3</td></tr>
+          <tr><td>4</td><td>命令行使用错误</td><td>终止后续池，最终码保持4</td></tr>
+          <tr><td>5</td><td>没有收集到测试</td><td>终止后续池，最终码保持5</td></tr>
+        </tbody></table></div>
+        <p><code>merge_exit_codes()</code>先返回第一个终止码2～5；没有终止码但存在1时返回1；出现未知非零值时保守归一为1；全部为0或没有可归并码时返回0。<code>_final_exit_code()</code>还有一层保护：只要任一池状态是<code>ERROR</code>，最终码至少为1。</p>
+        <div class='callout'><strong>设计取舍：</strong>普通用例失败后继续串行池，是“继续收证”；内部错误、参数错误或无测试时停止，是“避免在无效前提上继续执行”。</div>
+      </section>
+
+      <section id='artifact' data-section>
+        <p class='kicker'>07 · Machine artifact</p>
+        <h2>execution-result.json是Runner事实的提交记录</h2>
+        <div class='table-wrap'><table><thead><tr><th>字段</th><th>来源</th><th>核验重点</th></tr></thead><tbody>
+          <tr><td><code>schema_version</code></td><td>Runner合同常量</td><td>消费方先按版本解析</td></tr>
+          <tr><td><code>test_target</code>、<code>selection_args</code></td><td>本轮输入</td><td>证明结果属于哪次选择</td></tr>
+          <tr><td><code>planned_case_count</code>、<code>planned_nodeids</code></td><td>权威收集结果</td><td>数量与nodeid集合一致</td></tr>
+          <tr><td><code>collection_exit_code</code></td><td>收集阶段</td><td>与执行池退出码分离</td></tr>
+          <tr><td><code>pool_results</code></td><td>每个池的结果对象</td><td>状态、时间、异常和JUnit路径不可互相推导</td></tr>
+          <tr><td><code>final_exit_code</code></td><td>归并规则</td><td>与进程返回码一致</td></tr>
+        </tbody></table></div>
+        <p><code>write_execution_result_atomic()</code>在目标目录创建临时文件，写入并刷新后再<code>replace</code>到正式路径。若提交失败且原结果不是终止码，Runner返回1，避免出现“进程成功但机器证据缺失”的假成功。</p>
+      </section>
+
+      <section id='boundary' data-section>
+        <p class='kicker'>08 · Ownership boundary</p>
+        <h2>Runner只编排，不接管报告与质量业务实现</h2>
+        <div class='grid2'>
+          <div class='card'><h3>Runner拥有</h3><ul><li>参数阶段划分与权威收集</li><li>池执行顺序和停止策略</li><li>原始退出码归并</li><li>Runner机器事实原子提交</li></ul></div>
+          <div class='card'><h3>Runner不拥有</h3><ul><li>Allure HTML与history生成细节</li><li>Quality事实模型、语义关系和指标</li><li>流水线阶段结论与展示</li><li>业务接口成功语义</li></ul></div>
+        </div>
+        <p><code>tests/test_run_orchestration_boundaries.py</code>通过静态依赖门禁保证Runner不直接导入Quality业务实现；Runner只调用中性的生命周期边界。后续Day17、Day18会分别展开Allure与Quality的实现所有权。</p>
+      </section>
+
+      <section id='tests' data-section>
+        <p class='kicker'>09 · Existing tests</p>
+        <h2>用现有离线测试验证状态和边界</h2>
+        <div class='command'><button class='copy'>复制</button><pre><code>.\.venv\Scripts\python.exe -m pytest `
+  tests/test_master_service_parallel_serial.py `
+  tests/test_run_orchestration_boundaries.py `
+  tests/test_run_orchestration_public_contract.py `
+  -q</code></pre></div>
+        <div class='table-wrap'><table><thead><tr><th>测试关注点</th><th>应能说明的实现合同</th></tr></thead><tbody>
+          <tr><td>无并发与有并发路径</td><td>无<code>-n</code>时所有nodeid只执行一次；有并发时先并发池后串行池</td></tr>
+          <tr><td>空池与终止码</td><td>空池写<code>NOT_RUN</code>；2～5阻止后续池；退出码1不阻止继续收证</td></tr>
+          <tr><td>机器产物</td><td>池级事实完整；写入失败不会形成0退出码</td></tr>
+          <tr><td>依赖边界</td><td>公开入口稳定，Runner不直接依赖Quality业务模块</td></tr>
+        </tbody></table></div>
+      </section>
+
+      <section id='design' data-section>
+        <p class='kicker'>Design decision</p><h2>设计选择与适用边界</h2>
+        <div class='table-wrap'><table><thead><tr><th>现方案</th><th>替代方案</th><th>选择理由</th><th>不适用条件</th></tr></thead><tbody><tr><td>用显式池状态、原始pytest退出码和原子<code>execution-result.json</code>共同提交执行事实。</td><td>只返回一个成功布尔值，或用最后一个池的退出码覆盖前序收集、终止和写盘错误。</td><td>NOT_RUN、COMPLETED、ERROR能区分“未发生”“已执行”和“执行器故障”，机器产物让流水线可重放退出码决策。</td><td>跨机器长任务需要更细的排队、租约、取消和心跳状态，应升级为事件日志/工作流状态机，而非继续扩充单文件枚举。</td></tr></tbody></table></div>
+      </section>
+
+      <section id='practice' data-section>
+        <p class='kicker'>10 · Current-run artifact</p>
+        <h2>执行离线Runner并核对本轮execution-result</h2>
+        <div class='command'><button class='copy'>复制</button><pre><code>$python = '.\.venv\Scripts\python.exe'
+$oldQuality = $env:QUALITY_ENABLE
+$oldAllure = $env:GENERATE_ALLURE_REPORT
+$oldHistory = $env:GENERATE_HISTORY_REPORT
+try {
+  $env:QUALITY_ENABLE = '0'
+  $env:GENERATE_ALLURE_REPORT = 'FALSE'
+  $env:GENERATE_HISTORY_REPORT = 'FALSE'
+  &amp; $python run_master.py module/offline_framework_example -n 2 --alluredir=reports/course/day16-allure-results
+  if ($LASTEXITCODE -ne 0) { throw ('Runner exit=' + $LASTEXITCODE) }
+  $result = Get-Content -LiteralPath 'reports/execution-result.json' -Raw | ConvertFrom-Json
+  $result | Select-Object schema_version,test_target,planned_case_count,collection_exit_code,final_exit_code
+  $result.pool_results | Select-Object stage_id,status,raw_pytest_exit_code,exception_type,junit_path
+  if ($result.planned_case_count -ne @($result.planned_nodeids).Count) { throw 'planned count mismatch' }
+  if ($result.final_exit_code -ne 0) { throw 'current run is not successful' }
+}
+finally {
+  $env:QUALITY_ENABLE = $oldQuality
+  $env:GENERATE_ALLURE_REPORT = $oldAllure
+  $env:GENERATE_HISTORY_REPORT = $oldHistory
+}</code></pre></div>
+        <div class='notes'><label>阶段状态图<textarea data-note='state' placeholder='参数 → 收集 → 分池 → 池执行 → 退出码归并 → 原子提交'></textarea></label><label>池结果核验<textarea data-note='pools' placeholder='逐池记录stage_id、status、raw exit、nodeid数量和JUnit路径'></textarea></label><label>退出码决策表<textarea data-note='exit' placeholder='记录0～5、ERROR状态和未知非零值的归并规则'></textarea></label><label>本轮证据<textarea data-note='evidence' placeholder='命令、执行时间、planned count、pool状态、final_exit_code'></textarea></label></div>
+      </section>
+
+      <section id='quiz' data-section>
+        <p class='kicker'>11 · Knowledge check</p>
+        <h2>知识自测</h2>
+        <div class='quiz' data-answer='b'><strong>1. <code>COMPLETED + raw_pytest_exit_code=1</code>表示什么？</strong><label><input type='radio' name='q1' value='a'>执行器内部异常</label><label><input type='radio' name='q1' value='b'>pytest调用完成，但存在测试失败</label><label><input type='radio' name='q1' value='c'>该池没有运行</label></div>
+        <div class='quiz' data-answer='c'><strong>2. 哪组退出码会终止后续池？</strong><label><input type='radio' name='q2' value='a'>只有1</label><label><input type='radio' name='q2' value='b'>0和1</label><label><input type='radio' name='q2' value='c'>2、3、4、5</label></div>
+        <div class='quiz' data-answer='a'><strong>3. collect-only为什么不写正式execution-result？</strong><label><input type='radio' name='q3' value='a'>它只形成收集与分池计划，没有进入执行生命周期</label><label><input type='radio' name='q3' value='b'>JSON不支持nodeid</label><label><input type='radio' name='q3' value='c'>Quality阻止写入</label></div>
+        <div class='quiz' data-answer='b'><strong>4. execution-result提交失败且原退出码为0时，Runner应返回什么？</strong><label><input type='radio' name='q4' value='a'>仍返回0</label><label><input type='radio' name='q4' value='b'>返回1，阻止假成功</label><label><input type='radio' name='q4' value='c'>返回5</label></div>
+        <div class='quiz' data-answer='c'><strong>5. Runner机器产物不负责表达哪项内容？</strong><label><input type='radio' name='q5' value='a'>计划nodeid</label><label><input type='radio' name='q5' value='b'>池级原始退出码</label><label><input type='radio' name='q5' value='c'>Quality指标是否达到发布门槛</label></div>
+        <button class='primary' id='submit-quiz'>提交答案</button><div class='verdict' id='quiz-summary'>建议达到4/5再进入门禁。</div>
+      </section>
+
+      <section id='gate' data-section>
+        <p class='kicker'>12 · Exit gate</p>
+        <h2>本课门禁</h2>
+        <div class='gate-list'>
+          <label class='gate'><input type='checkbox' data-gate='map'><span>已完成Runner阶段状态图，并标明collect-only短路点。</span></label>
+          <label class='gate'><input type='checkbox' data-gate='pool'><span>能区分NOT_RUN、COMPLETED、ERROR与pytest退出码。</span></label>
+          <label class='gate'><input type='checkbox' data-gate='exit'><span>能不看源码写出0～5及ERROR状态的归并规则。</span></label>
+          <label class='gate'><input type='checkbox' data-gate='artifact'><span>已核对本轮execution-result的计划、池结果和最终退出码。</span></label>
+          <label class='gate'><input type='checkbox' data-gate='boundary'><span>能说明Runner、Allure、Quality和流水线各自的事实所有权。</span></label>
+        </div>
+        <div class='notes'><label>门禁成果位置 / 口头记录<textarea data-note='gate-record' placeholder='填写状态图、execution-result或退出码审计记录的位置；口头验收时记录复述要点'></textarea></label></div>
+        <div class='callout good'><strong>验收句：</strong>我能从<code>runner.run()</code>追踪到池级结果和原子机器产物，并证明最终退出码没有掩盖收集、计划和执行事实。</div>
+        <div class='footer'><div class='footer-links'><a class='button' href='第15天-权威收集与并串行调度.html'>← 上一课</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a><a class='button' href='第17天-测试报告生命周期与机器产物.html'>下一课 →</a></div></div>
+      </section>
+    </article>
+  </main>
+  <script src='六周课程页.js'></script>
+</body>
+</html>

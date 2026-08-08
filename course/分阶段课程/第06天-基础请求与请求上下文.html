@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="接口测试框架四周学习课程第6天：基础请求与请求上下文">
+<meta name="description" content="接口测试框架源码架构与证据链六周课程第6天：基础请求与请求上下文">
   <title>第06天｜基础请求与请求上下文</title>
   <style>
     :root {
@@ -262,11 +262,11 @@
     }
   </style>
 </head>
-<body>
+<body data-day="06" data-shared-mode="extensions">
   <div class="page-progress" aria-hidden="true"><span id="page-progress-value"></span></div>
   <div class="layout">
     <aside class="side-nav" id="side-nav" aria-label="本课目录">
-      <div class="course-mark"><small>接口测试框架课程 · 第2周</small><h2>第06天</h2><p>基础请求与请求上下文</p></div>
+<div class="course-mark"><small>接口测试框架源码架构与证据链六周课程 · 第2周</small><h2>第06天</h2><p>基础请求与请求上下文</p></div>
       <nav class="nav-list" id="nav-list">
         <a href="#learning-goals"><span class="nav-number">01</span><span>目标与核心约束</span></a>
         <a href="#single-source"><span class="nav-number">02</span><span>HTTP唯一实现源</span></a>
@@ -276,7 +276,8 @@
         <a href="#error-flow"><span class="nav-number">06</span><span>成功与异常分叉</span></a>
         <a href="#offline-case"><span class="nav-number">07</span><span>离线POST跟踪</span></a>
         <a href="#debug-lab"><span class="nav-number">08</span><span>调试实践</span></a>
-        <a href="#constraint-exercise"><span class="nav-number">09</span><span>边界决策练习</span></a>
+<a href="#constraint-exercise"><span class="nav-number">09</span><span>边界决策练习</span></a>
+<a href="#design-boundary"><span class="nav-number">D</span><span>设计选择与边界</span></a>
         <a href="#knowledge-check"><span class="nav-number">10</span><span>知识自测</span></a>
         <a href="#exit-gate"><span class="nav-number">11</span><span>本课门禁</span></a>
       </nav>
@@ -284,7 +285,7 @@
     </aside>
 
     <main class="main">
-      <div class="topbar"><div class="crumbs"><a href="../接口测试框架四周学习课程.html">课程大纲</a><span>/</span>第06天</div><div class="toolbar"><button class="menu-button" id="menu-button" type="button" aria-controls="side-nav" aria-expanded="false">☰ 本课目录</button><a class="outline-button" href="../接口测试框架四周学习课程.html">返回课程大纲</a><button class="ghost-button" id="reset-button" type="button">重置本课记录</button></div></div>
+<div class="topbar"><div class="crumbs"><a href="../接口测试框架六周学习课程.html">课程大纲</a><span>/</span>第06天</div><div class="toolbar"><button class="menu-button" id="menu-button" type="button" aria-controls="side-nav" aria-expanded="false">☰ 本课目录</button><a class="outline-button" href="../接口测试框架六周学习课程.html#section-4">统一术语表</a><a class="outline-button" href="../接口测试框架六周学习课程.html">返回课程大纲</a><button class="ghost-button" id="reset-button" type="button">重置本课记录</button></div></div>
 
       <article class="lesson">
         <header class="hero" id="top">
@@ -481,7 +482,18 @@
           </div>
         </section>
 
-        <section id="knowledge-check" data-section>
+<section id="design-boundary" data-section>
+<p class="section-kicker">Design Choice · Boundary</p>
+<h2>设计选择与适用边界：每次HTTP attempt拥有独立RequestContext</h2>
+<div class="objective-grid">
+<div class="objective-card"><span class="objective-index">现</span><div><strong>当前方案</strong><p>BaseRequest统一执行HTTP；每次attempt创建并复制一份RequestContext，承载真实kwargs、响应、异常、计时和诊断attributes。</p></div></div>
+<div class="objective-card"><span class="objective-index">替</span><div><strong>替代方案</strong><p>在函数间传递松散参数，或把当前请求状态写入模块级/Session级可变对象。</p></div></div>
+<div class="objective-card"><span class="objective-index">因</span><div><strong>选择理由</strong><p>attempt级上下文让Middleware共享同一事实，又把Retry不同尝试隔离开；复制输入可防止诊断或并发路径反向污染调用者。</p></div></div>
+<div class="objective-card"><span class="objective-index">界</span><div><strong>不适用条件</strong><p>纯函数或无HTTP生命周期的本地转换不需要RequestContext；若对象跨attempt复用，必须改用更高层只读operation状态而不能复用当前上下文。</p></div></div>
+</div>
+</section>
+
+<section id="knowledge-check" data-section>
           <p class="section-kicker">10 · 知识自测</p>
           <h2>确认你理解一次attempt的事实边界</h2>
           <p class="section-lead">建议达到5/6再进入门禁。第7、8课都会建立在RequestContext与参数分流之上。</p>
@@ -506,10 +518,13 @@
             <label class="exit-item"><input type="checkbox" data-gate="context"><span>我能写出RequestContext主要字段及构造时复制、超时和Header标准化过程。</span></label>
             <label class="exit-item"><input type="checkbox" data-gate="parameters"><span>我能区分模块业务输入、框架控制参数和requests传输参数，并指出各自终点。</span></label>
             <label class="exit-item"><input type="checkbox" data-gate="branches"><span>我能画出成功Response与传输异常在Session处的分叉及共同收尾。</span></label>
-            <label class="exit-item"><input type="checkbox" data-gate="debug"><span>我已跟踪离线echo POST，并记录成功和传输异常生命周期差异。</span></label>
-          </div>
+<label class="exit-item"><input type="checkbox" data-gate="debug"><span>我已跟踪离线echo POST，并记录成功和传输异常生命周期差异。</span></label>
+<label class="exit-item"><input type="checkbox" data-gate="record" data-gate-requires-record="gate-evidence"><span>已填写可复查的成果位置或口头讲解记录。</span></label>
+</div>
+<div class="note-grid"><div class="note-field"><label for="gate-evidence">成果位置或口头记录（必填）</label><textarea id="gate-evidence" data-record="gate-evidence" placeholder="记录八阶段请求图/字段归属表路径，或口头讲解时对attempt边界的追问与订正"></textarea></div></div>
+<p data-record-status="gate-evidence" style="color:var(--amber);font-size:13px">尚未记录；仅勾选复选框不能通过门禁。</p>
           <div class="callout green"><strong>当日产出</strong>一张请求主线图、一个带真实字段值的RequestContext快照，以及成功Response/传输异常两条生命周期对照表。</div>
-          <div class="lesson-footer"><div class="footer-links"><a class="outline-button" href="第05天-离线测试分层与分类用例.html">← 上一课</a><a class="outline-button" href="../接口测试框架四周学习课程.html">返回课程大纲</a><a class="outline-button" href="第07天-请求中间件脱敏日志与资源捕获.html">下一课：请求中间件、脱敏日志与资源捕获 →</a></div></div>
+          <div class="lesson-footer"><div class="footer-links"><a class="outline-button" href="第05天-离线测试分层与分类用例.html">← 上一课</a><a class="outline-button" href="../接口测试框架六周学习课程.html">返回课程大纲</a><a class="outline-button" href="第07天-请求中间件脱敏与诊断日志.html">下一课：请求中间件、脱敏与诊断日志 →</a></div></div>
         </section>
       </article>
     </main>
@@ -517,7 +532,7 @@
 
   <script>
     (() => {
-      const storagePrefix = "api-case-course-day06:";
+      const storagePrefix = "api-case-course-v2-day06-";
 
       const contextDetails = {
         identity: { title: "身份字段：method / path / url / protocol", body: "method被标准化为大写；path保留模块传入的业务路径；url是与Settings.base_url组合后的完整地址；protocol区分http与sse。", input: "POST + /v1/echo", output: "POST / loopback完整URL / http", consumer: "Request Group、Middleware、Session与Runtime Hooks" },
@@ -581,6 +596,7 @@
       window.addEventListener("scroll",updatePageProgress,{passive:true});
       updatePageProgress();
     })();
-  </script>
+</script>
+<script src="六周课程页.js"></script>
 </body>
 </html>

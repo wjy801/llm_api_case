@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="接口测试框架四周学习课程第3天：模块标准结构与任务能力">
+  <meta name="description" content="接口测试框架源码架构与证据链六周课程第3天：模块标准结构与任务能力">
   <title>第03天｜模块标准结构与任务能力</title>
   <style>
     :root {
@@ -317,12 +317,12 @@
     }
   </style>
 </head>
-<body>
+<body data-day="03" data-shared-mode="extensions">
   <div class="page-progress" aria-hidden="true"><span id="page-progress-value"></span></div>
   <div class="layout">
     <aside class="side-nav" id="side-nav" aria-label="本课目录">
       <div class="course-mark">
-        <small>接口测试框架课程</small>
+          <small>接口测试框架源码架构与证据链六周课程 · 第1周</small>
         <h2>第03天</h2>
         <p>模块标准结构与任务能力</p>
       </div>
@@ -335,6 +335,7 @@
         <a href="#module-comparison"><span class="nav-number">06</span><span>真实模块只读对比</span></a>
         <a href="#design-workshop"><span class="nav-number">07</span><span>模块设计工作台</span></a>
         <a href="#change-mapping"><span class="nav-number">08</span><span>变化位置映射</span></a>
+        <a href="#design-boundary"><span class="nav-number">D</span><span>设计选择与边界</span></a>
         <a href="#knowledge-check"><span class="nav-number">09</span><span>知识自测</span></a>
         <a href="#exit-gate"><span class="nav-number">10</span><span>本课门禁</span></a>
       </nav>
@@ -346,10 +347,11 @@
 
     <main class="main">
       <div class="topbar">
-        <div class="crumbs"><a href="../接口测试框架四周学习课程.html">课程大纲</a><span>/</span>第03天</div>
+        <div class="crumbs"><a href="../接口测试框架六周学习课程.html">课程大纲</a><span>/</span>第03天</div>
         <div class="toolbar">
           <button class="menu-button" id="menu-button" type="button" aria-controls="side-nav" aria-expanded="false">☰ 本课目录</button>
-          <a class="outline-button" href="../接口测试框架四周学习课程.html">返回课程大纲</a>
+          <a class="outline-button" href="../接口测试框架六周学习课程.html#section-4">统一术语表</a>
+          <a class="outline-button" href="../接口测试框架六周学习课程.html">返回课程大纲</a>
           <button class="ghost-button" id="reset-button" type="button">重置本课记录</button>
         </div>
       </div>
@@ -603,6 +605,17 @@ __all__ = [
           <div class="exercise-feedback" id="mapping-feedback" aria-live="polite"></div>
         </section>
 
+        <section id="design-boundary" data-section>
+          <p class="section-kicker">Design Choice · Boundary</p>
+          <h2>设计选择与适用边界：模块保留稳定身份，能力只在证据充分时下沉</h2>
+          <div class="objective-grid">
+            <div class="objective-card"><span class="objective-index">现</span><div><strong>当前方案</strong><p>模块暴露真实Request、Task、Assertions、Decorators类型；BaseTask保留兼容门面，跨模块实现进入窄<code>task_capabilities</code>。</p></div></div>
+            <div class="objective-card"><span class="objective-index">替</span><div><strong>替代方案</strong><p>把新动作都塞进BaseTask，或每个模块复制一份相同helper而不保留稳定公开导出。</p></div></div>
+            <div class="objective-card"><span class="objective-index">因</span><div><strong>选择理由</strong><p>真实类型维持模块身份和导入合同；窄能力对象避免公共门面无限膨胀，同时让复用建立在已观察到的跨模块变化上。</p></div></div>
+            <div class="objective-card"><span class="objective-index">界</span><div><strong>不适用条件</strong><p>能力只服务单一模块、语义尚未稳定时不应下沉；反之若多个模块已共享同一合同和生命周期，继续复制模块实现也不再适用。</p></div></div>
+          </div>
+        </section>
+
         <section id="knowledge-check" data-section>
           <p class="section-kicker">09 · 知识自测</p>
           <h2>确认你掌握的是扩展原则</h2>
@@ -653,14 +666,17 @@ __all__ = [
             <label class="exit-item"><input type="checkbox" data-gate="facade"><span>我能画出模块Task → BaseTask门面 → task_capabilities的委托关系。</span></label>
             <label class="exit-item"><input type="checkbox" data-gate="decision"><span>我能用四道决策门判断复用、模块实现和窄能力下沉，不继续扩张BaseTask。</span></label>
             <label class="exit-item"><input type="checkbox" data-gate="workshop"><span>我已完成example_model六文件职责蓝图、最小payload builder与六类变化映射。</span></label>
+            <label class="exit-item"><input type="checkbox" data-gate="record" data-gate-requires-record="gate-evidence"><span>已填写可复查的成果位置或口头讲解记录。</span></label>
           </div>
+          <div class="note-grid"><label class="note-field"><span>成果位置或口头记录（必填）</span><textarea data-record="gate-evidence" placeholder="记录模块蓝图/变化映射表路径，或口头讲解时对公共化边界的追问与订正"></textarea></label></div>
+          <p data-record-status="gate-evidence" style="color:var(--amber);font-size:13px">尚未记录；仅勾选复选框不能通过门禁。</p>
           <div class="callout green"><strong>当日产出</strong>保存一份“需求变化 → 主要修改位置 → 禁止放置位置”的映射表，至少覆盖接口路径、payload、Schema、公共Retry、账单能力和报告字段。</div>
           <div class="lesson-footer">
             <div class="footer-links">
               <a class="outline-button" href="第02天-离线黄金路径与模块四件套.html">← 上一课</a>
-              <a class="outline-button" href="../接口测试框架四周学习课程.html">返回课程大纲</a>
+              <a class="outline-button" href="../接口测试框架六周学习课程.html">返回课程大纲</a>
+              <a class="outline-button" href="第04天-测试生命周期断言与报告步骤.html">下一课：测试生命周期、断言与报告步骤 →</a>
             </div>
-            <span class="next-pending">下一课：测试生命周期、断言与报告步骤（待生成）</span>
           </div>
         </section>
       </article>
@@ -669,7 +685,7 @@ __all__ = [
 
   <script>
     (() => {
-      const storagePrefix = "api-case-course-day03:";
+      const storagePrefix = "api-case-course-v2-day03-";
 
       const fileDetails = {
         init: {
@@ -949,5 +965,6 @@ __all__ = [
       updatePageProgress();
     })();
   </script>
+  <script src="六周课程页.js"></script>
 </body>
 </html>
