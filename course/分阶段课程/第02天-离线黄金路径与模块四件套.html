@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="接口测试框架四周学习课程第2天：离线黄金路径与模块四件套">
+  <meta name="description" content="接口测试框架源码架构与证据链六周课程第2天：离线黄金路径与模块四件套">
   <title>第02天｜离线黄金路径与模块四件套</title>
   <style>
     :root {
@@ -307,12 +307,12 @@
     }
   </style>
 </head>
-<body>
+<body data-day="02" data-shared-mode="extensions">
   <div class="page-progress" aria-hidden="true"><span id="page-progress-value"></span></div>
   <div class="layout">
     <aside class="side-nav" id="side-nav" aria-label="本课目录">
       <div class="course-mark">
-        <small>接口测试框架课程</small>
+          <small>接口测试框架源码架构与证据链六周课程 · 第1周</small>
         <h2>第02天</h2>
         <p>离线黄金路径与模块四件套</p>
       </div>
@@ -325,6 +325,7 @@
         <a href="#contracts"><span class="nav-number">06</span><span>Schema与领域断言</span></a>
         <a href="#reading-lab"><span class="nav-number">07</span><span>阅读与离线实践</span></a>
         <a href="#constraint-routing"><span class="nav-number">08</span><span>约束与归属练习</span></a>
+        <a href="#design-boundary"><span class="nav-number">D</span><span>设计选择与边界</span></a>
         <a href="#knowledge-check"><span class="nav-number">09</span><span>知识自测</span></a>
         <a href="#exit-gate"><span class="nav-number">10</span><span>本课门禁</span></a>
       </nav>
@@ -336,10 +337,11 @@
 
     <main class="main">
       <div class="topbar">
-        <div class="crumbs"><a href="../接口测试框架四周学习课程.html">课程大纲</a><span>/</span>第02天</div>
+        <div class="crumbs"><a href="../接口测试框架六周学习课程.html">课程大纲</a><span>/</span>第02天</div>
         <div class="toolbar">
           <button class="menu-button" id="menu-button" type="button" aria-controls="side-nav" aria-expanded="false">☰ 本课目录</button>
-          <a class="outline-button" href="../接口测试框架四周学习课程.html">返回课程大纲</a>
+          <a class="outline-button" href="../接口测试框架六周学习课程.html#section-4">统一术语表</a>
+          <a class="outline-button" href="../接口测试框架六周学习课程.html">返回课程大纲</a>
           <button class="ghost-button" id="reset-button" type="button">重置本课记录</button>
         </div>
       </div>
@@ -596,6 +598,17 @@ OfflineFrameworkTask</code></pre>
           </div>
         </section>
 
+        <section id="design-boundary" data-section>
+          <p class="section-kicker">Design Choice · Boundary</p>
+          <h2>设计选择与适用边界：用模块四件套隔离四种变化</h2>
+          <div class="objective-grid">
+            <div class="objective-card"><span class="objective-index">现</span><div><strong>当前方案</strong><p>Test组织场景，Task组织业务动作，Request描述协议，Assertions表达领域结果，并沿黄金路径组合。</p></div></div>
+            <div class="objective-card"><span class="objective-index">替</span><div><strong>替代方案</strong><p>在一个pytest函数里直接拼URL、发HTTP、解析字段并写全部断言。</p></div></div>
+            <div class="objective-card"><span class="objective-index">因</span><div><strong>选择理由</strong><p>协议、动作、场景和业务语义的变化频率不同；分层后能缩小回归范围，也能让同一Request或Assertions被多个场景稳定复用。</p></div></div>
+            <div class="objective-card"><span class="objective-index">界</span><div><strong>不适用条件</strong><p>一次性探索脚本且明确不会进入回归体系时可暂不构建四件套；一旦成为公开模块用例，就必须恢复真实类型和稳定入口。</p></div></div>
+          </div>
+        </section>
+
         <section id="knowledge-check" data-section>
           <p class="section-kicker">09 · 知识自测</p>
           <h2>确认你能用边界解释代码</h2>
@@ -646,11 +659,15 @@ OfflineFrameworkTask</code></pre>
             <label class="exit-item"><input type="checkbox" data-gate="identity"><span>我能解释为什么只有pass的OfflineFrameworkDecorators仍应是真实子类。</span></label>
             <label class="exit-item"><input type="checkbox" data-gate="contracts"><span>我能为一个校验需求判断应使用Schema、领域Assertions还是两者组合。</span></label>
             <label class="exit-item"><input type="checkbox" data-gate="lab"><span>我已运行稳定nodeid，并能解释503重试、三个业务状态与幂等清理证据。</span></label>
+            <label class="exit-item"><input type="checkbox" data-gate="record" data-gate-requires-record="gate-evidence"><span>已填写可复查的成果位置或口头讲解记录。</span></label>
           </div>
+          <div class="note-grid"><label class="note-field"><span>成果位置或口头记录（必填）</span><textarea data-record="gate-evidence" placeholder="记录调用链图/所有权表路径，或口头讲解时间、听众追问与订正"></textarea></label></div>
+          <p data-record-status="gate-evidence" style="color:var(--amber);font-size:13px">尚未记录；仅勾选复选框不能通过门禁。</p>
           <div class="callout green"><strong>当日产出</strong>画一张“Test → Task → Request → BaseRequest → Response → Assertions”图；在每个节点写一个黄金路径中的真实方法或证据，并补充一条“禁止放入”的内容。</div>
           <div class="lesson-footer">
-            <a class="outline-button" href="../接口测试框架四周学习课程.html">← 返回课程大纲</a>
-            <span class="next-pending">下一课：模块标准结构与任务能力（待生成）</span>
+            <a class="outline-button" href="第01天-项目边界与执行主线.html">← 上一课</a>
+            <a class="outline-button" href="../接口测试框架六周学习课程.html">返回课程大纲</a>
+            <a class="outline-button" href="第03天-模块标准结构与任务能力.html">下一课：模块标准结构与任务能力 →</a>
           </div>
         </section>
       </article>
@@ -659,7 +676,7 @@ OfflineFrameworkTask</code></pre>
 
   <script>
     (() => {
-      const storagePrefix = "api-case-course-day02:";
+      const storagePrefix = "api-case-course-v2-day02-";
 
       const layerDetails = {
         test: {
@@ -896,5 +913,6 @@ OfflineFrameworkTask</code></pre>
       updatePageProgress();
     })();
   </script>
+  <script src="六周课程页.js"></script>
 </body>
 </html>

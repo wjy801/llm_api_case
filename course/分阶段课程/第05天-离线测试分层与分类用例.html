@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="接口测试框架四周学习课程第5天：离线测试分层与分类用例">
+  <meta name="description" content="接口测试框架源码架构与证据链六周课程第5天：离线测试分层、周复盘与分类用例">
   <title>第05天｜离线测试分层与分类用例</title>
   <style>
     :root {
@@ -266,11 +266,11 @@
     }
   </style>
 </head>
-<body>
+<body data-day="05" data-shared-mode="extensions">
   <div class="page-progress" aria-hidden="true"><span id="page-progress-value"></span></div>
   <div class="layout">
     <aside class="side-nav" id="side-nav" aria-label="本课目录">
-      <div class="course-mark"><small>接口测试框架课程</small><h2>第05天</h2><p>离线测试分层与分类用例</p></div>
+      <div class="course-mark"><small>接口测试框架源码架构与证据链六周课程 · 第1周</small><h2>第05天</h2><p>离线测试分层与分类用例</p></div>
       <nav class="nav-list" id="nav-list">
         <a href="#learning-goals"><span class="nav-number">01</span><span>目标与周总结</span></a>
         <a href="#three-layers"><span class="nav-number">02</span><span>离线测试三层</span></a>
@@ -281,14 +281,16 @@
         <a href="#reading-route"><span class="nav-number">07</span><span>阅读路线播放器</span></a>
         <a href="#offline-lab"><span class="nav-number">08</span><span>离线实践</span></a>
         <a href="#constraint-exercise"><span class="nav-number">09</span><span>层级选择练习</span></a>
+        <a href="#design-boundary"><span class="nav-number">D</span><span>设计选择与边界</span></a>
         <a href="#knowledge-check"><span class="nav-number">10</span><span>综合自测</span></a>
+        <a href="#weekly-review"><span class="nav-number">R</span><span>30～45分钟周复盘</span></a>
         <a href="#week-gate"><span class="nav-number">11</span><span>第1周门禁</span></a>
       </nav>
       <div class="side-progress"><div class="side-progress-row"><span>周门禁完成度</span><span id="gate-progress-text">0/5</span></div><div class="side-progress-track"><div class="side-progress-value" id="gate-progress-value"></div></div></div>
     </aside>
 
     <main class="main">
-      <div class="topbar"><div class="crumbs"><a href="../接口测试框架四周学习课程.html">课程大纲</a><span>/</span>第05天</div><div class="toolbar"><button class="menu-button" id="menu-button" type="button" aria-controls="side-nav" aria-expanded="false">☰ 本课目录</button><a class="outline-button" href="../接口测试框架四周学习课程.html">返回课程大纲</a><button class="ghost-button" id="reset-button" type="button">重置本课记录</button></div></div>
+      <div class="topbar"><div class="crumbs"><a href="../接口测试框架六周学习课程.html">课程大纲</a><span>/</span>第05天</div><div class="toolbar"><button class="menu-button" id="menu-button" type="button" aria-controls="side-nav" aria-expanded="false">☰ 本课目录</button><a class="outline-button" href="../接口测试框架六周学习课程.html#section-4">统一术语表</a><a class="outline-button" href="../接口测试框架六周学习课程.html">返回课程大纲</a><button class="ghost-button" id="reset-button" type="button">重置本课记录</button></div></div>
 
       <article class="lesson">
         <header class="hero" id="top">
@@ -475,6 +477,17 @@
           </div>
         </section>
 
+        <section id="design-boundary" data-section>
+          <p class="section-kicker">Design Choice · Boundary</p>
+          <h2>设计选择与适用边界：让故障在最低成本层先暴露</h2>
+          <div class="objective-grid">
+            <div class="objective-card"><span class="objective-index">现</span><div><strong>当前方案</strong><p>服务级测试验收loopback基础设施，能力级测试验证单一机制，分类级用例保护故障域，黄金路径证明稳定组合。</p></div></div>
+            <div class="objective-card"><span class="objective-index">替</span><div><strong>替代方案</strong><p>所有变化都塞进一条端到端黄金用例，或按文件随意增加测试而不声明证明目标。</p></div></div>
+            <div class="objective-card"><span class="objective-index">因</span><div><strong>选择理由</strong><p>最低成本层能更快定位根因；分类用例保留反例精度；黄金路径只承担稳定组合，避免一处失败同时否定全部能力。</p></div></div>
+            <div class="objective-card"><span class="objective-index">界</span><div><strong>不适用条件</strong><p>新能力合同仍在探索、尚无稳定故障分类时，不应机械补齐所有层；先建立最小确定性证据，再随风险与复用扩大分层。</p></div></div>
+          </div>
+        </section>
+
         <section id="knowledge-check" data-section>
           <p class="section-kicker">10 · 第1周综合自测</p>
           <h2>用框架边界解释测试策略</h2>
@@ -491,24 +504,54 @@
           <div class="quiz-summary" id="quiz-summary" aria-live="polite">尚未提交。</div>
         </section>
 
+        <section id="weekly-review" data-section>
+          <p class="section-kicker">Weekly Review · 30～45分钟</p>
+          <h2>第1周复盘：复用主成果并完成六维0～2评分</h2>
+          <p class="section-lead">复盘不是再看一遍页面，而是把五天内容压缩为可迁移关系，并用错误订正暴露仍未打通的因果链。</p>
+          <div class="callout amber"><strong>固定时盒：30～45分钟</strong>先在本周主成果中完成一次综合更新，再按实际证据评分；不得用“感觉掌握”代替成果位置或口头验收记录。</div>
+          <div class="note-grid">
+            <label class="note-field"><span>综合复盘增量（复用本周主成果）</span><textarea data-record="review-map" placeholder="在同一成果中补充跨日关系、一处错误订正、一处相邻迁移和必要术语变化"></textarea></label>
+            <label class="note-field"><span>2. 错误订正表</span><textarea data-record="review-correction" placeholder="至少记录一个原判断、反证、根因和修正后的规则"></textarea></label>
+            <label class="note-field"><span>3. 相邻场景迁移</span><textarea data-record="review-transfer" placeholder="把黄金路径迁移到另一个现有离线分类场景，写出保留项与变化项"></textarea></label>
+            <label class="note-field"><span>4. 术语关系更新</span><textarea data-record="review-terms" placeholder="补充统一术语表中的所属层、不等同于和相邻术语关系"></textarea></label>
+          </div>
+          <h3>六维评分（每项0～2分）</h3>
+          <div class="objective-grid">
+            <div class="objective-card"><span class="objective-index">位</span><div><label><strong>源码定位</strong><select data-score="source" style="width:100%;margin-top:8px;padding:8px"><option value="">请选择</option><option value="0">0｜无法找到入口或实现</option><option value="1">1｜可按材料找到</option><option value="2">2｜可从测试或公开入口独立追踪</option></select></label></div></div>
+            <div class="objective-card"><span class="objective-index">链</span><div><label><strong>调用链与状态</strong><select data-score="chain" style="width:100%;margin-top:8px;padding:8px"><option value="">请选择</option><option value="0">0｜只能复述名词</option><option value="1">1｜能说明主路径</option><option value="2">2｜能解释分支、终态和终止责任</option></select></label></div></div>
+            <div class="objective-card"><span class="objective-index">权</span><div><label><strong>所有权</strong><select data-score="ownership" style="width:100%;margin-top:8px;padding:8px"><option value="">请选择</option><option value="0">0｜状态和资源归属混乱</option><option value="1">1｜能列出主要所有者</option><option value="2">2｜能解释转移、清理和禁止越权</option></select></label></div></div>
+            <div class="objective-card"><span class="objective-index">证</span><div><label><strong>证据映射</strong><select data-score="evidence" style="width:100%;margin-top:8px;padding:8px"><option value="">请选择</option><option value="0">0｜只记录测试通过</option><option value="1">1｜能指出一个测试或产物</option><option value="2">2｜能说明证据证明及不能证明什么</option></select></label></div></div>
+            <div class="objective-card"><span class="objective-index">界</span><div><label><strong>设计边界</strong><select data-score="boundary" style="width:100%;margin-top:8px;padding:8px"><option value="">请选择</option><option value="0">0｜无法说明选择原因</option><option value="1">1｜能复述当前设计理由</option><option value="2">2｜能比较替代方案和不适用条件</option></select></label></div></div>
+            <div class="objective-card"><span class="objective-index">迁</span><div><label><strong>迁移能力</strong><select data-score="transfer" style="width:100%;margin-top:8px;padding:8px"><option value="">请选择</option><option value="0">0｜只能填写原模板</option><option value="1">1｜能在提示下迁移</option><option value="2">2｜能独立映射到相邻现有场景</option></select></label></div></div>
+          </div>
+          <p><strong>当前总分：<span data-score-total>未完成/12</span></strong></p>
+          <div class="quiz-summary" data-score-result>请完成六个维度评分；每项只能选择0、1或2分。</div>
+        </section>
+
         <section id="week-gate" data-section>
           <p class="section-kicker">11 · 第1周门禁</p>
           <h2>完成这些任务，再进入请求内核</h2>
           <p class="section-lead">第2周会深入BaseRequest、Middleware、Retry、Polling和并发隔离。若第1周边界尚不稳定，继续深入只会增加名词负担。</p>
 
           <div class="week-gate">
-            <div class="week-gate-head"><h3>Week 1 · Framework Map</h3><p>以下5项全部能独立完成，才算真正通过。</p></div>
+            <div class="week-gate-head"><h3>Week 1 · Framework Map</h3><p>以下核心能力、一次综合复盘更新、六维评分和成果记录全部完成，才算真正通过。</p></div>
             <div class="exit-list">
               <label class="exit-item"><input type="checkbox" data-gate="diagram"><span>不看文档画出Test → Task → Request → BaseRequest → Response → Assertions调用关系。</span></label>
               <label class="exit-item"><input type="checkbox" data-gate="changes"><span>能给出至少5个需求，并判断它们应修改模块层、common、Runner、Quality还是Reporting。</span></label>
               <label class="exit-item"><input type="checkbox" data-gate="classification"><span>能解释三层离线测试、分类用例与黄金路径各自的证明内容和不可替代性。</span></label>
               <label class="exit-item"><input type="checkbox" data-gate="one-framework"><span>能解释离线模块为何复用同一公共实现，而不是第二套框架。</span></label>
               <label class="exit-item"><input type="checkbox" data-gate="run"><span>已独立运行单条黄金nodeid、18项基础设施门禁和全部离线业务模块。</span></label>
+              <label class="exit-item"><input type="checkbox" data-gate="review" data-gate-requires-record="review-map"><span>已在本周主成果中完成一次综合复盘更新，不新增四份独立产出。</span></label>
+              <label class="exit-item"><input type="checkbox" data-gate="score" data-gate-requires-score="pass"><span>六维评分达到9/12，且所有权、证据映射均不为0分。</span></label>
+              <label class="exit-item"><input type="checkbox" data-gate="record" data-gate-requires-record="gate-evidence"><span>已填写可复查的成果位置或口头讲解记录。</span></label>
             </div>
           </div>
 
+          <div class="note-grid"><label class="note-field"><span>成果位置或口头记录（必填）</span><textarea data-record="gate-evidence" placeholder="列出第1周图表/订正表路径，或口头复盘时间、听众、追问与订正"></textarea></label></div>
+          <p data-record-status="gate-evidence" style="color:var(--amber);font-size:13px">尚未记录；仅勾选复选框不能通过门禁。</p>
+
           <div class="callout green" style="margin-top:20px"><strong>第1周最终产出</strong>一张框架层级图、一张四件套调用图、一份模块蓝图、一张生命周期/证据图，以及一份“故障目标 → 最低成本验证层”索引。</div>
-          <div class="lesson-footer"><div class="footer-links"><a class="outline-button" href="第04天-测试生命周期断言与报告步骤.html">← 上一课</a><a class="outline-button" href="../接口测试框架四周学习课程.html">返回课程大纲</a></div><span class="next-pending">下一课：基础请求与请求上下文（待生成）</span></div>
+          <div class="lesson-footer"><div class="footer-links"><a class="outline-button" href="第04天-测试生命周期断言与报告步骤.html">← 上一课</a><a class="outline-button" href="../接口测试框架六周学习课程.html">返回课程大纲</a><a class="outline-button" href="第06天-基础请求与请求上下文.html">下一课：基础请求与请求上下文 →</a></div></div>
         </section>
       </article>
     </main>
@@ -516,7 +559,7 @@
 
   <script>
     (() => {
-      const storagePrefix = "api-case-course-day05:";
+      const storagePrefix = "api-case-course-v2-day05-";
 
       const layerDetails = {
         unit: {
@@ -620,5 +663,6 @@
       updatePageProgress();
     })();
   </script>
+  <script src="六周课程页.js"></script>
 </body>
 </html>

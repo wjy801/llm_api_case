@@ -1,0 +1,176 @@
+<!doctype html><html lang='zh-CN'>
+<head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>第30天｜结业答辩与同轮证据验收</title><link rel='stylesheet' href='六周课程页.css'></head>
+<body data-day='30'><aside class='side' id='side'><div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第30天 · 同轮证据</h2><p>第6周 / Final Review</p></div><nav class='nav'>
+<a href='#question'><span class='num'>01</span><span>验收问题</span></a><a href='#contract'><span class='num'>02</span><span>同轮合同</span></a><a href='#flow'><span class='num'>03</span><span>验收流程</span></a><a href='#cleanup'><span class='num'>04</span><span>清理与恢复</span></a><a href='#identity'><span class='num'>05</span><span>运行身份</span></a><a href='#execution'><span class='num'>06</span><span>离线执行</span></a><a href='#reporting'><span class='num'>07</span><span>报告生成</span></a><a href='#verification'><span class='num'>08</span><span>身份核对</span></a><a href='#practice'><span class='num'>09</span><span>完整PowerShell</span></a><a href='#output'><span class='num'>10</span><span>答辩材料</span></a><a href='#review'><span class='num'>11</span><span>课程复盘</span></a><a href='#design'><span class='num'>12</span><span>设计边界</span></a><a href='#quiz'><span class='num'>13</span><span>知识自测</span></a><a href='#gate'><span class='num'>14</span><span>结业门禁</span></a>
+</nav><div class='meter'><div class='meter-row'><span>门禁进度</span><span id='gate-text'>0/5</span></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div></aside>
+<main class='main'><div class='topbar'><div><button class='menu' id='menu'>本课目录</button> 接口测试框架源码架构与证据链六周课程 · 第30天 · 建议学习 3～4 小时</div><div class='toolbar'><a class='button' href='../接口测试框架六周学习课程.html'>课程大纲</a><button class='button' id='reset'>重置本课记录</button></div></div><article class='lesson'>
+<header class='hero'><p class='eyebrow'>WEEK 6 · DAY 30</p><h1>结业答辩与同轮证据验收</h1><p class='hero-lead'>在一次连续PowerShell会话中生成Runner、JUnit、Allure、Quality与Pipeline Summary，并用run_id、execution_id、Manifest、来源状态和时间证明它们来自同一轮离线执行。</p><div class='pills'><span class='pill'>建议时长 3～4 小时</span><span class='pill'>Unique run_id</span><span class='pill'>Quality ON</span><span class='pill'>Flaky OFF</span><span class='pill'>Markdown + JSON</span></div><div class='outcome'><strong>结业证据：</strong>Day29实现答辩 + 同轮机器证据包 + 第6周/全课程六维终评；不要求新增功能或全部测试全绿。</div></header>
+<section id='question' data-section><p class='kicker'>01 · Question</p><h2>“文件都存在”为什么仍不能证明同一轮</h2><p class='lead'>reports可能残留旧run、旧Manifest或旧execution-result；只看测试通过也无法证明Quality和Reporting消费了本轮事实。结业验收必须先隔离历史产物，再显式绑定唯一身份。</p><div class='callout warn'><strong>边界：</strong>不制造失败、不新增功能；Flaky默认关闭；真实Smoke禁止执行，Smoke只做collect-only；实际Runner目标固定为离线模块。</div></section>
+<section id='contract' data-section><p class='kicker'>02 · Contract</p><h2>五类身份与来源必须互相吻合</h2><div class='table-wrap'><table><thead><tr><th>证据</th><th>必须核对</th></tr></thead><tbody><tr><td>Runner</td><td>target、planned nodeids、pool stage_id、final_exit_code。</td></tr><tr><td>Quality P0</td><td>run.json与merged Manifest的run_id、status、integrity和expected_execution_ids。</td></tr><tr><td>Semantic/Metrics</td><td>各Manifest的run_id、complete状态及对上游证据的引用。</td></tr><tr><td>Reporting</td><td>Quality阶段为PASSED且没有身份不一致warning；Markdown与JSON共享结论。</td></tr><tr><td>时间</td><td>核心文件更新时间位于本轮开始之后，不能回填历史产物。</td></tr></tbody></table></div></section>
+<section id='flow' data-section><p class='kicker'>03 · Flow</p><h2>同轮验收是一条不可跳步的链</h2><div class='flow'><span>记录工作树</span><i>→</i><span>备份reports/allure</span><i>→</i><span>安全清理</span><i>→</i><span>唯一run_id</span><i>→</i><span>Quality全链开启</span><i>→</i><span>Smoke collect-only</span><i>→</i><span>离线Runner</span><i>→</i><span>更新阶段</span><i>→</i><span>生成MD+JSON</span><i>→</i><span>核对并留存</span><i>→</i><span>恢复原产物</span></div></section>
+<section id='cleanup' data-section><p class='kicker'>04 · Cleanup</p><h2>只清理两个经绝对路径校验的可再生产物目录</h2><p>脚本把<code>reports</code>与<code>allure-results</code>解析为仓库内绝对路径，并同时校验目录叶名称；先复制到系统临时备份目录，再删除并重建。finally无论成功或失败都会恢复原目录和进程环境变量。</p><div class='callout'><strong>禁止：</strong>不得用通配符递归删除仓库根目录，不得先跨shell枚举再删除，不得在未备份时清空本地产物。</div></section>
+<section id='identity' data-section><p class='kicker'>05 · Identity</p><h2>父run_id显式设置，execution_id由Runner阶段派生</h2><div class='grid2'><div class='card'><h3>父身份</h3><p><code>QUALITY_RUN_ID=day30-时间-Guid</code>，所有Quality Manifest必须一致。</p></div><div class='card'><h3>执行身份</h3><p>串行Runner使用<code>serial-pool</code>，同时出现在execution-result与P0 expected_execution_ids。</p></div><div class='card'><h3>能力开关</h3><p>显式设置QUALITY、SEMANTIC和METRICS为<code>TRUE</code>。</p></div><div class='card'><h3>Flaky</h3><p>history/state均为<code>FALSE</code>，并移除进程级DB路径。</p></div></div></section>
+<section id='execution' data-section><p class='kicker'>06 · Execution</p><h2>Smoke只收集，实际执行目标是离线模块</h2><p>先运行<code>run_master.py module/smoke --collect-only</code>并保存收集输出；随后用Runner执行<code>module/offline_framework_example</code>，输出<code>smoke-tests.xml</code>、<code>allure-results</code>、<code>execution-result.json</code>和完整Quality目录。</p><div class='callout good'><strong>命名说明：</strong>Reporting合同把被验证的接口阶段命名为real_smoke；本地验收仅复用该阶段槽位，<code>SMOKE_TARGET</code>明确是离线模块，没有真实外部请求。</div></section>
+<section id='reporting' data-section><p class='kicker'>07 · Reporting</p><h2>阶段状态先初始化，再按真实退出码更新</h2><p><code>initialize-stages</code>声明framework=false、collect=true、real-smoke=true；collect和离线Runner开始前为NO_DATA，结束后按退出码更新PASSED/FAILED。最后在同一环境中调用<code>generate</code>，同时写出Markdown与机器JSON。</p><div class='flow'><span>initialize</span><i>→</i><span>set collect</span><i>→</i><span>set real_smoke</span><i>→</i><span>generate MD</span><i>+</i><span>generate JSON</span></div></section>
+<section id='verification' data-section><p class='kicker'>08 · Verification</p><h2>核对身份、提交状态、来源状态和时间</h2><ol><li>四个Quality文件的run_id都等于本轮唯一值。</li><li>P0 expected_execution_ids与Runner pool stage_id都为serial-pool。</li><li>P0与Semantic status为complete，Metrics write_status为complete。</li><li>Pipeline JSON中的质量观测阶段为PASSED，warnings不含run_id不一致。</li><li>JUnit、execution-result、四个Manifest、Markdown与JSON均在本轮开始后写入。</li></ol><p>Reporting的公开Report不重复暴露quality_run_id；它通过成功加载相同run.json与P0 Manifest后把质量阶段标记为PASSED，因此身份原件仍以Quality文件为准。</p></section>
+<section id='practice' data-section><p class='kicker'>09 · One-session practice</p><h2>在仓库根目录执行完整PowerShell流程</h2><div class='command'><button class='copy'>复制</button><pre><code>
+$ErrorActionPreference = 'Stop'
+$RepoRoot = (Resolve-Path '.').Path
+$WorktreeBefore = (& git status --short) -join [Environment]::NewLine
+$Python = Join-Path $RepoRoot '.venv\Scripts\python.exe'
+if (!(Test-Path -LiteralPath $Python -PathType Leaf)) { throw ('Python不存在：' + $Python) }
+$Reports = Join-Path $RepoRoot 'reports'
+$Allure = Join-Path $RepoRoot 'allure-results'
+$Quality = Join-Path $Reports 'quality'
+$StageFile = Join-Path $Reports 'pipeline-stage-status.json'
+$BackupRoot = Join-Path ([IO.Path]::GetTempPath()) ('llm-api-case-day30-backup-' + [guid]::NewGuid().ToString('N'))
+$RunId = 'day30-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+$EvidenceRoot = Join-Path ([IO.Path]::GetTempPath()) 'llm-api-case-day30-evidence'
+$EvidenceDir = Join-Path $EvidenceRoot $RunId
+$StartedAtUtc = [DateTime]::UtcNow
+function Remove-WorkspaceArtifact([string]$Path, [string]$ExpectedLeaf) {
+  $full = [IO.Path]::GetFullPath($Path)
+  $prefix = $RepoRoot + [IO.Path]::DirectorySeparatorChar
+  if (!$full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { throw ('拒绝删除仓库外路径：' + $full) }
+  if ([IO.Path]::GetFileName($full) -ne $ExpectedLeaf) { throw ('拒绝删除非预期目录：' + $full) }
+  if (Test-Path -LiteralPath $full) { Remove-Item -LiteralPath $full -Recurse -Force }
+}
+
+$EnvNames = @(
+  'QUALITY_ENABLE','QUALITY_SEMANTIC_ENABLE','QUALITY_METRICS_ENABLE',
+  'QUALITY_FLAKY_HISTORY_ENABLE','QUALITY_FLAKY_STATE_ENABLE','QUALITY_FLAKY_DB_PATH',
+  'QUALITY_RUN_ID','QUALITY_EXECUTION_ID','QUALITY_OUTPUT_DIR',
+  'GENERATE_ALLURE_REPORT','GENERATE_HISTORY_REPORT','GENERATE_PIPELINE_SUMMARY',
+  'RUN_FRAMEWORK_TESTS','RUN_COLLECT_ONLY','RUN_REAL_SMOKE','PIPELINE_BUILD_RESULT',
+  'USE_CHINA_ENVIRONMENT','SMOKE_TARGET','TEST_PARALLEL_WORKERS'
+)
+$PreviousEnv = @{}
+foreach ($name in $EnvNames) { $PreviousEnv[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+$HadReports = Test-Path -LiteralPath $Reports
+$HadAllure = Test-Path -LiteralPath $Allure
+New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
+if ($HadReports) { Copy-Item -LiteralPath $Reports -Destination (Join-Path $BackupRoot 'reports') -Recurse }
+if ($HadAllure) { Copy-Item -LiteralPath $Allure -Destination (Join-Path $BackupRoot 'allure-results') -Recurse }
+
+try {
+  Remove-WorkspaceArtifact $Reports 'reports'
+  Remove-WorkspaceArtifact $Allure 'allure-results'
+  New-Item -ItemType Directory -Path $Reports -Force | Out-Null
+  $settings = @{
+    QUALITY_ENABLE='TRUE'; QUALITY_SEMANTIC_ENABLE='TRUE'; QUALITY_METRICS_ENABLE='TRUE'
+    QUALITY_FLAKY_HISTORY_ENABLE='FALSE'; QUALITY_FLAKY_STATE_ENABLE='FALSE'
+    QUALITY_RUN_ID=$RunId; QUALITY_OUTPUT_DIR=$Quality
+    GENERATE_ALLURE_REPORT='FALSE'; GENERATE_HISTORY_REPORT='FALSE'
+    GENERATE_PIPELINE_SUMMARY='true'; RUN_FRAMEWORK_TESTS='false'
+    RUN_COLLECT_ONLY='true'; RUN_REAL_SMOKE='true'
+    USE_CHINA_ENVIRONMENT='TRUE'; SMOKE_TARGET='module/offline_framework_example'
+    TEST_PARALLEL_WORKERS='off'
+  }
+  foreach ($item in $settings.GetEnumerator()) {
+    [Environment]::SetEnvironmentVariable($item.Key, [string]$item.Value, 'Process')
+  }
+  [Environment]::SetEnvironmentVariable('QUALITY_EXECUTION_ID', $null, 'Process')
+  [Environment]::SetEnvironmentVariable('QUALITY_FLAKY_DB_PATH', $null, 'Process')
+
+  & $Python -m pipeline_reporting initialize-stages --path $StageFile --framework-tests false --smoke-collect true --real-smoke true
+  if ($LASTEXITCODE -ne 0) { throw 'initialize-stages失败' }
+  & $Python -m pipeline_reporting set-stage --path $StageFile --name smoke_collect --status NO_DATA
+  if ($LASTEXITCODE -ne 0) { throw '初始化smoke_collect失败' }
+  & $Python -m pipeline_reporting set-stage --path $StageFile --name real_smoke --status NO_DATA
+  if ($LASTEXITCODE -ne 0) { throw '初始化real_smoke失败' }
+
+  $CollectOutput = & $Python run_master.py module/smoke --collect-only -q 2>&1
+  $CollectExit = $LASTEXITCODE
+  $CollectOutput | ForEach-Object { Write-Host $_ }
+  $CollectOutput | Set-Content -LiteralPath (Join-Path $Reports 'smoke-collect.txt') -Encoding UTF8
+  $CollectStatus = if ($CollectExit -eq 0) { 'PASSED' } else { 'FAILED' }
+  & $Python -m pipeline_reporting set-stage --path $StageFile --name smoke_collect --status $CollectStatus
+  if ($LASTEXITCODE -ne 0) { throw '更新smoke_collect失败' }
+
+  $RunnerTarget = 'module/offline_framework_example'
+  & $Python run_master.py $RunnerTarget --junitxml=reports/smoke-tests.xml --alluredir=allure-results -q
+  $RunnerExit = $LASTEXITCODE
+  $RunnerStatus = if ($RunnerExit -eq 0) { 'PASSED' } else { 'FAILED' }
+  & $Python -m pipeline_reporting set-stage --path $StageFile --name real_smoke --status $RunnerStatus
+  if ($LASTEXITCODE -ne 0) { throw '更新real_smoke失败' }
+  $BuildResult = if ($RunnerExit -eq 0 -and $CollectExit -eq 0) { 'SUCCESS' } else { 'FAILURE' }
+  [Environment]::SetEnvironmentVariable('PIPELINE_BUILD_RESULT', $BuildResult, 'Process')
+  & $Python -m pipeline_reporting generate --workspace $RepoRoot --output reports/pipeline-summary.md --machine-output reports/pipeline-summary.json --dotenv .env
+  if ($LASTEXITCODE -ne 0) { throw 'pipeline_reporting generate失败' }
+
+  $RequiredFiles = @(
+    'reports/smoke-tests.xml','reports/execution-result.json','reports/quality/run.json',
+    'reports/quality/merged/manifest.json','reports/quality/semantic/merged/manifest.json',
+    'reports/quality/metrics/manifest.json','reports/pipeline-summary.md','reports/pipeline-summary.json'
+  ) | ForEach-Object { Join-Path $RepoRoot $_ }
+  $Missing = @($RequiredFiles | Where-Object { !(Test-Path -LiteralPath $_ -PathType Leaf) })
+  if ($Missing.Count) { throw ('缺少本轮产物：' + ($Missing -join ', ')) }
+  if (!(Test-Path -LiteralPath $Allure -PathType Container) -or !(Get-ChildItem -LiteralPath $Allure -Recurse -File | Select-Object -First 1)) {
+    throw 'Allure raw产物缺失'
+  }
+  $Run = Get-Content -LiteralPath (Join-Path $Quality 'run.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+  $P0 = Get-Content -LiteralPath (Join-Path $Quality 'merged\manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+  $Semantic = Get-Content -LiteralPath (Join-Path $Quality 'semantic\merged\manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+  $Metrics = Get-Content -LiteralPath (Join-Path $Quality 'metrics\manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+  $Execution = Get-Content -LiteralPath (Join-Path $Reports 'execution-result.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+  $Report = Get-Content -LiteralPath (Join-Path $Reports 'pipeline-summary.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+
+  $Ids = @($Run.run_id, $P0.run_id, $Semantic.run_id, $Metrics.run_id)
+  if (($Ids | Select-Object -Unique).Count -ne 1 -or $Ids[0] -ne $RunId) {
+    throw ('Quality run_id不一致：' + ($Ids -join ', '))
+  }
+  $ExecutionIds = @($Execution.pool_results | Where-Object { $_.status -ne 'NOT_RUN' } | ForEach-Object { $_.stage_id })
+  if (($ExecutionIds -join ',') -ne 'serial-pool' -or (@($P0.expected_execution_ids) -join ',') -ne 'serial-pool') {
+    throw 'Runner与P0 execution_id不一致'
+  }
+  if ($P0.status -ne 'complete' -or $Semantic.status -ne 'complete' -or $Metrics.write_status -ne 'complete') {
+    throw 'Quality Manifest尚未完整提交'
+  }
+  $QualityStage = @($Report.stages | Where-Object { $_.name -eq '质量观测' })
+  if ($QualityStage.Count -ne 1 -or $QualityStage[0].status -ne 'PASSED') {
+    throw 'Reporting未接受本轮Quality核心来源'
+  }
+  if (@($Report.warnings | Where-Object { $_ -match 'run_id.*不一致' }).Count) {
+    throw 'Reporting存在run_id不一致警告'
+  }
+  foreach ($file in $RequiredFiles) {
+    if ((Get-Item -LiteralPath $file).LastWriteTimeUtc -lt $StartedAtUtc.AddSeconds(-2)) {
+      throw ('文件时间早于本轮：' + $file)
+    }
+  }
+
+  [xml]$JUnit = Get-Content -LiteralPath (Join-Path $Reports 'smoke-tests.xml') -Raw -Encoding UTF8
+  $Suites = @($JUnit.testsuites.testsuite)
+  $Total = [int](($Suites | Measure-Object -Property tests -Sum).Sum)
+  $Failed = [int](($Suites | Measure-Object -Property failures -Sum).Sum)
+  $Errors = [int](($Suites | Measure-Object -Property errors -Sum).Sum)
+  $Skipped = [int](($Suites | Measure-Object -Property skipped -Sum).Sum)
+  $FinishedAtUtc = [DateTime]::UtcNow
+
+  New-Item -ItemType Directory -Path $EvidenceDir -Force | Out-Null
+  [ordered]@{
+    run_id=$RunId; started_at=$StartedAtUtc.ToString('o'); finished_at=$FinishedAtUtc.ToString('o')
+    collect_exit_code=$CollectExit; runner_exit_code=$RunnerExit; pipeline_conclusion=$Report.conclusion
+    tests=$Total; passed=($Total-$Failed-$Errors-$Skipped); failed=$Failed; errors=$Errors; skipped=$Skipped
+    worktree_before=$WorktreeBefore
+  } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $EvidenceDir 'verification.json') -Encoding UTF8
+  Copy-Item -LiteralPath $Reports -Destination (Join-Path $EvidenceDir 'reports') -Recurse
+  Copy-Item -LiteralPath $Allure -Destination (Join-Path $EvidenceDir 'allure-results') -Recurse
+  Write-Host ('同轮证据已保存：' + $EvidenceDir)
+}
+finally {
+  Remove-WorkspaceArtifact $Reports 'reports'
+  Remove-WorkspaceArtifact $Allure 'allure-results'
+  if ($HadReports) { Copy-Item -LiteralPath (Join-Path $BackupRoot 'reports') -Destination $Reports -Recurse }
+  if ($HadAllure) { Copy-Item -LiteralPath (Join-Path $BackupRoot 'allure-results') -Destination $Allure -Recurse }
+  foreach ($name in $EnvNames) { [Environment]::SetEnvironmentVariable($name, $PreviousEnv[$name], 'Process') }
+  Remove-Item -LiteralPath $BackupRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+Write-Host ('答辩使用的证据目录：' + $EvidenceDir)
+</code></pre></div></section>
+<section id='output' data-section><p class='kicker'>10 · Defense package</p><h2>答辩提交六组材料</h2><div class='notes'><label>Day29实现链<textarea data-note='chain' placeholder='调用链、所有权、资源生命周期和设计取舍'></textarea></label><label>运行身份<textarea data-note='identity' placeholder='run_id、serial-pool、时间、工作树状态'></textarea></label><label>核心产物<textarea data-note='artifacts' placeholder='JUnit、Allure raw、execution-result、四个Manifest'></textarea></label><label>Reporting<textarea data-note='reporting' placeholder='Markdown、JSON、Quality来源状态、结论'></textarea></label><label>数量与归属<textarea data-note='counts' placeholder='total/passed/failed/errors/skipped；失败归属，不掩盖基线'></textarea></label><label>安全恢复<textarea data-note='restore' placeholder='Flaky关闭、Smoke collect-only、原reports/allure已恢复'></textarea></label></div><div class='callout'><strong>答辩重点：</strong>不是声称“全部通过”，而是准确解释本轮事实、已知失败归属、证据身份和各层职责。</div></section>
+<section id='review' data-section><p class='kicker'>11 · Week 6 and course review</p><h2>第6周复盘与全课程六维最终评分</h2><div class='grid3'><div class='card'><h3>第6周可信链</h3><p>Day26分层信任 → Day27统一Report → Day28 CI发布边界 → Day29跨层追踪 → Day30同轮验收。</p></div><div class='card'><h3>全课程主线</h3><p>合同与配置驱动请求行为，Runner固定执行身份，Quality建立事实/关系/指标，Reporting与CI只消费和发布证据。</p></div><div class='card'><h3>复盘原则</h3><p>最终分数不是印象分；每个2分都必须能指向本轮文件、命令、身份或口头因果链。</p></div></div><div class='notes'><label>综合复盘增量（复用同轮证据答辩包）<textarea data-note='course-causal-map' placeholder='在同一答辩包中更新全课程因果链，并记录一处订正、一处场景迁移和必要术语变化'></textarea></label><label>② 错误订正表<textarea data-note='course-correction' placeholder='记录至少一个被同轮身份、Manifest或来源状态纠正的历史理解'></textarea></label><label>③ 相邻场景迁移<textarea data-note='course-transfer' placeholder='把本轮证据方法迁移到另一个现有离线nodeid，写出复用项与变化项'></textarea></label><label>④ 术语关系更新<textarea data-note='course-terms' placeholder='更新run_id、execution_id、Manifest、PipelineReport、阶段状态的上下游与不等同于'></textarea></label></div><div class='table-wrap'><table><thead><tr><th>统一评分维度</th><th>0分</th><th>1分</th><th>2分</th></tr></thead><tbody><tr><td>源码定位</td><td>无法找到入口</td><td>可按材料定位</td><td>能从离线nodeid独立追踪到Runner、Quality、Reporting和CI入口</td></tr><tr><td>调用链与状态</td><td>只能复述名词</td><td>能说明主路径</td><td>能解释请求、执行、归并、报告和发布的分支与终态</td></tr><tr><td>所有权</td><td>职责互相覆盖</td><td>知道主要分工</td><td>能说明对象、资源、领域规则和CI动作的唯一所有者</td></tr><tr><td>证据映射</td><td>只报绿/红</td><td>能展示部分产物</td><td>能证明JUnit、Allure、Quality和Summary分别回答的问题及同轮身份</td></tr><tr><td>设计边界</td><td>无法说明选择原因</td><td>能复述当前设计</td><td>能比较Hash/签名、Polling/推送和分层事实/单一报告的适用条件</td></tr><tr><td>迁移能力</td><td>只能填写原模板</td><td>能在提示下迁移</td><td>能把全链追踪和同轮验收独立迁移到另一个现有离线场景</td></tr></tbody></table></div><div class='notes'><label>六维最终评分（0～12）<textarea data-note='final-score' placeholder='逐维给0～2分并附证据；总分至少9分，且所有权、证据映射不得为0分'></textarea></label><label>结业后首个改进约束<textarea data-note='next-constraint' placeholder='按TOC选择最低分维度，定义下一次可验证改进'></textarea></label></div></section>
+<section id='design' data-section><p class='kicker'>12 · Design choice</p><h2>设计选择与适用边界</h2><div class='table-wrap'><table><tbody><tr><th>现方案</th><td>在一次连续、隔离的PowerShell会话中生成Runner、Quality与Reporting证据，并用身份、提交状态和时间证明同轮。</td></tr><tr><th>替代方案</th><td>拼接此前成功运行的文件、截图和手工说明，或只以最终测试退出码作为结业证据。</td></tr><tr><th>选择理由</th><td>同一会话减少环境漂移；唯一run_id、execution_id和写入时间构成可复查证据，已知失败也能被准确归属而非隐藏。</td></tr><tr><th>不适用条件</th><td>生产发布验收、法规审计或跨组织交付通常还要求签名来源、独立审批、受控环境与长期留存，本地同轮证据不能替代这些保证。</td></tr></tbody></table></div></section>
+<section id='quiz' data-section><p class='kicker'>13 · Knowledge check</p><h2>知识自测</h2><div class='quiz' data-answer='b'><strong>1. 为什么必须先备份并清理reports？</strong><label><input type='radio' name='q1' value='a'>让pytest更快</label><label><input type='radio' name='q1' value='b'>排除历史产物混入本轮</label><label><input type='radio' name='q1' value='c'>启用Flaky</label></div><div class='quiz' data-answer='c'><strong>2. 本轮Flaky设置是什么？</strong><label><input type='radio' name='q2' value='a'>连接Jenkins持久库</label><label><input type='radio' name='q2' value='b'>自动创建共享库</label><label><input type='radio' name='q2' value='c'>history/state关闭并移除DB路径</label></div><div class='quiz' data-answer='a'><strong>3. execution_id如何核对？</strong><label><input type='radio' name='q3' value='a'>Runner pool stage_id与P0 expected_execution_ids一致</label><label><input type='radio' name='q3' value='b'>只看文件名</label><label><input type='radio' name='q3' value='c'>看Allure标题</label></div><div class='quiz' data-answer='b'><strong>4. 为什么同时生成Markdown和JSON？</strong><label><input type='radio' name='q4' value='a'>两者结论可以不同</label><label><input type='radio' name='q4' value='b'>人读与机器核对共享同一Report</label><label><input type='radio' name='q4' value='c'>JSON替代Manifest</label></div><div class='quiz' data-answer='c'><strong>5. 测试存在已知失败时怎样答辩？</strong><label><input type='radio' name='q5' value='a'>删除失败记录</label><label><input type='radio' name='q5' value='b'>声称全部通过</label><label><input type='radio' name='q5' value='c'>报告数量、失败归属和证据完整性</label></div><button class='primary' id='submit-quiz'>提交答案</button><div class='verdict' id='quiz-summary'>建议达到4/5再完成结业门禁。</div></section>
+<section id='gate' data-section><p class='kicker'>14 · Final gate</p><h2>结业门禁</h2><div class='gate-list'><label class='gate'><input type='checkbox' data-gate='chain'><span>已完成Day29跨层答辩、第6周复盘与全课程六维最终评分。</span></label><label class='gate'><input type='checkbox' data-gate='identity'><span>四个Quality身份与execution_id核对一致。</span></label><label class='gate'><input type='checkbox' data-gate='views'><span>Markdown与JSON来自同一PipelineReport。</span></label><label class='gate'><input type='checkbox' data-gate='facts'><span>已记录测试数量、退出码、失败归属和来源状态。</span></label><label class='gate'><input type='checkbox' data-gate='safe'><span>Flaky关闭、Smoke仅collect-only，原本地产物与环境已恢复。</span></label></div><div class='notes'><label>成果位置<textarea data-note='gate-output-location' placeholder='记录同轮证据目录、复盘与六维终评材料的路径'></textarea></label><label>口头记录<textarea data-note='gate-oral-record' placeholder='用完整因果链答辩同轮身份、来源、边界与已知失败'></textarea></label></div><div class='callout good'><strong>结业句：</strong>我能用同一轮离线机器证据证明Runner、Quality与Reporting的身份和来源一致，并清晰解释Day29场景的跨层实现。</div><div class='footer'><div class='footer-links'><a class='button' href='第29天-离线场景跨层实现追踪.html'>← 上一课</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a><a class='button' href='../接口测试框架六周学习课程.html#section-4'>术语表</a></div></div></section>
+</article></main><script src='六周课程页.js'></script></body></html>

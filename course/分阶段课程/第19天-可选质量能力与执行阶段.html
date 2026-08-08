@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang='zh-CN'>
+<head>
+  <meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
+  <meta name='description' content='接口测试框架源码架构与证据链六周课程第19天：Quality可选加载、Noop与Enabled生命周期、collect-only和质量阶段顺序'>
+  <title>第19天｜可选质量能力与执行阶段</title><link rel='stylesheet' href='六周课程页.css'>
+</head>
+<body data-day='19'>
+  <aside class='side' id='side'><div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第19天 · 可选能力关闭如不存在</h2><p>第4周 / Runner与Quality边界</p></div><nav class='nav'>
+    <a href='#question'><span class='num'>01</span><span>问题与约束</span></a><a href='#profiles'><span class='num'>02</span><span>三种执行画像</span></a><a href='#protocol'><span class='num'>03</span><span>中性生命周期协议</span></a><a href='#factory'><span class='num'>04</span><span>工厂与延迟加载</span></a><a href='#noop'><span class='num'>05</span><span>Noop零副作用</span></a><a href='#enabled'><span class='num'>06</span><span>Enabled生命周期</span></a><a href='#plugin'><span class='num'>07</span><span>pytest插件加载</span></a><a href='#pipeline'><span class='num'>08</span><span>阶段顺序与降级</span></a><a href='#tests'><span class='num'>09</span><span>现有测试证据</span></a><a href='#design'><span class='num'>D</span><span>设计选择与边界</span></a><a href='#practice'><span class='num'>10</span><span>三画像实践</span></a><a href='#quiz'><span class='num'>11</span><span>知识自测</span></a><a href='#gate'><span class='num'>12</span><span>学习门禁</span></a>
+  </nav><div class='meter'><div class='meter-row'><span>门禁完成度</span><strong id='gate-text'>0/5</strong></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div></aside>
+  <main class='main'><div class='topbar'><div>接口测试框架源码架构与证据链六周课程 <span>›</span> 第4周 <span>›</span> Day 19</div><div class='toolbar'><button class='menu' id='menu'>目录</button><a class='button' href='../接口测试框架六周学习课程.html'>课程大纲</a><a class='button' href='../接口测试框架六周学习课程.html#section-4'>术语表</a><button class='button' id='reset'>清除本课记录</button></div></div><article class='lesson'>
+    <header class='hero'><p class='eyebrow'>WEEK 4 · DAY 19</p><h1>可选质量能力与执行阶段</h1><p class='hero-lead'>承接Day18发出的中性事件，Day19只管理Quality接入：Runner依赖<code>QualityRunLifecycle</code>选择disabled、collect-only或enabled画像，在开启后才延迟导入配置、建立运行身份并收口质量阶段；事件如何翻译成采集事实留给Day20。</p><div class='pills'><span class='pill'>建议时长 2.5～3 小时</span><span class='pill'>Noop</span><span class='pill'>Lazy Loading</span><span class='pill'>Stage Ordering</span></div><div class='outcome'><strong>可核验产出：</strong>disabled、collect-only、enabled三路径生命周期图，开关与副作用对照表，以及本轮Quality P0产物核验记录。</div></header>
+
+    <section id='question' data-section><p class='kicker'>01 · First principles</p><h2>可选能力的首要合同是关闭时不改变主路径</h2><p class='lead'>Quality不是Runner执行测试的必要条件。只要关闭Quality仍触发重依赖导入、环境变量注入、JUnit改写或目录写入，它就不再是可选扩展。</p><div class='grid3'><div class='card'><h3>关闭</h3><p>不加载运行时实现，不创建质量目录，不改变pytest参数。</p></div><div class='card'><h3>只收集</h3><p>即使环境开关为真，也不启动执行期采集和归并。</p></div><div class='card'><h3>开启</h3><p>显式建立run、execution和worker身份，按依赖顺序生成事实。</p></div></div><div class='callout warn'><strong>TOC约束：</strong>核心约束是可逆性：移除或关闭Quality后，Runner和common仍能独立执行同一批测试。</div></section>
+
+    <section id='profiles' data-section><p class='kicker'>02 · Execution profiles</p><h2>先判断执行画像，再讨论Quality行为</h2><div class='table-wrap'><table><thead><tr><th>画像</th><th>生命周期对象</th><th>副作用</th><th>期望产物</th></tr></thead><tbody><tr><td><code>QUALITY_ENABLE=0</code></td><td><code>NoopQualityRunLifecycle</code></td><td>无参数、环境和文件变更</td><td>无Quality目录</td></tr><tr><td>Runner collect-only</td><td>在创建生命周期前返回</td><td>仅打印收集与分池计划</td><td>无Quality执行产物</td></tr><tr><td>Quality开启正式执行</td><td><code>EnabledQualityRunLifecycle</code></td><td>run记录、JUnit、阶段环境、采集与归并</td><td><code>run.json</code>、shards、merged等</td></tr></tbody></table></div><p>Quality子能力还有独立开关：Semantic依赖Quality；Metrics依赖Quality与Semantic；Flaky history依赖Quality；Flaky state又依赖history。配置对象把无效组合转换为关闭状态和warning，而不是偷偷执行半条链。</p></section>
+
+    <section id='protocol' data-section><p class='kicker'>03 · Neutral protocol</p><h2>Runner只认识四个中性动作</h2><div class='table-wrap'><table><thead><tr><th>协议方法</th><th>Runner调用时机</th><th>中性语义</th></tr></thead><tbody><tr><td><code>prepare(start_time)</code></td><td>Allure准备后、池执行前</td><td>建立可选运行身份</td></tr><tr><td><code>ensure_junit_args(args)</code></td><td>每个执行池构造参数时</td><td>需要时补充可对账JUnit</td></tr><tr><td><code>stage_environment(execution_id)</code></td><td>包围每个池</td><td>注入并恢复阶段身份</td></tr><tr><td><code>finalize(...)</code></td><td>Runner finally阶段</td><td>消费已执行池事实并收口</td></tr></tbody></table></div><p><code>RunLifecycleStatus</code>只有<code>finished</code>、<code>partial</code>和<code>interrupted</code>，描述本轮Runner完成程度；它由Runner映射给Quality的<code>RunStatus</code>，而不是让Quality反向控制pytest。</p></section>
+
+    <section id='factory' data-section><p class='kicker'>04 · Factory and lazy loading</p><h2>先读轻量配置，确认开启后才进入重实现</h2><ol><li><code>create_quality_run_lifecycle()</code>首先延迟导入<code>quality.config.load_quality_config</code>。</li><li>配置解析异常或<code>enabled=False</code>立即返回Noop。</li><li>确认开启后再导入<code>resolve_parent_quality_config()</code>，建立父运行配置与run_id。</li><li>运行配置仍未开启时继续返回Noop；只有两次判断都通过才创建Enabled。</li></ol><p>稳定插件入口<code>quality/pytest_plugin.py</code>同样保持轻量：collect-only直接返回，关闭时不导入<code>quality.pytest_plugin_runtime</code>，开启后才动态注册<code>quality-runtime</code>。</p><div class='callout good'><strong>依赖方向：</strong>Runner → 中性生命周期；轻量插件 → 配置预览；只有显式开启后 → Quality运行时实现。</div></section>
+
+    <section id='noop' data-section><p class='kicker'>05 · Noop contract</p><h2>Noop承诺的是零质量副作用</h2><div class='grid2'><div class='card'><h3>参数不变</h3><p><code>ensure_junit_args()</code>返回原参数的列表副本，不擅自添加JUnit。</p></div><div class='card'><h3>环境不变</h3><p><code>stage_environment()</code>返回<code>nullcontext()</code>，不注入run_id或execution_id。</p></div><div class='card'><h3>文件不变</h3><p><code>prepare()</code>与<code>finalize()</code>均无写入。</p></div><div class='card'><h3>控制流不变</h3><p>Runner不需要到处判断Quality开关，统一调用协议即可。</p></div></div><p>Noop不是“空实现凑接口”，而是可选架构的可执行证明：主路径只依赖协议，不依赖质量业务对象。</p></section>
+
+    <section id='enabled' data-section><p class='kicker'>06 · Enabled lifecycle</p><h2>Enabled从父运行身份延伸到每个执行池</h2><ol><li><code>prepare()</code>写入初始<code>run.json</code>，记录run_id、开始时间和运行配置。</li><li><code>ensure_junit_args()</code>尊重调用者已有<code>--junitxml</code>；缺失时补充<code>output_dir/junit/quality.xml</code>。</li><li><code>stage_environment(execution_id)</code>在上下文中设置<code>QUALITY_RUN_ID</code>、当前池<code>QUALITY_EXECUTION_ID</code>和输出目录，退出后恢复原环境。</li><li><code>finalize()</code>过滤<code>NOT_RUN</code>池，只把实际执行的stage_id和JUnit路径交给质量管线。</li></ol><p>同一个run下，parallel-pool与serial-pool共享run_id，但拥有不同execution_id；xdist worker再增加worker_id。三层身份共同决定分片文件名，避免并发写入互相覆盖。</p></section>
+
+    <section id='plugin' data-section><p class='kicker'>07 · Pytest loading</p><h2>插件在controller传配置，在worker建立采集上下文</h2><div class='table-wrap'><table><thead><tr><th>位置</th><th>实现行为</th><th>原因</th></tr></thead><tbody><tr><td>稳定插件入口</td><td>判断collect-only与开关，动态注册runtime插件</td><td>关闭时不加载重实现</td></tr><tr><td>xdist controller</td><td>通过<code>pytest_configure_node</code>把运行配置放入workerinput</td><td>worker使用同一run与execution身份</td></tr><tr><td>xdist worker或非并发进程</td><td>创建RunContext、Collector、可选SemanticCollector并绑定Runtime Hooks</td><td>事实由实际执行测试的进程拥有</td></tr><tr><td><code>pytest_unconfigure</code></td><td>完成pending语义记录，按逆序reset hooks、context与collector</td><td>防止上下文泄漏到下一次session</td></tr></tbody></table></div><p>collect-only在轻量插件和runtime插件两处都有保护，保证即使环境开关开启，也不会把“收集计划”误当成“执行事实”。</p></section>
+
+    <section id='pipeline' data-section><p class='kicker'>08 · Ordered finalization</p><h2>先证明P0事实可信，再从同一提交点分叉推导</h2><div class='flow'><span>P0 fact merge</span><i>→</i><span>final run record</span><i>→</i><span>可信P0分叉</span></div><div class='grid2'><div class='card'><h3>语义指标支线</h3><div class='flow'><span>P0</span><i>→</i><span>Semantic</span><i>→</i><span>Metrics</span></div></div><div class='card'><h3>Flaky治理支线</h3><div class='flow'><span>P0</span><i>→</i><span>Flaky Import</span><i>→</i><span>State</span><i>→</i><span>Governance</span></div></div></div><p><code>finalize_quality_run()</code>先调用<code>quality_fact_merge_stage</code>。若P0归并返回<code>None</code>，两个高阶分支都短路；只有得到归并结果，才写最终run记录并进入后续阶段。当前代码在final run record后的调用顺序确实是Semantic、Metrics、Flaky Import、State，但调用顺序只是编排顺序，不等于数据依赖：Metrics消费Semantic产物，而Flaky Import直接消费可信P0，State消费导入结果，Governance建立在State之上。</p><div class='grid2'><div class='card'><h3>fail-open</h3><p>生命周期准备、环境或finalize异常被警告，不覆盖pytest退出码。</p></div><div class='card'><h3>依赖短路</h3><p>上游事实未形成时不继续推导，防止产生貌似完整的下游产物。</p></div></div><p>两者解决不同问题：fail-open保护核心测试控制流，依赖短路保护质量证据可信度。</p></section>
+
+    <section id='tests' data-section><p class='kicker'>09 · Existing tests</p><h2>运行生命周期、懒加载和阶段顺序测试</h2><div class='command'><button class='copy'>复制</button><pre><code>.\.venv\Scripts\python.exe -m pytest `
+  tests/quality/test_quality_lifecycle.py `
+  tests/quality/test_quality_lazy_loading.py `
+  tests/quality/test_run_orchestration_quality_pipeline.py `
+  tests/quality/test_quality_pytest_plugin.py `
+  tests/quality/test_quality_run_master.py `
+  -q</code></pre></div><div class='table-wrap'><table><thead><tr><th>测试组</th><th>可验证合同</th></tr></thead><tbody><tr><td>lifecycle</td><td>Noop零写入；Enabled补JUnit、恢复环境并映射状态</td></tr><tr><td>lazy loading</td><td>导入quality根包、config或轻量插件不会加载重实现</td></tr><tr><td>pipeline</td><td>P0缺失时短路；成功时阶段顺序固定</td></tr><tr><td>pytest plugin</td><td>collect-only与关闭路径不注册runtime；worker配置正确传播</td></tr><tr><td>run master</td><td>Runner和质量阶段在真实编排接口上保持边界</td></tr></tbody></table></div></section>
+
+    <section id='design' data-section><p class='kicker'>Design decision</p><h2>设计选择与适用边界</h2><div class='table-wrap'><table><thead><tr><th>现方案</th><th>替代方案</th><th>选择理由</th><th>不适用条件</th></tr></thead><tbody><tr><td>Runner只依赖<code>QualityRunLifecycle</code>，由工厂按执行画像返回Noop或Enabled，并在确认开启后延迟加载重实现。</td><td>Runner直接导入Quality模块并散布开关判断，或无论是否启用都初始化配置、目录和插件。</td><td>disabled与collect-only可证明零质量副作用；Enabled集中管理run/execution/worker身份和阶段顺序，接入点单一可替换。</td><td>若质量能力是法规要求且缺失必须阻止执行，应采用fail-closed的强依赖启动检查，而不是Noop可选合同。</td></tr></tbody></table></div></section>
+
+    <section id='practice' data-section><p class='kicker'>10 · Three-profile practice</p><h2>用同一离线目标核对关闭、只收集和开启</h2>
+      <div class='command'><button class='copy'>复制</button><pre><code>$python = '.\.venv\Scripts\python.exe'
+$root = Join-Path 'reports/course' ('day19-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$names = @('QUALITY_ENABLE','QUALITY_SEMANTIC_ENABLE','QUALITY_METRICS_ENABLE','QUALITY_OUTPUT_DIR','QUALITY_RUN_ID','GENERATE_ALLURE_REPORT','GENERATE_HISTORY_REPORT')
+$old = @{}; foreach ($name in $names) { $old[$name] = [Environment]::GetEnvironmentVariable($name) }
+try {
+  $env:QUALITY_OUTPUT_DIR = $root
+  $env:QUALITY_SEMANTIC_ENABLE = '0'
+  $env:QUALITY_METRICS_ENABLE = '0'
+  $env:GENERATE_ALLURE_REPORT = 'FALSE'
+  $env:GENERATE_HISTORY_REPORT = 'FALSE'
+
+  $env:QUALITY_ENABLE = '0'
+  &amp; $python run_master.py module/offline_framework_example --collect-only -q
+  if (Test-Path -LiteralPath $root) { throw 'disabled collect-only created quality artifacts' }
+
+  $env:QUALITY_ENABLE = '1'
+  $env:QUALITY_RUN_ID = 'course-day19-collect-only'
+  &amp; $python run_master.py module/offline_framework_example --collect-only -q
+  if (Test-Path -LiteralPath $root) { throw 'enabled collect-only created quality artifacts' }
+
+  $env:QUALITY_RUN_ID = 'course-day19-enabled'
+  $allure = Join-Path $root 'allure-results'
+  &amp; $python run_master.py module/offline_framework_example -n 2 --alluredir=$allure
+  if ($LASTEXITCODE -ne 0) { throw ('Runner exit=' + $LASTEXITCODE) }
+  $run = Get-Content -LiteralPath (Join-Path $root 'run.json') -Raw | ConvertFrom-Json
+  $manifest = Get-Content -LiteralPath (Join-Path $root 'merged/manifest.json') -Raw | ConvertFrom-Json
+  [pscustomobject]@{ RunId=$run.run_id; RunStatus=$run.status; MergeStatus=$manifest.status; Integrity=$manifest.integrity_status; Cases=$manifest.output_counts.case_results }
+}
+finally { foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name,$old[$name]) } }</code></pre></div>
+      <div class='notes'><label>三路径图<textarea data-note='profiles' placeholder='disabled、collect-only、enabled各写出返回点和副作用'></textarea></label><label>开关依赖<textarea data-note='switches' placeholder='Quality、Semantic、Metrics、Flaky的依赖方向'></textarea></label><label>阶段顺序<textarea data-note='pipeline' placeholder='P0 → run record → Semantic → Metrics → Flaky history → state'></textarea></label><label>本轮证据<textarea data-note='evidence' placeholder='run_id、run status、manifest status、integrity和case count'></textarea></label></div>
+    </section>
+
+    <section id='quiz' data-section><p class='kicker'>11 · Knowledge check</p><h2>知识自测</h2>
+      <div class='quiz' data-answer='b'><strong>1. Quality关闭时Runner得到什么生命周期？</strong><label><input type='radio' name='q1' value='a'>Enabled</label><label><input type='radio' name='q1' value='b'>Noop</label><label><input type='radio' name='q1' value='c'>SemanticCollector</label></div>
+      <div class='quiz' data-answer='c'><strong>2. collect-only开启Quality环境变量后应发生什么？</strong><label><input type='radio' name='q2' value='a'>生成完整Metrics</label><label><input type='radio' name='q2' value='b'>只写run.json</label><label><input type='radio' name='q2' value='c'>仍不启动执行期质量副作用</label></div>
+      <div class='quiz' data-answer='a'><strong>3. 调用者已有<code>--junitxml</code>时Enabled如何处理？</strong><label><input type='radio' name='q3' value='a'>保留调用者路径</label><label><input type='radio' name='q3' value='b'>强制覆盖</label><label><input type='radio' name='q3' value='c'>删除JUnit参数</label></div>
+      <div class='quiz' data-answer='b'><strong>4. 为什么Metrics必须位于Semantic之后？</strong><label><input type='radio' name='q4' value='a'>文件名排序要求</label><label><input type='radio' name='q4' value='b'>Metrics消费Semantic关系与来源证据</label><label><input type='radio' name='q4' value='c'>pytest只允许该顺序</label></div>
+      <div class='quiz' data-answer='c'><strong>5. Quality finalize异常应如何影响pytest退出码？</strong><label><input type='radio' name='q5' value='a'>强制改成5</label><label><input type='radio' name='q5' value='b'>强制改成0</label><label><input type='radio' name='q5' value='c'>警告降级，不覆盖pytest原始事实</label></div>
+      <button class='primary' id='submit-quiz'>提交答案</button><div class='verdict' id='quiz-summary'>建议达到4/5再进入门禁。</div>
+    </section>
+
+    <section id='gate' data-section><p class='kicker'>12 · Exit gate</p><h2>本课门禁</h2><div class='gate-list'><label class='gate'><input type='checkbox' data-gate='profiles'><span>已完成disabled、collect-only、enabled三路径图。</span></label><label class='gate'><input type='checkbox' data-gate='noop'><span>能列出Noop对参数、环境、文件和控制流的零副作用合同。</span></label><label class='gate'><input type='checkbox' data-gate='identity'><span>能解释run_id、execution_id和worker_id的作用域。</span></label><label class='gate'><input type='checkbox' data-gate='order'><span>能写出质量管线阶段顺序和短路条件。</span></label><label class='gate'><input type='checkbox' data-gate='evidence'><span>已核对本轮run.json与P0 manifest。</span></label></div><div class='notes'><label>门禁成果位置 / 口头记录<textarea data-note='gate-record' placeholder='填写三画像图、阶段顺序或Quality产物的位置；口头验收时记录复述要点'></textarea></label></div><div class='callout good'><strong>验收句：</strong>我能证明Quality关闭与collect-only路径没有执行副作用，并能追踪Enabled生命周期如何为每个池建立身份后按依赖顺序收口。</div><div class='footer'><div class='footer-links'><a class='button' href='第18天-运行时观察接口.html'>← 上一课</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a><a class='button' href='第20天-质量适配与运行事实采集.html'>下一课 →</a></div></div></section>
+  </article></main><script src='六周课程页.js'></script>
+</body></html>

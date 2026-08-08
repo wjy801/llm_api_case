@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang='zh-CN'>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width,initial-scale=1'>
+  <meta name='description' content='接口测试框架源码架构与证据链六周课程第10天：轮询状态机、迁移证据、总截止时间与周复盘'>
+  <title>第10天｜轮询状态机与总截止时间</title>
+  <link rel='stylesheet' href='六周课程页.css'>
+</head>
+<body data-day='10'>
+  <aside class='side' id='side'>
+    <div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第10天 · 有界观察</h2><p>第2周 / 请求主干与可靠性</p></div>
+    <nav class='nav'>
+      <a href='#question'><span class='num'>01</span><span>本课问题与边界</span></a><a href='#entry'><span class='num'>02</span><span>源码入口</span></a><a href='#policy'><span class='num'>03</span><span>策略对象</span></a><a href='#evaluation'><span class='num'>04</span><span>响应求值</span></a><a href='#transition'><span class='num'>05</span><span>状态迁移</span></a><a href='#deadline'><span class='num'>06</span><span>总截止时间</span></a><a href='#retry'><span class='num'>07</span><span>与Retry协作</span></a><a href='#evidence'><span class='num'>08</span><span>异常与证据</span></a><a href='#practice'><span class='num'>09</span><span>离线实践</span></a><a href='#output'><span class='num'>10</span><span>当日产出</span></a><a href='#design'><span class='num'>D</span><span>设计选择与边界</span></a><a href='#quiz'><span class='num'>11</span><span>知识自测</span></a><a href='#weekly-review'><span class='num'>R</span><span>30～45分钟周复盘</span></a><a href='#gate'><span class='num'>12</span><span>退出门禁</span></a>
+    </nav>
+    <div class='meter'><div class='meter-row'><span>门禁进度</span><span id='gate-text'>0/5</span></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div>
+  </aside>
+  <main class='content'>
+    <div class='topbar'><div class='topbar-inner'><div><button class='button' id='menu' type='button' aria-controls='side'>☰ 本课目录</button><a class='button' href='../接口测试框架六周学习课程.html#section-4'>统一术语表</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a></div><button class='button' id='reset' type='button'>重置本课记录</button></div></div>
+    <article class='lesson'>
+      <header class='hero'>
+        <p class='eyebrow'>DAY 10 · ONE DEADLINE, EXPLICIT TERMINAL STATES</p><h1>轮询状态机与总截止时间</h1>
+        <p class='hero-lead'>Polling 不是“每隔几秒 GET 一次”，而是在一个总时间预算内，把每次响应解释为稳定状态、记录迁移证据，并在成功、业务失败、未知状态或超时四类终点上确定停止。</p>
+        <div class='pills'><span class='pill'>建议 2～2.5 小时</span><span class='pill'>前置：Day09 Retry</span><span class='pill'>只运行离线现有测试</span><span class='pill'>核心：polling.py / base_request.py</span></div>
+        <div class='hero-outcome'><strong>完成标志：</strong>能从 <code>poll_get()</code> 追踪到策略求值和状态迁移；能解释唯一 deadline 如何约束请求、Retry 与 sleep；能用 transitions 证明本轮为何停止。</div>
+      </header>
+      <section id='question' data-section>
+        <p class='kicker'>01 · First principles &amp; TOC</p><h2>核心不是循环，而是可证明地停止</h2>
+        <p class='lead'>异步任务接口会不断返回“还没完成”。框架真正要解决的是：如何把开放式等待变成有状态、有预算、有证据的有限过程。</p>
+        <div class='goals'><div class='goal'><b>1</b><div><h3>状态稳定</h3><p>把不同业务字段映射为统一的 pending、success、failure、unknown。</p></div></div><div class='goal'><b>2</b><div><h3>预算唯一</h3><p>整轮只创建一个 deadline，内部动作都消费剩余时间。</p></div></div><div class='goal'><b>3</b><div><h3>终点明确</h3><p>成功返回响应，其余三类终点抛出可区分异常。</p></div></div><div class='goal'><b>4</b><div><h3>证据连续</h3><p>每次观察都冻结 attempt、耗时、原始状态和HTTP状态码。</p></div></div></div>
+        <div class='causal'><div class='causal-node'><b>只写 while + sleep</b><small>无状态合同</small></div><div class='arrow'>→</div><div class='causal-node'><b>Retry与Polling各自计时</b><small>预算重复承诺</small></div><div class='arrow'>→</div><div class='causal-node'><b>实际耗时失控</b><small>无法解释停止点</small></div><div class='arrow'>→</div><div class='causal-node'><b>测试不可审计</b><small>只有最后一条响应</small></div></div>
+        <div class='constraint'><strong>TOC 当前约束：</strong>不是请求发送能力，而是“停止条件与剩余预算”是否只有一个权威来源。本课只学习已有 Polling 实现，不新增状态或改写策略。</div>
+      </section>
+      <section id='entry' data-section>
+        <p class='kicker'>02 · Source entry</p><h2>从公开入口追到两个实现所有者</h2>
+        <p class='lead'><code>common/polling.py</code> 负责状态语言和求值；<code>common/base_request.py</code> 负责循环、时间预算、HTTP调用、等待与异常终止。</p>
+        <div class='matrix'><table><thead><tr><th>入口</th><th>职责</th><th>不负责</th></tr></thead><tbody><tr><td><code>BaseRequest.poll_get()</code></td><td>校验参数、启动观察、进入策略轮询</td><td>不直接解释业务JSON</td></tr><tr><td><code>_poll_get_with_policy()</code></td><td>建立deadline、执行观察循环、记录迁移、决定停止</td><td>不定义业务状态集合</td></tr><tr><td><code>evaluate_polling_response()</code></td><td>按策略把一条响应映射为 <code>PollingEvaluation</code></td><td>不sleep、不发送请求</td></tr><tr><td><code>PollingPolicy</code></td><td>冻结JSONPath、状态集合和unknown策略</td><td>不保存运行时状态</td></tr></tbody></table></div>
+        <div class='code-pair'><div><h3>公开入口</h3><pre><code>response = client.poll_get(
+    path,
+    poll_interval=0.1,
+    poll_timeout=3,
+    polling_policy=PollingPolicy(),
+    retry_policy=retry_policy,
+)</code></pre></div><div><h3>主调用链</h3><pre><code>poll_get
+  → _poll_get_with_policy
+    → _request_without_attach
+      → RetryExecutor（可选）
+    → evaluate_polling_response
+    → append PollingTransition
+    → return / raise / sleep</code></pre></div></div>
+      </section>
+      <section id='policy' data-section>
+        <p class='kicker'>03 · Policy contract</p><h2><code>PollingPolicy</code> 把业务词汇翻译成框架状态</h2>
+        <p class='lead'>策略是冻结的 Pydantic 模型。状态字段默认取 <code>$.status</code>，同时允许结果路径、错误路径以及三组业务状态值。JSONPath 必须从 <code>$</code> 开始。</p>
+        <div class='matrix'><table><thead><tr><th>字段</th><th>默认/含义</th><th>实现约束</th></tr></thead><tbody><tr><td><code>status_json_path</code></td><td><code>$.status</code></td><td>提取原始业务状态</td></tr><tr><td><code>pending/success/failure</code></td><td>冻结集合</td><td>按成员关系归一为三种稳定状态</td></tr><tr><td><code>result_json_path</code></td><td>可选</td><td>命中非None值时优先判成功</td></tr><tr><td><code>error_json_path</code></td><td><code>$.error</code></td><td>命中非None值时最高优先判失败</td></tr><tr><td><code>unknown</code></td><td><code>fail</code></td><td>只接受 fail、pending、ignore</td></tr></tbody></table></div>
+        <div class='callout info'><strong>边界：</strong><code>DEFAULT_MEDIA_POLLING_POLICY</code> 是媒体任务的默认业务映射；通用 PollingState 并不要求所有接口使用相同的原始状态字符串。</div>
+      </section>
+      <section id='evaluation' data-section>
+        <p class='kicker'>04 · Evaluation priority</p><h2>求值优先级先看明确内容，再看状态集合</h2>
+        <p class='lead'>同一响应可能同时存在 status、result 和 error。实现用固定优先级消除歧义，避免不同调用者凭感觉解释。</p>
+        <div class='causal'><div class='causal-node'><b>1. error命中</b><small>FAILURE，保留error_value</small></div><div class='arrow'>→</div><div class='causal-node'><b>2. result命中</b><small>SUCCESS，保留result_value</small></div><div class='arrow'>→</div><div class='causal-node'><b>3. 状态集合</b><small>pending/success/failure</small></div><div class='arrow'>→</div><div class='causal-node'><b>4. unknown策略</b><small>PENDING或UNKNOWN</small></div></div>
+        <div class='code-pair'><div><h3>稳定求值对象</h3><pre><code>PollingEvaluation(
+    state=PollingState.PENDING,
+    raw_status=running,
+    result_value=None,
+    error_value=None,
+)</code></pre></div><div><h3>输入异常边界</h3><pre><code>response.json() 失败
+  → AssertionError
+
+JSONPath未命中
+  → None
+
+unknown=fail
+  → PollingState.UNKNOWN</code></pre></div></div>
+        <div class='callout warn'><strong>不要混淆：</strong><code>raw_status</code> 是服务端事实，<code>state</code> 是框架解释。异常和报告必须尽量保留两者。</div>
+      </section>
+      <section id='transition' data-section>
+        <p class='kicker'>05 · State transitions</p><h2>每次观察冻结一条 <code>PollingTransition</code></h2>
+        <p class='lead'>循环不是隐形过程。每次响应求值后，框架记录序号、相对耗时、稳定状态、原始状态和HTTP状态码，形成可打印的迁移序列。</p>
+        <div class='matrix'><table><thead><tr><th>字段</th><th>来源</th><th>用途</th></tr></thead><tbody><tr><td><code>attempt_index</code></td><td>Polling观察序号，从1开始</td><td>区分第几次业务观察</td></tr><tr><td><code>elapsed_seconds</code></td><td><code>observed_at - started_at</code></td><td>证明迁移发生时刻</td></tr><tr><td><code>state</code></td><td>响应求值结果</td><td>驱动后续分支</td></tr><tr><td><code>raw_status</code></td><td>业务JSONPath值</td><td>保留服务端原始语义</td></tr><tr><td><code>response_status_code</code></td><td>最后一次HTTP响应</td><td>关联协议层事实</td></tr></tbody></table></div>
+        <div class='code-pair'><div><h3>成功路径</h3><pre><code>queued → running → succeeded
+PENDING → PENDING → SUCCESS
+最终返回最后一个 Response</code></pre></div><div><h3>三类异常路径</h3><pre><code>failed    → PollingFailedError
+paused    → PollingUnknownStateError
+deadline  → PollingTimeoutError</code></pre></div></div>
+      </section>
+      <section id='deadline' data-section>
+        <p class='kicker'>06 · One budget</p><h2>整轮只创建一次 <code>deadline = started_at + timeout</code></h2>
+        <p class='lead'>每次观察后重新计算 <code>remaining</code>。若余额耗尽立即超时；否则等待时间取 <code>min(poll_interval, remaining)</code>，因此最后一次sleep不会主动越过总截止时间。</p>
+        <div class='code-pair'><div><h3>真实预算骨架</h3><pre><code>started_at = monotonic()
+deadline = started_at + timeout
+
+response = request(..., deadline=deadline)
+observed_at = monotonic()
+remaining = deadline - observed_at
+
+if remaining &lt;= 0:
+    raise PollingTimeoutError(...)
+sleep(min(poll_interval, remaining))</code></pre></div><div><h3>预算账本</h3><pre><code>总预算
+  - HTTP attempt耗时
+  - Retry等待耗时
+  - Polling间隔等待
+  - JSON求值与记录耗时
+= 当前remaining</code></pre></div></div>
+        <div class='constraint'><strong>第一性原理：</strong>timeout 不是“循环次数 × 间隔”，而是一条绝对停止线。循环次数只是请求、响应速度和剩余预算共同产生的结果。</div>
+      </section>
+      <section id='retry' data-section>
+        <p class='kicker'>07 · Retry cooperation</p><h2>一次 Polling 观察可以包含多个 HTTP attempts</h2>
+        <p class='lead'>Polling 关心业务状态；Retry 关心一次观察请求能否从暂时性HTTP故障恢复。两者嵌套但不能各自拥有独立的总预算。</p>
+        <div class='matrix'><table><thead><tr><th>维度</th><th>Polling</th><th>Retry</th></tr></thead><tbody><tr><td>判断对象</td><td>业务响应状态</td><td>HTTP响应或传输异常</td></tr><tr><td>计数单位</td><td>一次业务观察</td><td>一次HTTP attempt</td></tr><tr><td>等待</td><td><code>poll_interval</code></td><td>Retry backoff / Retry-After</td></tr><tr><td>预算来源</td><td>创建唯一deadline</td><td>消费传入的同一deadline</td></tr><tr><td>预算耗尽</td><td><code>PollingTimeoutError</code></td><td><code>RetryDeadlineExceeded</code> 被翻译为Polling超时</td></tr></tbody></table></div>
+        <div class='callout good'><strong>所有权结论：</strong>Polling 创建总 deadline，Retry 只能遵守它。这样“恢复一次HTTP观察”不会把整轮异步等待无限延长。</div>
+      </section>
+      <section id='evidence' data-section>
+        <p class='kicker'>08 · Errors &amp; evidence</p><h2>异常对象携带最后事实，而不是只给一句“超时”</h2>
+        <p class='lead'>三类Polling异常都保留路径、最后状态、最后响应和完整迁移；失败异常额外保留error值，超时异常额外保留timeout。响应文本进入错误前会脱敏并限制长度。</p>
+        <div class='matrix'><table><thead><tr><th>异常</th><th>触发条件</th><th>关键证据</th></tr></thead><tbody><tr><td><code>PollingFailedError</code></td><td>求值为FAILURE</td><td>error_value、last_status、transitions</td></tr><tr><td><code>PollingUnknownStateError</code></td><td>unknown策略产生UNKNOWN</td><td>未识别原始状态与迁移序列</td></tr><tr><td><code>PollingTimeoutError</code></td><td>请求内或观察后预算耗尽</td><td>timeout、last_response、transitions</td></tr></tbody></table></div>
+        <div class='callout info'><strong>日志连接：</strong><code>_attach_polling_transitions()</code> 把格式化迁移附加到最后一次请求日志；本课只识别该已有接口，完整运行时观察在后续课程展开。</div>
+      </section>
+      <section id='practice' data-section>
+        <p class='kicker'>09 · Offline practice</p><h2>运行四类终态与Retry协作测试</h2>
+        <div class='command'><button class='copy'>复制</button><pre><code>.\.venv\Scripts\python.exe -m pytest `
+  tests/test_polling_state_machine.py `
+  tests/test_base_request_retry_polling.py `
+  module/offline_framework_example/test_polling.py `
+  -q</code></pre></div>
+        <p class='lead'>这些用例使用响应替身或本机离线服务。记录本轮通过数、耗时，并从测试名中各选择成功、失败、未知、超时一条，写出其真实迁移序列与停止原因。</p>
+        <div class='callout warn'><strong>实践边界：</strong>不修改Polling策略、不人为改坏代码、不连接真实媒体接口；只用已有测试观察实现行为。</div>
+      </section>
+      <section id='output' data-section>
+        <p class='kicker'>10 · Verifiable output</p><h2>提交状态图、预算账本与证据表</h2>
+        <div class='notes'><label>四状态与终点图<textarea data-note='states' placeholder='写出PENDING、SUCCESS、FAILURE、UNKNOWN分别继续、返回或抛出什么'></textarea></label><label>总deadline账本<textarea data-note='budget' placeholder='总预算如何被HTTP attempt、Retry等待、Polling sleep共同消费'></textarea></label><label>Retry/Polling关系<textarea data-note='retry' placeholder='业务观察与HTTP attempt的嵌套关系，以及deadline所有者'></textarea></label><label>本轮测试证据<textarea data-note='evidence' placeholder='命令、通过数、耗时、四类场景对应测试名'></textarea></label></div>
+      </section>
+      <section id='design' class='design-boundary' data-section>
+        <p class='kicker'>Design Choice · Boundary</p><h2>设计选择与适用边界：整轮Polling共享唯一deadline</h2>
+        <div class='boundary-grid'><div class='boundary-card current'><h3>当前方案</h3><p>Polling开始时创建唯一deadline；每次请求、Retry等待和Polling sleep都读取同一remaining，并冻结状态迁移证据。</p></div><div class='boundary-card alternative'><h3>替代方案</h3><p>每次观察重新计算timeout，或只限制最大轮询次数而不约束单次请求与内部Retry。</p></div><div class='boundary-card reason'><h3>选择理由</h3><p>唯一deadline把所有耗时纳入同一承诺，避免嵌套Retry和sleep重复透支；迁移记录能解释最终停止点而非只给“超时”。</p></div><div class='boundary-card limit'><h3>不适用条件</h3><p>服务通过Webhook、SSE或消息队列主动推送终态时，不应继续使用定时Polling；应把连接/订阅生命周期交给对应推送消费者。</p></div></div>
+      </section>
+      <section id='quiz' data-section>
+        <p class='kicker'>11 · Knowledge check</p><h2>知识自测</h2>
+        <div class='quiz' data-answer='b'><strong>1. Polling总时间预算由谁创建？</strong><label><input type='radio' name='q1' value='a'>每次Retry attempt</label><label><input type='radio' name='q1' value='b'>整轮Polling在开始时创建唯一deadline</label><label><input type='radio' name='q1' value='c'>每次sleep后重新创建</label></div>
+        <div class='quiz' data-answer='a'><strong>2. error_json_path和result_json_path都命中时，当前实现优先判断什么？</strong><label><input type='radio' name='q2' value='a'>FAILURE</label><label><input type='radio' name='q2' value='b'>SUCCESS</label><label><input type='radio' name='q2' value='c'>PENDING</label></div>
+        <div class='quiz' data-answer='c'><strong>3. <code>PollingTransition.attempt_index</code> 表示什么？</strong><label><input type='radio' name='q3' value='a'>pytest重跑次数</label><label><input type='radio' name='q3' value='b'>线程编号</label><label><input type='radio' name='q3' value='c'>第几次业务状态观察</label></div>
+        <div class='quiz' data-answer='b'><strong>4. Polling sleep为什么取 <code>min(poll_interval, remaining)</code>？</strong><label><input type='radio' name='q4' value='a'>保证固定请求次数</label><label><input type='radio' name='q4' value='b'>避免主动睡过总截止时间</label><label><input type='radio' name='q4' value='c'>关闭Retry</label></div>
+        <div class='quiz' data-answer='c'><strong>5. Retry内部耗尽同一deadline后，Polling层如何表现？</strong><label><input type='radio' name='q5' value='a'>忽略并重新开始</label><label><input type='radio' name='q5' value='b'>返回最后503</label><label><input type='radio' name='q5' value='c'>翻译为携带现有证据的PollingTimeoutError</label></div>
+        <button class='primary' id='submit-quiz'>提交答案</button><div class='verdict' id='quiz-summary'>建议达到4/5再进入门禁。</div>
+      </section>
+      <section id='weekly-review' data-section>
+        <p class='kicker'>Weekly Review · 30～45分钟</p><h2>第2周复盘：复用主成果并完成六维0～2评分</h2>
+        <span class='timebox'>固定时盒：30～45分钟</span>
+        <p class='lead'>把RequestContext、Middleware、Capture、Retry和Polling压缩成一条“单次attempt—恢复—业务观察”的证据链，并订正至少一个预算或资源所有权误解。</p>
+        <div class='record-grid'><div class='record-panel'><label class='record-field'>综合复盘增量（复用本周主成果）<textarea data-record='review-map' placeholder='在同一成果中补充跨日关系、一处预算或资源订正、一处相邻迁移和必要术语变化'></textarea></label></div><div class='record-panel'><label class='record-field'>2. 错误订正表（可选草稿）<textarea data-record='review-correction' placeholder='可选：展开记录更详细的反证、根因与修正规则'></textarea></label></div><div class='record-panel'><label class='record-field'>3. 相邻场景迁移（可选草稿）<textarea data-record='review-transfer' placeholder='可选：展开记录迁移到另一个现有请求场景的细节'></textarea></label></div><div class='record-panel'><label class='record-field'>4. 术语关系更新（可选草稿）<textarea data-record='review-terms' placeholder='可选：展开记录attempt、Request Group、deadline等术语变化'></textarea></label></div></div>
+        <h3>六维评分（每项0～2分）</h3>
+        <div class='score-grid'>
+          <div class='score-card'><label>源码定位<select data-score='source'><option value=''>请选择</option><option value='0'>0｜无法找到入口或实现</option><option value='1'>1｜可按材料找到</option><option value='2'>2｜可从测试或公开入口独立追踪</option></select></label></div>
+          <div class='score-card'><label>调用链与状态<select data-score='chain'><option value=''>请选择</option><option value='0'>0｜只能复述名词</option><option value='1'>1｜能说明主路径</option><option value='2'>2｜能解释分支、终态和终止责任</option></select></label></div>
+          <div class='score-card'><label>所有权<select data-score='ownership'><option value=''>请选择</option><option value='0'>0｜状态和资源归属混乱</option><option value='1'>1｜能列出主要所有者</option><option value='2'>2｜能解释转移、清理和禁止越权</option></select></label></div>
+          <div class='score-card'><label>证据映射<select data-score='evidence'><option value=''>请选择</option><option value='0'>0｜只记录测试通过</option><option value='1'>1｜能指出一个测试或产物</option><option value='2'>2｜能说明证据证明及不能证明什么</option></select></label></div>
+          <div class='score-card'><label>设计边界<select data-score='boundary'><option value=''>请选择</option><option value='0'>0｜无法说明选择原因</option><option value='1'>1｜能复述当前设计理由</option><option value='2'>2｜能比较替代方案和不适用条件</option></select></label></div>
+          <div class='score-card'><label>迁移能力<select data-score='transfer'><option value=''>请选择</option><option value='0'>0｜只能填写原模板</option><option value='1'>1｜能在提示下迁移</option><option value='2'>2｜能独立映射到相邻现有场景</option></select></label></div>
+        </div>
+        <p><strong>当前总分：<span data-score-total>未完成/12</span></strong></p><div class='score-summary' data-score-result>请完成六个维度评分；每项只能选择0、1或2分。</div>
+      </section>
+      <section id='gate' data-section>
+        <p class='kicker'>12 · Exit gate</p><h2>本课门禁</h2>
+        <div class='gate-list'><label class='gate'><input type='checkbox' data-gate='map'><span>已提交四状态、四类终点及异常类型关系图。</span></label><label class='gate'><input type='checkbox' data-gate='deadline'><span>能从源码解释唯一deadline和remaining的计算位置。</span></label><label class='gate'><input type='checkbox' data-gate='retry'><span>能区分Polling观察次数与Retry HTTP attempt次数。</span></label><label class='gate'><input type='checkbox' data-gate='evidence'><span>已记录本轮离线测试结果及四类场景的迁移证据。</span></label><label class='gate'><input type='checkbox' data-gate='boundary'><span>能说明Polling不负责SSE长连接消费，下一课单独学习。</span></label><label class='gate'><input type='checkbox' data-gate='review' data-gate-requires-record='review-map'><span>已在本周主成果中完成一次综合复盘更新，不新增四份独立产出。</span></label><label class='gate'><input type='checkbox' data-gate='score' data-gate-requires-score='pass'><span>六维评分达到9/12，且所有权、证据映射均不为0分。</span></label><label class='gate'><input type='checkbox' data-gate='record' data-gate-requires-record='gate-evidence'><span>已填写可复查的成果位置或口头讲解记录。</span></label></div>
+        <div class='record-panel'><label class='record-field'>成果位置或口头记录（必填）<textarea data-record='gate-evidence' placeholder='记录第2周主成果及综合复盘增量路径，或口头复盘时间、听众、追问与订正'></textarea></label><p class='record-status' data-record-status='gate-evidence'>尚未记录；仅勾选复选框不能通过门禁。</p></div>
+        <div class='callout good'><strong>验收句：</strong>我能从 <code>poll_get()</code> 追到状态求值和迁移记录，并用同一个deadline解释请求、Retry、sleep与最终停止原因。</div>
+        <div class='footer'><div class='footer-links'><a class='button' href='第09天-请求重试策略.html'>← 上一课</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a><a class='button' href='第11天-流式响应与资源生命周期.html'>下一课 →</a></div></div>
+      </section>
+    </article>
+  </main>
+  <script src='六周课程页.js'></script>
+</body>
+</html>

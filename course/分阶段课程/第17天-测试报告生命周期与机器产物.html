@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang='zh-CN'>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width,initial-scale=1'>
+  <meta name='description' content='接口测试框架源码架构与证据链六周课程第17天：Allure单一生命周期、池级隔离合并、HTML与历史报告和机器产物职责'>
+  <title>第17天｜测试报告生命周期与机器产物</title>
+  <link rel='stylesheet' href='六周课程页.css'>
+</head>
+<body data-day='17'>
+  <aside class='side' id='side'>
+    <div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第17天 · 制品只有一个所有者</h2><p>第4周 / Runner与报告事实</p></div>
+    <nav class='nav'>
+      <a href='#question'><span class='num'>01</span><span>问题与边界</span></a><a href='#artifacts'><span class='num'>02</span><span>四类机器产物</span></a><a href='#owners'><span class='num'>03</span><span>生命周期所有者</span></a><a href='#direct'><span class='num'>04</span><span>直接pytest路径</span></a><a href='#pooled'><span class='num'>05</span><span>Runner池化路径</span></a><a href='#merge'><span class='num'>06</span><span>隔离合并与冲突</span></a><a href='#finalize'><span class='num'>07</span><span>HTML与history</span></a><a href='#boundary'><span class='num'>08</span><span>零副作用与边界</span></a><a href='#tests'><span class='num'>09</span><span>现有测试证据</span></a><a href='#design'><span class='num'>D</span><span>设计选择与边界</span></a><a href='#practice'><span class='num'>10</span><span>本轮产物实践</span></a><a href='#quiz'><span class='num'>11</span><span>知识自测</span></a><a href='#gate'><span class='num'>12</span><span>学习门禁</span></a>
+    </nav>
+    <div class='meter'><div class='meter-row'><span>门禁完成度</span><strong id='gate-text'>0/5</strong></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div>
+  </aside>
+  <main class='main'>
+    <div class='topbar'><div>接口测试框架源码架构与证据链六周课程 <span>›</span> 第4周 <span>›</span> Day 17</div><div class='toolbar'><button class='menu' id='menu'>目录</button><a class='button' href='../接口测试框架六周学习课程.html'>课程大纲</a><a class='button' href='../接口测试框架六周学习课程.html#section-4'>术语表</a><button class='button' id='reset'>清除本课记录</button></div></div>
+    <article class='lesson'>
+      <header class='hero'><p class='eyebrow'>WEEK 4 · DAY 17</p><h1>测试报告生命周期与机器产物</h1><p class='hero-lead'>追踪<code>AllureRunLifecycle</code>如何在直接pytest和Runner池化两种执行画像下选择唯一所有者，完成清理、池级隔离、原始结果合并、HTML生成、history快照与latest更新。</p><div class='pills'><span class='pill'>建议时长 2.5～3 小时</span><span class='pill'>Allure raw</span><span class='pill'>单一生命周期</span><span class='pill'>history</span></div><div class='outcome'><strong>可核验产出：</strong>一张两种执行画像生命周期图、一张机器产物职责矩阵，以及本轮Allure raw与Runner事实对照记录。</div></header>
+
+      <section id='question' data-section>
+        <p class='kicker'>01 · First principles</p><h2>报告问题的本质是所有权，不是文件复制</h2>
+        <p class='lead'>只要同一个结果目录可能被多个pytest session、xdist worker或Runner池同时清理和生成，制品就会丢失、覆盖或重复生成。因此实现首先确定唯一生命周期所有者，再讨论目录操作。</p>
+        <div class='grid3'><div class='card'><h3>产生</h3><p>pytest与allure插件为每个测试写原始JSON和附件。</p></div><div class='card'><h3>汇总</h3><p>Runner把不同池的raw结果隔离后合并到唯一最终目录。</p></div><div class='card'><h3>呈现</h3><p>Allure CLI从raw结果生成HTML；history是额外快照，不是原始事实。</p></div></div>
+        <div class='callout warn'><strong>TOC约束：</strong>报告生命周期的瓶颈是“谁可以清理和最终生成”，不是“能否调用Allure CLI”。所有者不唯一，后续所有制品都不可信。</div>
+      </section>
+
+      <section id='artifacts' data-section>
+        <p class='kicker'>02 · Artifact model</p><h2>先区分四类产物，再追踪生命周期</h2>
+        <div class='table-wrap'><table><thead><tr><th>产物</th><th>默认位置</th><th>职责</th><th>所有者</th></tr></thead><tbody>
+          <tr><td>JUnit XML</td><td>参数指定或Quality目录</td><td>pytest用例与阶段结果，供Quality对账</td><td>pytest执行阶段</td></tr>
+          <tr><td>Allure raw</td><td><code>allure-results/</code>或自定义<code>--alluredir</code></td><td>Allure JSON、container与附件的原始输入</td><td>allure插件写，生命周期负责目录</td></tr>
+          <tr><td>Allure HTML</td><td><code>allure-report/</code></td><td>可浏览报告</td><td><code>AllureRunLifecycle.finalize()</code></td></tr>
+          <tr><td>Runner事实</td><td><code>reports/execution-result.json</code></td><td>计划、池状态、原始退出码和JUnit路径</td><td>Runner，不属于Allure</td></tr>
+        </tbody></table></div>
+        <p>四类产物可以引用同一轮运行，但不能互相替代。Allure HTML缺失不等于测试未执行；JUnit成功也不能证明Allure附件完整；Runner事实只描述编排，不渲染用例详情。</p>
+      </section>
+
+      <section id='owners' data-section>
+        <p class='kicker'>03 · Ownership selection</p><h2>同一实现按执行画像选择唯一所有者</h2>
+        <div class='table-wrap'><table><thead><tr><th>执行画像</th><th>生命周期所有者</th><th>跳过条件</th></tr></thead><tbody>
+          <tr><td>直接pytest</td><td><code>module/conftest.py</code>的session hooks</td><td>collect-only、xdist worker、Runner托管环境</td></tr>
+          <tr><td>Runner无并发</td><td>Runner创建的pooled生命周期</td><td>module hooks通过环境变量让权</td></tr>
+          <tr><td>Runner并发/串行池</td><td>同一个Runner全局生命周期</td><td>每个池只写独立raw目录，不单独生成HTML</td></tr>
+          <tr><td>collect-only</td><td>没有制品生命周期</td><td>只收集计划，禁止清理和生成副作用</td></tr>
+        </tbody></table></div>
+        <p><code>RUNNER_MANAGED_ALLURE_ENV</code>是所有权信号：池内pytest看到该变量后，<code>module/conftest.py</code>不再创建直接模式生命周期，避免同一目录被重复清理。</p>
+      </section>
+
+      <section id='direct' data-section>
+        <p class='kicker'>04 · Direct pytest</p><h2>直接pytest只有一个session，一次prepare与finalize</h2>
+        <ol><li><code>pytest_sessionstart</code>先检查是否为worker、collect-only或Runner托管。</li><li>解析<code>--alluredir</code>；未显式启用Allure raw时不创建生命周期。</li><li>创建非pooled的<code>AllureRunLifecycle</code>，<code>prepare()</code>清理本轮结果目录。</li><li>pytest session正常写入raw结果和附件。</li><li><code>pytest_sessionfinish</code>调用<code>finalize()</code>，按配置生成HTML与history。</li></ol>
+        <div class='flow'><span>sessionstart</span><i>→</i><span>clean raw</span><i>→</i><span>pytest writes</span><i>→</i><span>sessionfinish</span><i>→</i><span>generate once</span></div>
+      </section>
+
+      <section id='pooled' data-section>
+        <p class='kicker'>05 · Pooled Runner</p><h2>池级写入隔离，全局只合并和生成一次</h2>
+        <p><code>runner.run()</code>创建<code>pooled=True</code>的生命周期并先调用<code>prepare()</code>。生命周期清理最终raw目录，同时在同级建立临时根目录。</p>
+        <ol><li><code>pool_args(stage_id, pytest_args)</code>把每个池的<code>--alluredir</code>替换为独立临时目录。</li><li><code>execute_pool()</code>设置Runner托管环境，让池内session不重复接管。</li><li>池完成后<code>merge_pool(stage_id)</code>把该池文件移动到最终raw目录。</li><li>所有池结束后只调用一次<code>finalize()</code>，生成一份全局HTML和history。</li></ol>
+        <div class='callout good'><strong>守恒关系：</strong>最终raw集合 = 所有已执行池raw集合的无损并集；空池和NOT_RUN池不产生伪造结果。</div>
+      </section>
+
+      <section id='merge' data-section>
+        <p class='kicker'>06 · Isolation and merge</p><h2>同名冲突不覆盖，保留现场并报告降级</h2>
+        <p><code>merge_pool()</code>具有幂等保护：同一<code>stage_id</code>只合并一次。源文件不存在时直接跳过；目标不存在时移动；源和目标内容相同则视为可接受重复；同名但内容不同则不覆盖，设置冲突标记并把现场留在池目录。</p>
+        <div class='table-wrap'><table><thead><tr><th>情形</th><th>处理</th><th>原因</th></tr></thead><tbody><tr><td>目标不存在</td><td>移动到最终raw目录</td><td>建立唯一汇总集合</td></tr><tr><td>目标同名且同内容</td><td>跳过</td><td>重复事实不需要复制</td></tr><tr><td>目标同名但内容不同</td><td>保留池目录并记录冲突</td><td>不能静默覆盖任一事实</td></tr><tr><td>合并异常</td><td>记录fail-open信息</td><td>报告能力不能改写pytest结果</td></tr></tbody></table></div>
+        <p>只有没有冲突时，<code>finalize()</code>才删除临时根目录。发生冲突时保留目录，是为了让使用者能够核验原始证据。</p>
+      </section>
+
+      <section id='finalize' data-section>
+        <p class='kicker'>07 · Finalize</p><h2>HTML和history是同一raw事实的两种呈现</h2>
+        <ol><li>若<code>GENERATE_ALLURE_REPORT=FALSE</code>，明确跳过HTML生成。</li><li>查找Allure可执行文件；不存在时记录跳过，不改变测试退出码。</li><li>调用Allure CLI把最终raw目录生成到<code>allure-report/</code>。</li><li>只有HTML成功且history开关开启时，再生成带时间戳的单文件历史快照。</li><li>更新<code>history_report/latest</code>别名，并按<code>history_keep_limit</code>清理旧快照；<code>latest</code>不计入历史数量。</li></ol>
+        <div class='flow'><span>merged raw</span><i>→</i><span>allure-report</span><i>→</i><span>timestamped history</span><i>→</i><span>latest</span><i>→</i><span>retention</span></div>
+        <div class='callout'><strong>fail-open边界：</strong>Allure CLI缺失或生成失败会被报告，但不能把已形成的pytest退出码改成另一种测试事实；报告降级与测试失败必须分开表达。</div>
+      </section>
+
+      <section id='boundary' data-section>
+        <p class='kicker'>08 · Zero side effect</p><h2>collect-only与机器产物边界必须保持干净</h2>
+        <div class='grid2'><div class='card'><h3>collect-only</h3><p>Runner在准备Allure前返回；module session hook也检查<code>collectonly</code>。因此不清理raw、不创建临时池目录、不生成HTML或history。</p></div><div class='card'><h3>execution-result</h3><p>由Runner独立写入，记录池事实和JUnit路径。Allure生命周期既不拥有它，也不从它推导报告成功。</p></div></div>
+        <p><code>tests/conftest.py</code>还会在框架自身测试中关闭隐式Allure目录，防止开发测试的raw结果混入业务报告。只有调用者显式传递<code>--alluredir</code>时才保留。</p>
+      </section>
+
+      <section id='tests' data-section>
+        <p class='kicker'>09 · Existing tests</p><h2>运行Allure生命周期专项测试</h2>
+        <div class='command'><button class='copy'>复制</button><pre><code>.\.venv\Scripts\python.exe -m pytest `
+  tests/test_allure_run_lifecycle.py `
+  tests/test_allure_history_report.py `
+  tests/test_run_orchestration_boundaries.py `
+  -q</code></pre></div>
+        <div class='table-wrap'><table><thead><tr><th>测试证据</th><th>对应合同</th></tr></thead><tbody><tr><td>不同池使用独立目录</td><td>并行与串行raw不会互相清理</td></tr><tr><td>所有池只生成一次</td><td>全局生命周期是唯一最终所有者</td></tr><tr><td>自定义alluredir解析</td><td>两种参数写法都能定位最终目录</td></tr><tr><td>history保留与latest</td><td>旧快照按数量清理，latest持续指向最新成功快照</td></tr><tr><td>静态所有权门禁</td><td>pytest主调用和Allure文件系统生命周期没有第二所有者</td></tr></tbody></table></div>
+      </section>
+
+      <section id='design' data-section>
+        <p class='kicker'>Design decision</p><h2>设计选择与适用边界</h2>
+        <div class='table-wrap'><table><thead><tr><th>现方案</th><th>替代方案</th><th>选择理由</th><th>不适用条件</th></tr></thead><tbody><tr><td>按执行画像选择唯一Allure生命周期所有者，池级raw目录隔离，全局只合并并生成一次HTML/history。</td><td>每个池直接写同一raw目录并各自生成报告，或由Runner和pytest插件同时prepare/finalize。</td><td>单一所有者消除清理竞态和重复finalize；池级隔离允许冲突保留现场，最终报告仍来自同一组原始事实。</td><td>使用具备事务、幂等键和远程合并能力的托管结果后端时，可由后端承担隔离与归并，本地目录生命周期需要重新定义。</td></tr></tbody></table></div>
+      </section>
+
+      <section id='practice' data-section>
+        <p class='kicker'>10 · Current-run artifact</p><h2>生成本轮raw结果并与Runner事实对照</h2>
+        <div class='command'><button class='copy'>复制</button><pre><code>$python = '.\.venv\Scripts\python.exe'
+$raw = 'reports/course/day17-allure-results'
+$oldQuality = $env:QUALITY_ENABLE
+$oldAllure = $env:GENERATE_ALLURE_REPORT
+$oldHistory = $env:GENERATE_HISTORY_REPORT
+try {
+  $env:QUALITY_ENABLE = '0'
+  $env:GENERATE_ALLURE_REPORT = 'FALSE'
+  $env:GENERATE_HISTORY_REPORT = 'FALSE'
+  &amp; $python run_master.py module/offline_framework_example -n 2 --alluredir=$raw
+  if ($LASTEXITCODE -ne 0) { throw ('Runner exit=' + $LASTEXITCODE) }
+  $runner = Get-Content -LiteralPath 'reports/execution-result.json' -Raw | ConvertFrom-Json
+  $rawFiles = @(Get-ChildItem -LiteralPath $raw -File -ErrorAction Stop)
+  [pscustomobject]@{
+    PlannedCases = $runner.planned_case_count
+    Pools = @($runner.pool_results).Count
+    FinalExit = $runner.final_exit_code
+    AllureRawFiles = $rawFiles.Count
+    ResultJson = @($rawFiles | Where-Object Name -like '*-result.json').Count
+    Containers = @($rawFiles | Where-Object Name -like '*-container.json').Count
+  }
+}
+finally {
+  $env:QUALITY_ENABLE = $oldQuality
+  $env:GENERATE_ALLURE_REPORT = $oldAllure
+  $env:GENERATE_HISTORY_REPORT = $oldHistory
+}</code></pre></div>
+        <p>本实践故意关闭HTML和history，只验证无需外部Allure CLI即可核验的raw事实。专项测试已覆盖HTML、history、latest和保留策略。</p>
+        <div class='notes'><label>生命周期图<textarea data-note='lifecycle' placeholder='分别画出直接pytest与Runner pooled路径'></textarea></label><label>产物职责矩阵<textarea data-note='artifacts' placeholder='JUnit、Allure raw、HTML、execution-result各自回答什么'></textarea></label><label>本轮raw记录<textarea data-note='raw' placeholder='记录结果文件、container、附件数量及自定义目录'></textarea></label><label>所有权证据<textarea data-note='owner' placeholder='说明池内session为什么不会重复清理和生成'></textarea></label></div>
+      </section>
+
+      <section id='quiz' data-section>
+        <p class='kicker'>11 · Knowledge check</p><h2>知识自测</h2>
+        <div class='quiz' data-answer='c'><strong>1. Runner池化执行时，最终Allure生命周期由谁拥有？</strong><label><input type='radio' name='q1' value='a'>每个xdist worker</label><label><input type='radio' name='q1' value='b'>每个pytest池各自拥有</label><label><input type='radio' name='q1' value='c'>Runner创建的全局pooled生命周期</label></div>
+        <div class='quiz' data-answer='a'><strong>2. collect-only路径为什么不能清理allure-results？</strong><label><input type='radio' name='q2' value='a'>它只形成计划，不应产生执行制品副作用</label><label><input type='radio' name='q2' value='b'>pytest不支持目录操作</label><label><input type='radio' name='q2' value='c'>Quality禁止清理</label></div>
+        <div class='quiz' data-answer='b'><strong>3. 两个池出现同名但不同内容的raw文件时如何处理？</strong><label><input type='radio' name='q3' value='a'>后池覆盖前池</label><label><input type='radio' name='q3' value='b'>不覆盖，报告冲突并保留池目录</label><label><input type='radio' name='q3' value='c'>随机保留一个</label></div>
+        <div class='quiz' data-answer='c'><strong>4. Allure CLI缺失意味着什么？</strong><label><input type='radio' name='q4' value='a'>pytest一定失败</label><label><input type='radio' name='q4' value='b'>Runner必须返回5</label><label><input type='radio' name='q4' value='c'>HTML能力降级，但测试原始事实不被改写</label></div>
+        <div class='quiz' data-answer='b'><strong>5. execution-result.json由谁写入？</strong><label><input type='radio' name='q5' value='a'>Allure CLI</label><label><input type='radio' name='q5' value='b'>Runner</label><label><input type='radio' name='q5' value='c'>history清理器</label></div>
+        <button class='primary' id='submit-quiz'>提交答案</button><div class='verdict' id='quiz-summary'>建议达到4/5再进入门禁。</div>
+      </section>
+
+      <section id='gate' data-section>
+        <p class='kicker'>12 · Exit gate</p><h2>本课门禁</h2>
+        <div class='gate-list'><label class='gate'><input type='checkbox' data-gate='matrix'><span>已完成四类机器产物职责矩阵。</span></label><label class='gate'><input type='checkbox' data-gate='profiles'><span>能画出直接pytest与Runner池化两条生命周期。</span></label><label class='gate'><input type='checkbox' data-gate='merge'><span>能解释池级隔离、幂等合并和冲突保留策略。</span></label><label class='gate'><input type='checkbox' data-gate='current'><span>已核对本轮Allure raw目录和execution-result。</span></label><label class='gate'><input type='checkbox' data-gate='boundary'><span>能说明报告fail-open为什么不能改写pytest退出码。</span></label></div>
+        <div class='notes'><label>门禁成果位置 / 口头记录<textarea data-note='gate-record' placeholder='填写生命周期图、职责矩阵或报告产物的位置；口头验收时记录复述要点'></textarea></label></div>
+        <div class='callout good'><strong>验收句：</strong>我能从执行画像判断唯一Allure所有者，并追踪raw清理、池级隔离、合并、HTML与history生成的完整链路。</div>
+        <div class='footer'><div class='footer-links'><a class='button' href='第16天-执行器状态与退出码.html'>← 上一课</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a><a class='button' href='第18天-运行时观察接口.html'>下一课 →</a></div></div>
+      </section>
+    </article>
+  </main>
+  <script src='六周课程页.js'></script>
+</body>
+</html>
