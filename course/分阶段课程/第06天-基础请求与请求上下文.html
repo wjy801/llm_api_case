@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="接口测试框架源码架构与证据链六周课程第6天：基础请求与请求上下文">
   <title>第06天｜基础请求与请求上下文</title>
+  <link rel="stylesheet" href="六周课程页.css">
   <style>
     :root {
       color-scheme: light;
@@ -172,18 +173,10 @@
     .fact-table th, .fact-table td { border: 1px solid var(--line); padding: 11px 12px; text-align: left; vertical-align: top; }
     .fact-table th { background: #f4f7fb; }
 
-    .debug-layout { display: grid; grid-template-columns: 1.1fr .9fr; gap: 18px; align-items: start; }
-    .command-card { position: relative; margin: 14px 0; }
-    .copy-button { position: absolute; top: 10px; right: 10px; z-index: 2; border: 1px solid #3b4a63; border-radius: 7px; padding: 5px 9px; background: #1f2937; color: #dbeafe; cursor: pointer; font-size: 12px; }
-    .copy-button:hover { background: #334155; }
-    .breakpoint-card { border: 1px solid var(--line); border-radius: 14px; padding: 18px; background: #f8fafd; }
-    .breakpoint-card h3 { margin: 0 0 8px; }
-    .breakpoint-card ol { margin-bottom: 0; }
     .note-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin-top: 20px; }
     .note-field label { display: block; margin-bottom: 6px; font-weight: 700; }
     .note-field textarea { width: 100%; min-height: 105px; resize: vertical; border: 1px solid var(--line); border-radius: 10px; padding: 11px; color: var(--ink); }
     .note-field textarea:focus { outline: 3px solid rgba(35,88,213,.12); border-color: var(--blue); }
-    .save-state { margin-top: 8px; color: var(--green); font-size: 12px; }
 
     .toc-focus { border: 1px solid #ead7a7; border-radius: 14px; padding: 22px; background: #fffaf0; }
     .routing-exercise { margin-top: 24px; }
@@ -195,19 +188,44 @@
     .primary-button:hover { background: var(--blue-strong); }
     .exercise-feedback { margin-top: 12px; min-height: 28px; font-weight: 700; }
 
-    .quiz-list { display: grid; gap: 16px; }
-    .quiz-card { border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
-    .quiz-card legend { padding: 0 5px; font-weight: 750; }
-    .quiz-options { display: grid; gap: 8px; margin-top: 10px; }
-    .quiz-options label { display: flex; gap: 8px; align-items: flex-start; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
-    .quiz-options label:hover { background: #f5f8fc; }
-    .quiz-explanation { display: none; margin-top: 10px; border-radius: 8px; padding: 10px 12px; font-size: 14px; }
-    .quiz-card.correct { border-color: #8dd9b3; }
-    .quiz-card.correct .quiz-explanation { display: block; background: var(--green-soft); color: #155e3b; }
-    .quiz-card.wrong { border-color: #f0a9b7; }
-    .quiz-card.wrong .quiz-explanation { display: block; background: var(--red-soft); color: #8c1d34; }
-    .quiz-summary { margin-top: 16px; min-height: 42px; border-radius: 10px; padding: 11px 14px; background: #f5f8fc; }
+    .lesson-flow-map { margin: 28px 0 8px; overflow: hidden; border: 1px solid #cfdbea; border-radius: 18px; background: linear-gradient(180deg,#f8fbff,#fff); box-shadow: 0 14px 34px rgba(31,65,115,.08); }
+    .flow-map-caption { margin: 0; padding: 18px 22px; border-bottom: 1px solid var(--line); background: #eef5ff; color: #334155; font-size: 14px; }
 
+    .guided-start { margin-top: 26px; border: 1px solid #bfd0ea; border-radius: 18px; overflow: hidden; background: #f8fbff; }
+    .guided-start__header { padding: 18px 22px; background: linear-gradient(135deg,#173f9e,#2358d5); color: #fff; }
+    .guided-start__header h3 { margin: 0 0 6px; }
+    .guided-start__header p { margin: 0; color: #dbeafe; }
+    .guided-command { padding: 16px 22px; border-bottom: 1px solid #cfdaea; background: #eef4ff; }
+    .guided-command strong { display: block; margin-bottom: 6px; color: var(--blue-strong); }
+    .guided-command code { display: block; overflow-wrap: anywhere; }
+    .guided-rule { margin: 18px 22px; border-left: 4px solid var(--amber); border-radius: 0 10px 10px 0; padding: 13px 15px; background: var(--amber-soft); }
+    .guided-rule strong { color: var(--amber); }
+    .guided-chain { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 22px 20px; }
+    .guided-chain span { border: 1px solid #c8d7eb; border-radius: 999px; padding: 6px 10px; background: #fff; color: #334155; font-size: 12px; font-weight: 750; }
+    .guided-chain b { color: var(--cyan); }
+    .guided-step { margin-top: 22px; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: #fff; }
+    .guided-step__title { display: flex; gap: 12px; align-items: flex-start; padding: 17px 20px; border-bottom: 1px solid var(--line); background: #f5f8fc; }
+    .guided-step__number { display: grid; flex: 0 0 auto; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--blue); color: #fff; font-weight: 850; }
+    .guided-step__title h3 { margin: 0 0 3px; }
+    .guided-step__title p { margin: 0; color: var(--muted); font-size: 13px; }
+    .guided-code-grid { display: grid; grid-template-columns: minmax(0,1.08fr) minmax(280px,.92fr); }
+    .guided-source { min-width: 0; padding: 18px; background: #111827; }
+    .guided-source__location { display: block; margin-bottom: 9px; color: #93c5fd; font-size: 12px; overflow-wrap: anywhere; }
+    .guided-source pre { padding: 0; border-radius: 0; font-size: 12px; line-height: 1.65; }
+    .guided-explanation { display: grid; align-content: start; gap: 11px; padding: 18px; }
+    .guided-explanation h4 { margin: 0; color: var(--blue-strong); }
+    .guided-point { border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; background: #f9fbfd; }
+    .guided-point strong { display: block; margin-bottom: 3px; }
+    .guided-point p { margin: 0; color: var(--muted); font-size: 13px; }
+    .guided-point.warning { border-color: #efd29b; background: var(--amber-soft); }
+    .guided-point.success { border-color: #a7dfc2; background: var(--green-soft); }
+    .guided-io { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .guided-io th, .guided-io td { border: 1px solid var(--line); padding: 9px 10px; text-align: left; vertical-align: top; }
+    .guided-io th { width: 25%; background: #f3f6fa; }
+    .guided-io code { overflow-wrap: anywhere; }
+    .guided-conclusion { margin-top: 22px; border: 1px solid #a7dfc2; border-radius: 14px; padding: 18px 20px; background: var(--green-soft); }
+    .guided-conclusion h3 { margin: 0 0 8px; color: var(--green); }
+    .guided-conclusion ol { margin-bottom: 0; }
     .exit-list { display: grid; gap: 9px; margin: 20px 0; }
     .exit-item { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; cursor: pointer; }
     .exit-item input { margin-top: .45em; accent-color: var(--blue); }
@@ -225,6 +243,7 @@
       .stepper { grid-template-columns: repeat(4,minmax(0,1fr)); }
       .case-trace { grid-template-columns: 1fr; gap: 10px; }
       .trace-node:not(:last-child)::after { content: "↓"; left: 50%; top: calc(100% - 1px); transform: translateX(-50%); }
+      .guided-code-grid { grid-template-columns: 1fr; }
     }
     @media (max-width:900px) {
       .side-nav { transform: translateX(-105%); transition: transform .2s ease; }
@@ -232,7 +251,7 @@
       .main { margin-left: 0; padding: 18px 18px 56px; }
       .menu-button { display: inline-block; }
       .hero, section { padding-left: 34px; padding-right: 34px; }
-      .context-grid, .parameter-head, .step-grid, .debug-layout { grid-template-columns: 1fr; }
+      .context-grid, .parameter-head, .step-grid { grid-template-columns: 1fr; }
       .consume-flow { grid-template-columns: 1fr; gap: 10px; }
       .consume-node:not(:last-child)::after { content: "↓"; left: 50%; top: calc(100% - 1px); transform: translateX(-50%); }
       .branch-shell { grid-template-columns: 1fr; }
@@ -249,11 +268,15 @@
       .parameter-row, .routing-row { grid-template-columns: 1fr; }
       .parameter-result, .routing-result { text-align: left; }
       .fact-table { display: block; overflow-x: auto; }
+      .flow-map-caption { padding-left: 14px; padding-right: 14px; }
+      .guided-start__header, .guided-command, .guided-source, .guided-explanation { padding-left: 14px; padding-right: 14px; }
+      .guided-rule { margin-left: 14px; margin-right: 14px; }
+      .guided-chain { padding-left: 14px; padding-right: 14px; }
       .lesson-footer { align-items: stretch; flex-direction: column; }
       .footer-links { flex-direction: column; }
     }
     @media print {
-      .side-nav,.topbar,.page-progress,.copy-button { display: none !important; }
+      .side-nav,.topbar,.page-progress { display: none !important; }
       .main { margin: 0; padding: 0; }
       .lesson { max-width: none; border: 0; box-shadow: none; }
       .hero { color: #111827; background: #eef4ff; }
@@ -269,19 +292,21 @@
 <div class="course-mark"><small>接口测试框架源码架构与证据链六周课程 · 第2周</small><h2>第06天</h2><p>基础请求与请求上下文</p></div>
       <nav class="nav-list" id="nav-list">
         <a href="#learning-goals"><span class="nav-number">01</span><span>目标与核心约束</span></a>
-        <a href="#single-source"><span class="nav-number">02</span><span>HTTP唯一实现源</span></a>
-        <a href="#context-anatomy"><span class="nav-number">03</span><span>RequestContext解剖</span></a>
+        <a href="#code-first-walkthrough"><span class="nav-number">02</span><span>用例入口与业务委托</span></a>
+        <a href="#single-source"><span class="nav-number">03</span><span>HTTP唯一实现源</span></a>
         <a href="#parameter-routing"><span class="nav-number">04</span><span>三类参数分流</span></a>
-        <a href="#success-flow"><span class="nav-number">05</span><span>成功请求主线</span></a>
-        <a href="#error-flow"><span class="nav-number">06</span><span>成功与异常分叉</span></a>
-        <a href="#offline-case"><span class="nav-number">07</span><span>离线POST跟踪</span></a>
-        <a href="#debug-lab"><span class="nav-number">08</span><span>调试实践</span></a>
-<a href="#constraint-exercise"><span class="nav-number">09</span><span>边界决策练习</span></a>
-<a href="#design-boundary"><span class="nav-number">D</span><span>设计选择与边界</span></a>
-        <a href="#knowledge-check"><span class="nav-number">10</span><span>知识自测</span></a>
-        <a href="#exit-gate"><span class="nav-number">11</span><span>本课门禁</span></a>
+        <a href="#context-anatomy"><span class="nav-number">05</span><span>RequestContext解剖</span></a>
+        <a href="#success-flow"><span class="nav-number">06</span><span>成功请求主线</span></a>
+        <a href="#error-flow"><span class="nav-number">07</span><span>成功与异常分叉</span></a>
+        <a href="#offline-case"><span class="nav-number">08</span><span>模块POST跟踪</span></a>
+        <a href="#organized-answers"><span class="nav-number">09</span><span>整理答案</span></a>
+<a href="#constraint-exercise"><span class="nav-number">10</span><span>边界决策练习</span></a>
+        <a href="#design-boundary"><span class="nav-number">D</span><span>设计选择与边界</span></a>
+        <a href="#lesson-flow-summary"><span class="nav-number">11</span><span>课后流转总图</span></a>
+        <a href="#oral-recap"><span class="nav-number">12</span><span>完整复述</span></a>
+        <a href="#exit-gate"><span class="nav-number">13</span><span>本课门禁</span></a>
       </nav>
-      <div class="side-progress"><div class="side-progress-row"><span>门禁完成度</span><span id="gate-progress-text">0/5</span></div><div class="side-progress-track"><div class="side-progress-value" id="gate-progress-value"></div></div></div>
+      <div class="side-progress"><div class="side-progress-row"><span>门禁完成度</span><span id="gate-progress-text">0/7</span></div><div class="side-progress-track"><div class="side-progress-value" id="gate-progress-value"></div></div></div>
     </aside>
 
     <main class="main">
@@ -292,7 +317,7 @@
           <p class="eyebrow">Week 2 · Day 6</p>
           <h1>基础请求与请求上下文</h1>
           <p class="hero-lead">今天从模块Request一路下钻到Session。重点不是记住BaseRequest的所有方法，而是理解：业务意图如何被翻译、框架控制项在哪里被消费，以及RequestContext怎样成为整条请求管线共享的事实载体。</p>
-          <div class="hero-meta"><span class="pill">建议用时 130～160分钟</span><span class="pill">难度：进阶</span><span class="pill">实践：单条离线POST调试</span><span class="pill">前置：通过第1周门禁</span></div>
+          <div class="hero-meta"><span class="pill">建议用时 180～220分钟</span><span class="pill">难度：基础主干</span><span class="pill">学习方式：单用例逐函数</span><span class="pill">前置：通过第1周门禁</span></div>
           <div class="hero-outcome"><strong>本课结果：</strong>你将能画出模块Request → BaseRequest → RequestContext → Middleware → Session → Response主线，并写出成功请求和传输异常请求的生命周期差异。</div>
         </header>
 
@@ -309,13 +334,119 @@
 
           <h3>参数混淆的因果链</h3>
           <div class="constraint-flow"><div class="flow-node">业务与控制项混传</div><div class="flow-node">框架字段进入HTTP</div><div class="flow-node">服务端协议被污染</div><div class="flow-node">日志与观察失真</div><div class="flow-node">失败难以归因</div></div>
-          <div class="callout blue"><strong>本课范围护栏</strong>今天只理解Middleware经过哪些钩子、Retry会创建多个Context；具体中间件顺序与fail-open在第7课，Retry资格与等待算法在第8课。</div>
+          <div class="callout blue"><strong>本课范围护栏</strong>今天只理解Middleware经过哪些钩子、Retry会创建多个Context；具体中间件顺序与fail-open在第7课，Retry资格与等待算法在第9课。</div>
         </section>
 
-        <section id="single-source" data-section>
-          <p class="section-kicker">02 · HTTP唯一实现源</p>
+        <section id="code-first-walkthrough" class="document-walkthrough" data-section>
+          <p class="section-kicker">02 · 用例入口与业务委托</p>
+          <h2>先读当前发生的调用，不提前展开后续内核</h2>
+          <p class="section-lead">本节只解释测试怎样发起业务动作，以及Task、模块Request怎样把业务payload翻译成公共HTTP调用参数。BaseRequest、Context与Session等源码会在正文第一次需要它们时再展开。</p>
+
+          <div class="guided-start">
+            <div class="guided-start__header"><h3>本课示例入口：普通module的Echo POST</h3><p>离线用例只提供稳定载体。本课从已经准备好的Task和Request开始，只追踪与正常module一致的调用过程。</p></div>
+            <div class="guided-command"><strong>本课示例用例</strong><code>module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline::test_request_uses_default_middleware_and_runtime_metadata</code></div>
+            <div class="guided-rule"><strong>阅读规则</strong>每次只回答三个问题：当前函数接收了什么、补充或消费了什么、向下一层交出了什么。概念名词只在对象真实出现后解释。</div>
+            <div class="guided-chain" aria-label="代码阅读顺序"><span>测试方法</span><b>→</b><span>Task.submit_echo</span><b>→</b><span>Request.echo</span><b>→</b><span>BaseRequest.request</span><b>→</b><span>构造Context</span><b>→</b><span>绑定Group</span><b>→</b><span>Middleware / Session</span></div>
+            <div class="doc-stage-table">
+              <table><tbody>
+                <tr><th>上一阶段交付</th><td>测试已经拿到可用的<code>OfflineFrameworkTask</code>和<code>OfflineFrameworkRequest</code>对象。</td></tr>
+                <tr><th>本节起始输入</th><td>业务<code>payload</code>与调用<code>submit_echo(request, payload)</code>。</td></tr>
+                <tr><th>本节交给下一节</th><td><code>POST</code>、相对path、<code>json=payload</code>与<code>runtime_metadata</code>组成的公共调用参数。</td></tr>
+                <tr><th>后续展开方式</th><td>BaseRequest、Context、Group和Session分别在对应章节首次出现时立即精讲。</td></tr>
+              </tbody></table>
+            </div>
+          </div>
+
+          <div class="doc-mainline">
+            <h3>全课调用路线：这里只导航，不提前讲源码</h3>
+            <pre><code>payload + request
+→ Task.submit_echo
+→ Request.echo：补充POST、path、json、runtime_metadata
+→ BaseRequest.request：消费框架控制项并选择发送路径
+→ RequestContext：形成单次attempt的传输事实
+→ Request Group绑定Context
+→ Middleware → Session
+→ Response回到Assertions，或原传输异常向上抛出</code></pre>
+            <p>路线图只回答“下一站在哪里”。每个函数的源码、处理顺序和字段变化，都放在真正讲到该节点的章节中。</p>
+          </div>
+
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">1</span><div><h3>测试先告诉你输入与验收结果</h3><p>先把测试拆成Arrange、Act、业务断言和框架事实断言。</p></div></div>
+            <div class="guided-code-grid">
+              <div class="guided-source"><span class="guided-source__location">module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline::test_request_uses_default_middleware_and_runtime_metadata · 有序教学选段，省略离线服务/环境断言与Middleware顺序断言</span><pre><code>payload = self.task.build_echo_payload()
+response = self.task.submit_echo(self.request, payload)
+
+self.assertions.assert_echo_accepted(response, payload)
+
+metadata = offline_runtime_recorder.operation_metadata[-1]
+assert metadata.name == "offline_echo"
+assert metadata.role == RuntimeTrafficRole.WORKLOAD
+
+group = offline_runtime_recorder.request_groups[-1]
+assert group.method == "POST"
+assert group.path == "/v1/echo"
+assert group.configured_max_attempts == 1
+assert len(group.contexts) == 1
+assert "runtime_metadata" not in group.contexts[0].kwargs</code></pre></div>
+              <div class="guided-explanation">
+                <h4>所在用例</h4>
+                <p><code>module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline::test_request_uses_default_middleware_and_runtime_metadata</code></p>
+                <h4>职责</h4>
+                <p>用例给出本课的起点和终点：起点是业务payload，终点是业务Response与框架运行事实。它不负责解释服务如何创建，也不负责实现HTTP。</p>
+                <h4>输入与输出</h4>
+                <table class="guided-io"><tbody><tr><th>输入</th><td>已经准备好的<code>Task</code>、<code>Request</code>和业务<code>payload</code>。</td></tr><tr><th>直接输出</th><td><code>submit_echo()</code>返回的<code>Response</code>。</td></tr><tr><th>附加证据</th><td>Operation元数据、Request Group、Context数量以及传输kwargs。</td></tr></tbody></table>
+                <h4>字段变化</h4>
+                <div class="doc-object"><code>payload</code>在测试入口仍只是业务字典；此时还没有<code>method</code>、<code>path</code>、完整<code>url</code>或<code>RequestContext</code>。</div>
+                <h4>验收重点</h4>
+                <ul><li>业务断言证明Response符合接口合同。</li><li><code>group.method/path</code>证明后续已经形成HTTP意图。</li><li><code>runtime_metadata</code>不在<code>context.kwargs</code>中，证明控制元数据没有被发送。</li></ul>
+                <div class="doc-reading-focus"><strong>阅读重点：</strong>测试方法是观察入口。下一步只追踪Act中的<code>submit_echo()</code>，不要提前跳到Context或Session。</div>
+              </div>
+            </div>
+          </article>
+
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">2</span><div><h3>Task表达业务动作，模块Request翻译协议参数</h3><p>两层代码都很短，但所有权不同。</p></div></div>
+            <div class="guided-code-grid">
+              <div class="guided-source"><span class="guided-source__location">module/offline_framework_example/task.py::OfflineFrameworkTask.submit_echo</span><pre><code>@allure_step("提交离线Echo请求")
+def submit_echo(
+    self,
+    request_client: OfflineFrameworkRequest,
+    payload: dict[str, Any],
+) -&gt; requests.Response:
+    return request_client.echo(payload)</code></pre><span class="guided-source__location" style="margin-top:18px">module/offline_framework_example/request.py::OfflineFrameworkRequest.echo</span><pre><code>def echo(self, payload: dict[str, Any]) -&gt; requests.Response:
+    return self.post(
+        self.echo_path,
+        json=payload,
+        runtime_metadata=runtime_metadata(
+            RuntimeOperationKind.HTTP,
+            name="offline_echo",
+            role=RuntimeTrafficRole.WORKLOAD,
+        ),
+    )</code></pre></div>
+              <div class="guided-explanation">
+                <h4>承接对象</h4>
+                <div class="doc-object">上一节交下来的仍是<code>request_client + payload</code>。payload没有被包装，也没有HTTP字段。</div>
+                <h4>职责</h4>
+                <p><code>submit_echo()</code>负责表达业务动作并委托Request；<code>echo()</code>负责把业务动作翻译成HTTP调用参数。两层都不直接执行网络请求。</p>
+                <h4>输入与输出</h4>
+                <table class="guided-io"><tbody><tr><th>Task输入</th><td><code>request_client</code>和业务<code>payload</code>。</td></tr><tr><th>Task输出</th><td>原样返回<code>request_client.echo(payload)</code>的结果。</td></tr><tr><th>Request输入</th><td>业务<code>payload</code>。</td></tr><tr><th>Request输出</th><td>向公共入口提交<code>POST</code>、<code>/v1/echo</code>、<code>json=payload</code>和<code>runtime_metadata</code>。</td></tr></tbody></table>
+                <h4>字段变化影响</h4>
+                <div class="doc-object"><code>payload</code>仍保持业务语义；新增的<code>path</code>决定访问哪个端点，<code>json</code>决定payload进入请求体，<code>runtime_metadata</code>只描述本次运行操作。</div>
+                <h4>尚未发生</h4>
+                <p>没有拼接环境域名，没有补默认timeout，没有合并Session Header，也没有调用<code>requests.Session</code>。</p>
+                <div class="doc-reading-focus"><strong>阅读重点：</strong>Task拥有业务动作名称，模块Request拥有端点与协议翻译。下一节接收的是一组HTTP调用参数，而不是新的业务对象。</div>
+                <div class="doc-boundary"><strong>边界：</strong>源码中的“Offline”只是示例module名称。这里学习的Task → Request → BaseRequest过程与正常module一致。</div>
+              </div>
+            </div>
+          </article>
+
+          <div class="callout blue"><strong>本节到此停止下钻</strong>当前只确认Task完成业务委托、模块Request完成协议翻译。下一节讲到公共执行入口时，再展开<code>BaseRequest.request()</code>。</div>
+        </section>
+
+        <section id="single-source" class="document-walkthrough" data-section>
+          <p class="section-kicker">03 · HTTP唯一实现源</p>
           <h2>模块描述差异，BaseRequest统一执行</h2>
-          <p class="section-lead">模块Request不创建新Session，也不复制日志、Retry和观察逻辑。它只把业务参数翻译成相对路径与公共调用参数。</p>
+          <p class="section-lead">上一节的模块Request已经交出method、相对path与kwargs。这里第一次进入公共执行源，并立即展开<code>BaseRequest.request()</code>，确认它消费什么、保留什么以及把什么交给Context。</p>
 
           <div class="source-map">
             <div class="source-node"><h3>模块Request</h3><p>保存相对路径；把payload、业务ID和单次Header翻译成post/get/delete调用。</p></div>
@@ -324,6 +455,62 @@
             <div class="source-arrow">执行 →</div>
             <div class="source-node"><h3>requests.Session</h3><p>只接收已经归一化的method、完整URL与标准传输kwargs。</p></div>
           </div>
+
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">3</span><div><h3><code>BaseRequest.request()</code>是第一个必须精读的关键函数</h3><p>它不直接发送HTTP，而是消费控制参数、建立Operation、选择发送策略并负责最终收口。</p></div></div>
+            <div class="guided-code-grid">
+              <div class="guided-source"><span class="guided-source__location">common/base_request.py::BaseRequest.request</span><pre><code>def request(self, method: str, path: str, **kwargs: Any) -&gt; requests.Response:
+    attach_log = kwargs.pop("_attach_log", True)
+    retry_policy = kwargs.pop("retry_policy", None)
+    inherit_session_headers = bool(kwargs.pop("_inherit_session_headers", True))
+    stream = bool(kwargs.get("stream"))
+    operation_kind = RuntimeOperationKind.SSE if stream else RuntimeOperationKind.HTTP
+    metadata = self._runtime_observer.normalize_metadata(
+        kwargs,
+        kind=operation_kind,
+        default_name="sse_request" if stream else "http_request",
+    )
+    operation = self._runtime_observer.start_operation(metadata)
+    try:
+        if retry_policy is not None:
+            response = self._send_with_retry(
+                method,
+                path,
+                retry_policy,
+                attach_log=attach_log,
+                inherit_session_headers=inherit_session_headers,
+                **kwargs,
+            )
+        else:
+            context = self._build_request_context(
+                method,
+                path,
+                attach_log=attach_log,
+                inherit_session_headers=inherit_session_headers,
+                **kwargs,
+            )
+            response = self._send_single_group(context)
+    except BaseException as error:
+        operation.finish_error(error)
+        raise
+    operation.finish_response(response, stream=stream)
+    return response</code></pre></div>
+              <div class="guided-explanation">
+                <h4>承接对象</h4>
+                <div class="doc-object"><code>method=POST</code>、<code>path=/v1/echo</code>以及包含<code>json</code>和<code>runtime_metadata</code>的kwargs。</div>
+                <h4>职责</h4>
+                <p><code>request()</code>是公共编排入口。它不直接调用Session，而是先分离框架控制参数、建立顶层Operation，再决定走单次发送还是Retry。</p>
+                <h4>处理顺序</h4>
+                <ol><li>弹出<code>_attach_log</code>、<code>retry_policy</code>和<code>_inherit_session_headers</code>。</li><li><code>normalize_metadata()</code>从kwargs中消费<code>runtime_metadata</code>。</li><li><code>start_operation()</code>创建必须最终收口的Operation。</li><li>根据<code>retry_policy</code>选择<code>_send_with_retry()</code>或单Context发送。</li><li>成功时<code>finish_response()</code>；异常时<code>finish_error()</code>后原样抛出。</li></ol>
+                <h4>输入与输出</h4>
+                <table class="guided-io"><tbody><tr><th>输入</th><td>HTTP method、相对path、业务传输参数和框架控制参数。</td></tr><tr><th>交给下一层</th><td>已经移除Runtime控制元数据的传输kwargs，以及构造Context所需的控制值。</td></tr><tr><th>最终输出</th><td><code>Response</code>，或原始异常。</td></tr></tbody></table>
+                <h4>字段变化影响</h4>
+                <div class="doc-object"><code>runtime_metadata</code>不再存在于待发送kwargs中，而是变成Operation身份；<code>json=payload</code>继续向Context流转。</div>
+                <div class="doc-reading-focus"><strong>阅读重点：</strong><code>request()</code>拥有编排和Operation生命周期，不拥有具体HTTP传输。下一节接收的是“清理后的传输参数”。</div>
+                <div class="doc-boundary"><strong>不要混淆：</strong>Operation表示顶层操作；Request Group表示一次逻辑请求；RequestContext表示其中一次attempt。</div>
+              </div>
+            </div>
+          </article>
 
           <div class="single-source-flow"><div class="flow-node">模块各自建Session</div><div class="flow-node">Header与超时不一致</div><div class="flow-node">日志/脱敏分叉</div><div class="flow-node">Retry行为不可比</div><div class="flow-node">故障证据碎片化</div></div>
           <div class="callout red"><strong>练习禁止项</strong>不要为了“看清requests”另建一个<code>requests.Session()</code>。那会绕过你正要学习的Context、Middleware、观察与资源所有权。</div>
@@ -334,33 +521,10 @@
           </div>
         </section>
 
-        <section id="context-anatomy" data-section>
-          <p class="section-kicker">03 · RequestContext解剖</p>
-          <h2>Context是一次HTTP attempt的共享事实包</h2>
-          <p class="section-lead">点击字段组。Middleware、日志和Runtime Hooks都围绕同一个Context协作，不需要各自重新解析调用参数。</p>
-
-          <div class="context-shell">
-            <div class="context-tabs" role="tablist" aria-label="RequestContext字段">
-              <button class="context-button active" type="button" data-context="identity" role="tab" aria-selected="true"><b>身份</b>method/path/url</button>
-              <button class="context-button" type="button" data-context="kwargs" role="tab" aria-selected="false"><b>传输</b>kwargs</button>
-              <button class="context-button" type="button" data-context="report" role="tab" aria-selected="false"><b>报告</b>日志与步骤名</button>
-              <button class="context-button" type="button" data-context="policy" role="tab" aria-selected="false"><b>策略</b>Retry/Polling</button>
-              <button class="context-button" type="button" data-context="attributes" role="tab" aria-selected="false"><b>扩展</b>attributes</button>
-            </div>
-            <div class="context-detail" id="context-detail" role="tabpanel" aria-live="polite"></div>
-          </div>
-
-          <h3>构造Context时发生的标准化</h3>
-          <div class="consume-flow">
-            <div class="consume-node"><b>复制kwargs</b><span>标准dict/list尽量deepcopy，保护调用方输入</span></div><div class="consume-node"><b>补齐timeout</b><span>没有显式值时使用Settings默认值</span></div><div class="consume-node"><b>裁剪剩余预算</b><span>存在deadline时不能超过剩余时间</span></div><div class="consume-node"><b>合并Header</b><span>Session默认值 + 单次请求Header</span></div>
-          </div>
-          <div class="callout green" style="margin-top:20px"><strong>可变性边界</strong>普通payload会被深拷贝后交给Middleware；这正是<code>test_middleware_does_not_mutate_original_payload</code>能够验证调用方字典不变的基础。</div>
-        </section>
-
         <section id="parameter-routing" data-section>
           <p class="section-kicker">04 · 三类参数分流</p>
           <h2>同一个函数调用里，参数有三个不同终点</h2>
-          <p class="section-lead">先看三类定义，再完成分流练习。重点观察<code>runtime_metadata</code>和<code>retry_policy</code>会在Session之前被消费。</p>
+          <p class="section-lead">承接刚刚展开的<code>BaseRequest.request()</code>：先区分<code>payload</code>、<code>runtime_metadata</code>和<code>json</code>分别属于谁，再确认控制项为什么必须在构造Context之前被消费。</p>
 
           <div class="parameter-shell">
             <div class="parameter-head">
@@ -380,13 +544,124 @@
             </div>
           </div>
 
-          <div class="callout blue" style="margin-top:20px"><strong>关键证据</strong>离线请求管线用例明确断言<code>runtime_metadata</code>不在最终RequestContext.kwargs中；它已被RuntimeObserver消费，不会成为服务端HTTP参数。</div>
+          <div class="callout blue" style="margin-top:20px"><strong>关键证据</strong>示例module请求管线明确断言<code>runtime_metadata</code>不在最终RequestContext.kwargs中；它已被RuntimeObserver消费，不会成为HTTP传输参数。</div>
         </section>
 
-        <section id="success-flow" data-section>
-          <p class="section-kicker">05 · 成功请求主线</p>
+        <section id="context-anatomy" class="document-walkthrough" data-section>
+          <p class="section-kicker">05 · RequestContext解剖</p>
+          <h2>Context是一次HTTP attempt的共享事实包</h2>
+          <p class="section-lead"><code>BaseRequest.request()</code>在单次发送路径中调用<code>_build_request_context()</code>。现在第一次展开这个函数，再按字段归类说明Middleware、日志和Runtime Hooks为什么能围绕同一个Context协作。</p>
+
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">4</span><div><h3><code>_build_request_context()</code>把零散参数冻结为一次attempt事实</h3><p>重点不是创建dataclass，而是标准化数据并形成Middleware和Session共享的唯一载体。</p></div></div>
+            <div class="guided-code-grid">
+              <div class="guided-source"><span class="guided-source__location">common/base_request.py::BaseRequest._build_request_context · 完整函数体</span><pre><code>url = self._build_url(path)
+request_kwargs = self._copy_request_kwargs(kwargs)
+request_kwargs.setdefault("timeout", self.config.timeout)
+request_kwargs["timeout"] = self.retry_executor.clamp_timeout(
+    request_kwargs["timeout"],
+    deadline,
+)
+
+headers = dict(request_kwargs.pop("headers", None) or {})
+request_kwargs["headers"] = self._merge_headers(
+    headers,
+    inherit_session_headers=inherit_session_headers,
+)
+
+return RequestContext(
+    method=method.upper(),
+    path=path,
+    url=url,
+    kwargs=request_kwargs,
+    attach_log=attach_log,
+    request_step_name=request_step_name,
+    response_step_name=response_step_name,
+    protocol=protocol or ("sse" if request_kwargs.get("stream") else "http"),
+    retry_policy=retry_policy,
+    polling_policy=polling_policy,
+)</code></pre></div>
+              <div class="guided-explanation">
+                <h4>承接对象</h4>
+                <div class="doc-object"><code>method</code>、相对<code>path</code>、清理后的传输kwargs，以及BaseRequest持有的默认配置和Session Header。</div>
+                <h4>职责</h4>
+                <p><code>_build_request_context()</code>把分散参数标准化为一个只属于当前attempt的<code>RequestContext</code>。这一阶段仍未发送HTTP。</p>
+                <h4>处理顺序</h4>
+                <ol><li>由<code>path</code>构造完整<code>url</code>。</li><li>复制kwargs，避免后续Middleware直接修改调用者数据。</li><li>补默认timeout，并在存在deadline时夹紧到剩余预算。</li><li>取出本次headers，与Session默认Header合并。</li><li>确定protocol，构造并返回Context。</li></ol>
+                <h4>输入与输出</h4>
+                <table class="guided-io"><tbody><tr><th>输入</th><td><code>method/path/kwargs</code>、默认timeout、Session Header及可选deadline。</td></tr><tr><th>输出</th><td>一个包含身份字段、传输kwargs和策略引用的<code>RequestContext</code>。</td></tr><tr><th>尚未产生</th><td>Response、异常结果、Request Group结束状态和Operation终态。</td></tr></tbody></table>
+                <h4>字段变化影响</h4>
+                <table class="guided-io"><tbody><tr><th>path → url</th><td><code>path</code>保留稳定业务身份；<code>url</code>加入环境地址，供Session传输。</td></tr><tr><th>kwargs</th><td>形成当前attempt独有的传输副本。</td></tr><tr><th>timeout</th><td>缺省值被补齐；外部deadline可以缩短本次请求预算。</td></tr><tr><th>headers</th><td>本次Header与Session Header合并，结果只属于当前Context。</td></tr></tbody></table>
+                <div class="doc-reading-focus"><strong>阅读重点：</strong>Context不是“随便装参数的字典”，而是下一阶段唯一接收的attempt事实对象。</div>
+              </div>
+            </div>
+          </article>
+
+          <div class="context-shell">
+            <div class="context-tabs" role="tablist" aria-label="RequestContext字段">
+              <button class="context-button active" type="button" data-context="identity" role="tab" aria-selected="true"><b>身份</b>method/path/url</button>
+              <button class="context-button" type="button" data-context="kwargs" role="tab" aria-selected="false"><b>传输</b>kwargs</button>
+              <button class="context-button" type="button" data-context="report" role="tab" aria-selected="false"><b>报告</b>日志与步骤名</button>
+              <button class="context-button" type="button" data-context="policy" role="tab" aria-selected="false"><b>策略</b>Retry/Polling</button>
+              <button class="context-button" type="button" data-context="attributes" role="tab" aria-selected="false"><b>扩展</b>attributes</button>
+            </div>
+            <div class="context-detail" id="context-detail" role="tabpanel" aria-live="polite"></div>
+          </div>
+
+          <h3>构造Context时发生的标准化</h3>
+          <div class="consume-flow">
+            <div class="consume-node"><b>复制kwargs</b><span>标准dict/list尽量deepcopy，保护调用方输入</span></div><div class="consume-node"><b>补齐timeout</b><span>没有显式值时使用Settings默认值</span></div><div class="consume-node"><b>裁剪剩余预算</b><span>存在deadline时不能超过剩余时间</span></div><div class="consume-node"><b>合并Header</b><span>Session默认值 + 单次请求Header</span></div>
+          </div>
+          <div class="callout green" style="margin-top:20px"><strong>可变性边界</strong>普通payload会被深拷贝后交给Middleware；这正是<code>test_middleware_does_not_mutate_original_payload</code>能够验证调用方字典不变的基础。</div>
+        </section>
+
+        <section id="success-flow" class="document-walkthrough" data-section>
+          <p class="section-kicker">06 · 成功请求主线</p>
           <h2>一次无Retry POST穿过八个阶段</h2>
-          <p class="section-lead">点击播放器跟踪<code>echo(payload)</code>。本课只观察Middleware钩子位置，不展开每个中间件内部算法。</p>
+          <p class="section-lead">Context已经构造完成。现在第一次进入发送阶段，立即展开Group绑定、Middleware钩子与<code>Session.request()</code>，再用八阶段视图整理主线。</p>
+
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">5</span><div><h3>Group管理逻辑请求，<code>_send()</code>真正进入Middleware与Session</h3><p>最后一跳要分清：Group归并attempt、Context携带事实、Session执行HTTP。</p></div></div>
+            <div class="guided-code-grid">
+              <div class="guided-source"><span class="guided-source__location">common/base_request.py::BaseRequest._send_single_group</span><pre><code>group = self._runtime_observer.start_request_group(
+    method=context.method,
+    path=context.path,
+    protocol=context.protocol,
+    configured_max_attempts=1,
+)
+group.bind(context)
+try:
+    return self._send(context)
+finally:
+    group.finish()</code></pre><span class="guided-source__location" style="margin-top:18px">common/base_request.py::BaseRequest._send</span><pre><code>self._run_before_middlewares(context)
+
+try:
+    response = self.session.request(
+        method=context.method,
+        url=context.url,
+        **context.kwargs,
+    )
+except Exception as error:
+    self._run_exception_middlewares(context, error)
+    raise
+
+self._run_after_middlewares(context, response)
+return response</code></pre></div>
+              <div class="guided-explanation">
+                <h4>承接对象</h4>
+                <div class="doc-object">上一节输出的单个<code>RequestContext</code>，其中已经包含Session所需的method、完整url与标准化kwargs。</div>
+                <h4>职责</h4>
+                <p><code>_send_single_group()</code>为这次逻辑请求创建Request Group并绑定Context；<code>_send()</code>负责执行Middleware与Session。</p>
+                <h4>处理顺序</h4>
+                <ol><li>创建<code>configured_max_attempts=1</code>的Request Group。</li><li><code>group.bind(context)</code>把当前attempt事实挂入Group。</li><li>before Middleware读取或补充同一个Context。</li><li><code>Session.request(method, url, **kwargs)</code>执行HTTP。</li><li>有Response时进入after Middleware；Session抛异常时进入exception Middleware。</li><li>无论结果如何，Group都在<code>finally</code>中结束。</li></ol>
+                <h4>输入与输出</h4>
+                <table class="guided-io"><tbody><tr><th>输入</th><td>一个标准化后的<code>RequestContext</code>。</td></tr><tr><th>成功输出</th><td>Session返回的原始<code>Response</code>。</td></tr><tr><th>异常输出</th><td>Session抛出的原始传输异常，不伪造Response。</td></tr><tr><th>运行事实</th><td>Group保存当前Context；Middleware记录请求、响应或异常事实。</td></tr></tbody></table>
+                <h4>分支影响</h4>
+                <p>HTTP 200、400或503只要Session返回了Response，都属于Response路径；只有Session直接抛异常且没有Response时，才属于传输异常路径。</p>
+                <div class="doc-reading-focus"><strong>阅读重点：</strong>Request Group归并attempt，<code>_send()</code>执行传输，两者通过同一个Context连接。Response或异常随后回到<code>request()</code>完成Operation收口。</div>
+              </div>
+            </div>
+          </article>
 
           <div class="step-shell">
             <div class="stepper" role="tablist" aria-label="成功请求执行步骤">
@@ -399,7 +674,7 @@
         </section>
 
         <section id="error-flow" data-section>
-          <p class="section-kicker">06 · 成功与异常分叉</p>
+          <p class="section-kicker">07 · 成功与异常分叉</p>
           <h2>传输异常没有Response，但仍有完整观察终点</h2>
           <p class="section-lead">两条路径共享Context和before_request，分叉点是<code>session.request()</code>返回Response还是抛异常。</p>
 
@@ -410,62 +685,92 @@
           </div>
 
           <div class="callout red" style="margin-top:20px"><strong>不要把HTTP 4xx/5xx混同为传输异常</strong>只要Session成功返回Response，仍走after_response路径；状态码是否可接受由业务断言或Retry策略继续判断。</div>
+
+          <div class="guided-conclusion"><h3>五处源码在对应章节展开后，再统一提炼</h3><ol><li>Task表达业务动作，模块Request翻译端点和协议参数。</li><li><code>BaseRequest.request()</code>消费框架控制项并拥有顶层Operation。</li><li><code>_build_request_context()</code>标准化一次attempt的事实与传输参数。</li><li>Request Group归并逻辑请求，Context只属于一个attempt。</li><li><code>_send()</code>是Middleware和Session的真实执行边界。</li></ol></div>
         </section>
 
         <section id="offline-case" data-section>
-          <p class="section-kicker">07 · 离线POST跟踪</p>
-          <h2>把echo请求映射到真实代码合同</h2>
-          <p class="section-lead">这条请求足够简单：无Retry、无Polling、无外部媒体，适合第一次下钻。</p>
+          <p class="section-kicker">08 · 模块POST跟踪</p>
+          <h2>把普通module的echo调用映射到真实代码合同</h2>
+          <p class="section-lead">离线用例只负责提供稳定Response；学习时忽略服务和fixture的创建过程，只跟踪与正常module完全相同的调用链。</p>
 
-          <div class="case-trace"><div class="trace-node"><b>Task</b><span>submit_echo</span></div><div class="trace-node"><b>模块Request</b><span>echo(payload)</span></div><div class="trace-node"><b>BaseRequest</b><span>post → request</span></div><div class="trace-node"><b>Context</b><span>POST /v1/echo</span></div><div class="trace-node"><b>Session</b><span>本地HTTP</span></div><div class="trace-node"><b>Assertions</b><span>accepted</span></div></div>
+          <div class="case-trace"><div class="trace-node"><b>Test</b><span>组织Arrange/Act/Assert</span></div><div class="trace-node"><b>Task</b><span>submit_echo</span></div><div class="trace-node"><b>模块Request</b><span>echo(payload)</span></div><div class="trace-node"><b>BaseRequest</b><span>post → request</span></div><div class="trace-node"><b>Session</b><span>执行HTTP传输</span></div><div class="trace-node"><b>Assertions</b><span>校验Response合同</span></div></div>
 
           <table class="fact-table">
             <thead><tr><th>观察事实</th><th>当前值</th><th>说明</th></tr></thead>
             <tbody>
-              <tr><td>base_url</td><td>本轮OfflineService随机loopback地址</td><td>模块只保存相对路径，环境地址由离线Settings提供。</td></tr>
+              <tr><td>业务输入</td><td>payload</td><td>Test或Task创建，模块Request把它翻译为<code>json=payload</code>。</td></tr>
               <tr><td>method / path / protocol</td><td>POST /v1/echo / http</td><td>Request Group保留原始业务路径，而不是只保留完整URL。</td></tr>
               <tr><td>configured_max_attempts</td><td>1</td><td>本请求没有传RetryPolicy，只有一个Context。</td></tr>
               <tr><td>runtime metadata</td><td>HTTP / offline_echo / WORKLOAD</td><td>中性观察身份由模块Request提供。</td></tr>
               <tr><td>Context kwargs</td><td>无runtime_metadata</td><td>控制项已消费，只保留Session需要的传输参数。</td></tr>
-              <tr><td>Session代理</td><td>trust_env=False</td><td>离线客户端禁止继承系统代理，保持loopback确定性。</td></tr>
+              <tr><td>返回值</td><td>requests.Response</td><td>Response逐层返回Task/Test，最后由Assertions检查业务合同。</td></tr>
             </tbody>
           </table>
         </section>
 
-        <section id="debug-lab" data-section>
-          <p class="section-kicker">08 · 调试实践</p>
-          <h2>只跟踪一条POST，不修改请求实现</h2>
-          <p class="section-lead">在IDE中设置临时断点，运行稳定nodeid。观察完删除断点即可，不需要另建Session或复制请求代码。</p>
+        <section id="organized-answers" data-section>
+          <p class="section-kicker">09 · 整理答案</p>
+          <h2>不运行命令、不设置断点，直接读取本课的四个结论</h2>
+          <p class="section-lead">下面的答案已经按真实调用顺序整理完成。学习者不需要进入调试器，只需确认每一步接收什么、输出什么，以及哪些字段会继续进入Session。</p>
 
-          <div class="debug-layout">
-            <div>
-              <div class="command-card"><button class="copy-button" type="button">复制</button><pre><code>.\.venv\Scripts\python.exe -m pytest `
-  "module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline::test_request_uses_default_middleware_and_runtime_metadata" `
-  -q</code></pre></div>
-            </div>
-            <aside class="breakpoint-card"><h3>建议断点顺序</h3><ol><li><code>OfflineFrameworkRequest.echo()</code></li><li><code>BaseRequest.request()</code></li><li><code>_build_request_context()</code></li><li><code>_send()</code></li><li><code>session.request()</code>调用前后</li></ol></aside>
-          </div>
+          <h3>答案一：成功请求的完整顺序</h3>
+          <pre><code>Test构造payload
+→ Task.submit_echo(request, payload)
+→ OfflineFrameworkRequest.echo(payload)
+→ BaseRequest.post("/v1/echo", json=payload, runtime_metadata=...)
+→ BaseRequest.request("POST", path, **kwargs)
+→ RuntimeObserver消费runtime_metadata并创建Operation
+→ _build_request_context()生成单次attempt的RequestContext
+→ _send_single_group()创建Request Group并绑定Context
+→ before Middleware
+→ Session.request(context.method, context.url, **context.kwargs)
+→ after Middleware
+→ Request Group.finish()
+→ Operation.finish_response(response)
+→ Response返回Task、Test与Assertions</code></pre>
+          <p>关键结论：Response沿原调用栈返回；Request Group和Operation只负责记录运行事实，不替换业务Response。</p>
 
-          <h3>记录两个生命周期</h3>
-          <div class="note-grid">
-            <div class="note-field"><label for="note-success">成功请求从模块入口到Response的完整顺序</label><textarea id="note-success" data-note="success" placeholder="逐步写出操作、Context、Middleware、Session和返回"></textarea></div>
-            <div class="note-field"><label for="note-error">传输异常从Session到原异常重新抛出的顺序</label><textarea id="note-error" data-note="error" placeholder="写出on_exception、group.finish和operation.finish_error"></textarea></div>
-            <div class="note-field"><label for="note-context">断点中RequestContext的关键字段和值</label><textarea id="note-context" data-note="context" placeholder="method/path/url/kwargs/protocol/attributes"></textarea></div>
-            <div class="note-field"><label for="note-consumed">哪些输入没有进入最终Context.kwargs？为什么？</label><textarea id="note-consumed" data-note="consumed" placeholder="runtime_metadata、retry_policy、日志与Header继承控制"></textarea></div>
-          </div>
-          <p class="save-state" id="save-state">调试记录保存在浏览器本地。</p>
+          <h3>答案二：传输异常的完整顺序</h3>
+          <pre><code>Session.request(...)抛出ConnectionError或Timeout
+→ _run_exception_middlewares(context, error)
+→ _send()重新抛出原异常
+→ _send_single_group()在finally中执行group.finish()
+→ BaseRequest.request()执行operation.finish_error(error)
+→ 原异常继续抛回Task与Test</code></pre>
+          <p>关键结论：只有Session直接抛异常且没有形成Response时，才属于传输异常路径。HTTP 4xx或5xx只要返回了Response，仍属于Response路径。</p>
 
-          <h3>阅读顺序</h3>
-          <div class="reading-grid">
-            <div class="reading-card"><h3>1. Context数据结构</h3><p>先知道管线共享哪些事实，再进入执行代码。</p><div class="path-stack"><span class="path-chip">common/request_context.py</span></div></div>
-            <div class="reading-card"><h3>2. 公共执行主线</h3><p>只读构造、request、_build_request_context、_send和close。</p><div class="path-stack"><span class="path-chip">common/base_request.py</span></div></div>
-            <div class="reading-card"><h3>3. 模块翻译层</h3><p>观察相对路径、业务参数与中性metadata如何进入公共入口。</p><div class="path-stack"><span class="path-chip">module/offline_framework_example/request.py</span></div></div>
-            <div class="reading-card"><h3>4. 可执行合同</h3><p>用测试断言反向确认Context与Request Group事实。</p><div class="path-stack"><span class="path-chip">module/offline_framework_example/test_request_pipeline.py</span></div></div>
-          </div>
+          <h3>答案三：本用例中的RequestContext快照</h3>
+          <table class="fact-table">
+            <thead><tr><th>字段</th><th>整理后的值</th><th>作用</th></tr></thead>
+            <tbody>
+              <tr><td><code>method</code></td><td><code>POST</code></td><td>由<code>post()</code>转换为公共请求方法。</td></tr>
+              <tr><td><code>path</code></td><td><code>/v1/echo</code></td><td>保留模块定义的业务相对路径。</td></tr>
+              <tr><td><code>url</code></td><td><code>Settings.base_url + /v1/echo</code></td><td>由BaseRequest拼接后交给Session。</td></tr>
+              <tr><td><code>kwargs</code></td><td><code>json</code>、默认或显式<code>timeout</code>、合并后的<code>headers</code></td><td>这是Session真正接收的标准传输参数。</td></tr>
+              <tr><td><code>protocol</code></td><td><code>http</code></td><td>当前请求没有启用stream。</td></tr>
+              <tr><td><code>retry_policy</code></td><td><code>None</code></td><td>因此Request Group只绑定一个Context。</td></tr>
+              <tr><td><code>attributes</code></td><td>初始为空，后续可由Middleware或Runtime Hooks补充</td><td>保存诊断和attempt扩展事实，不进入服务端协议。</td></tr>
+            </tbody>
+          </table>
+
+          <h3>答案四：输入参数最终去了哪里</h3>
+          <table class="fact-table">
+            <thead><tr><th>输入</th><th>消费位置</th><th>是否进入Context.kwargs</th></tr></thead>
+            <tbody>
+              <tr><td><code>runtime_metadata</code></td><td>RuntimeObserver创建Operation身份</td><td>否</td></tr>
+              <tr><td><code>retry_policy</code></td><td><code>request()</code>选择单次发送或Retry分支</td><td>否</td></tr>
+              <tr><td><code>_attach_log</code></td><td>BaseRequest转换为Context的报告控制字段</td><td>否</td></tr>
+              <tr><td><code>_inherit_session_headers</code></td><td>Context构造阶段决定Header合并方式</td><td>否</td></tr>
+              <tr><td><code>json / headers / timeout / stream</code></td><td>Context标准化后由Session执行</td><td>是</td></tr>
+            </tbody>
+          </table>
+
+          <div class="callout green"><strong>最终答案</strong>Task表达业务动作，模块Request翻译协议，BaseRequest消费框架控制项并组织生命周期，RequestContext保存一次attempt事实，Request Group归并逻辑请求，Session只执行标准HTTP参数，Response或原异常最终沿调用栈返回。</div>
         </section>
 
         <section id="constraint-exercise" data-section>
-          <p class="section-kicker">09 · TOC边界决策</p>
+<p class="section-kicker">10 · TOC边界决策</p>
           <h2>当前约束：参数能传进去，却不知道应该在哪里被消费</h2>
           <p class="section-lead">把每个变化放回唯一所有者。错误归属通常不会立刻报错，而会把控制字段泄漏到Session或把环境差异硬编码进模块。</p>
 
@@ -493,24 +798,111 @@
 </div>
 </section>
 
-<section id="knowledge-check" data-section>
-          <p class="section-kicker">10 · 知识自测</p>
-          <h2>确认你理解一次attempt的事实边界</h2>
-          <p class="section-lead">建议达到5/6再进入门禁。第7、8课都会建立在RequestContext与参数分流之上。</p>
-          <div class="quiz-list">
-            <fieldset class="quiz-card" data-answer="b"><legend>1. 为什么BaseRequest是HTTP执行的唯一公共实现源？</legend><div class="quiz-options"><label><input type="radio" name="q1" value="a">为了让所有模块使用同一业务路径</label><label><input type="radio" name="q1" value="b">统一Session、Context、Middleware、观察、Retry/Polling入口与资源关闭合同</label><label><input type="radio" name="q1" value="c">为了禁止模块定义Request子类</label></div><div class="quiz-explanation">正确答案是B。模块保留协议差异，但不复制公共执行机制。</div></fieldset>
-            <fieldset class="quiz-card" data-answer="c"><legend>2. <code>runtime_metadata</code>最终会发生什么？</legend><div class="quiz-options"><label><input type="radio" name="q2" value="a">作为JSON字段发送给服务端</label><label><input type="radio" name="q2" value="b">保存到Session.headers</label><label><input type="radio" name="q2" value="c">被RuntimeObserver消费并建立中性Operation身份，不进入Context.kwargs</label></div><div class="quiz-explanation">正确答案是C。离线请求管线有明确断言保护这一边界。</div></fieldset>
-            <fieldset class="quiz-card" data-answer="a"><legend>3. RequestContext中的<code>path</code>与<code>url</code>有什么区别？</legend><div class="quiz-options"><label><input type="radio" name="q3" value="a">path保留业务相对路径，url是与base_url组合后的完整地址</label><label><input type="radio" name="q3" value="b">两者永远完全相同</label><label><input type="radio" name="q3" value="c">path是响应路径，url是Schema路径</label></div><div class="quiz-explanation">正确答案是A。Request Group观察使用原始path，Session执行完整url。</div></fieldset>
-            <fieldset class="quiz-card" data-answer="b"><legend>4. 单次请求Header应如何处理？</legend><div class="quiz-options"><label><input type="radio" name="q4" value="a">先永久修改共享Session.headers</label><label><input type="radio" name="q4" value="b">作为本次headers参数传入，由Context与Session默认Header合并</label><label><input type="radio" name="q4" value="c">放进Assertions</label></div><div class="quiz-explanation">正确答案是B。这样不会让单次协议信息泄漏到后续请求。</div></fieldset>
-            <fieldset class="quiz-card" data-answer="c"><legend>5. Session返回HTTP 503时，是否属于传输异常路径？</legend><div class="quiz-options"><label><input type="radio" name="q5" value="a">是，任何非200都是ConnectionError</label><label><input type="radio" name="q5" value="b">是，因此没有Response</label><label><input type="radio" name="q5" value="c">否，Session已返回Response，仍走after_response；后续由Retry或断言判断</label></div><div class="quiz-explanation">正确答案是C。传输异常指Session调用抛异常而没有正常Response。</div></fieldset>
-            <fieldset class="quiz-card" data-answer="a"><legend>6. 一次启用Retry的逻辑请求与RequestContext是什么关系？</legend><div class="quiz-options"><label><input type="radio" name="q6" value="a">一个Request Group可绑定多个attempt Context</label><label><input type="radio" name="q6" value="b">全进程只创建一个Context</label><label><input type="radio" name="q6" value="c">每个Context拥有独立测试用例</label></div><div class="quiz-explanation">正确答案是A。每次attempt拥有自己的Context与attempt属性。</div></fieldset>
+        <section id="lesson-flow-summary" data-section>
+          <p class="section-kicker">11 · 课后流转总图</p>
+          <h2>上一阶段的输出，怎样成为下一阶段的输入</h2>
+          <p class="section-lead">这张图采用类似Mermaid <code>flowchart TD</code>的结构：主链自上而下，框架资源从侧面注入，Session之后按Response与传输异常分成两条独立终点。</p>
+
+          <figure class="lesson-flow-map mermaid-flowchart" aria-labelledby="day06-flow-caption">
+            <figcaption class="flow-map-caption" id="day06-flow-caption"><strong>第6天请求流转图</strong>：箭头文字表示上一节点真正交给下一节点的数据。</figcaption>
+            <div class="mermaid-flowchart__legend" aria-label="图例">
+              <span>实线：主调用与数据交接</span>
+              <span class="support">虚线：框架事实或默认资源</span>
+              <span class="success">绿色：Response路径</span>
+              <span class="error">红色：传输异常路径</span>
+            </div>
+            <div class="mermaid-flowchart__canvas">
+              <svg viewBox="0 0 1200 1690" role="img" aria-labelledby="day06-mermaid-title day06-mermaid-desc">
+                <title id="day06-mermaid-title">Echo POST从测试输入到Response或传输异常的完整流程图</title>
+                <desc id="day06-mermaid-desc">Test依次调用Task、模块Request和BaseRequest；BaseRequest创建Operation与RequestContext，Request Group绑定Context，经Middleware进入Session。Session返回Response时进入绿色路径，抛出传输异常时进入红色路径。</desc>
+                <defs>
+                  <marker id="day06-arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52708f"/></marker>
+                  <marker id="day06-arrow-support" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8a6b22"/></marker>
+                  <marker id="day06-arrow-success" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16794a"/></marker>
+                  <marker id="day06-arrow-error" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#b4233f"/></marker>
+                </defs>
+
+                <path class="mermaid-edge" d="M600 100 V130" marker-end="url(#day06-arrow)"/>
+                <path class="mermaid-edge" d="M600 200 V230" marker-end="url(#day06-arrow)"/>
+                <path class="mermaid-edge" d="M600 310 V350" marker-end="url(#day06-arrow)"/>
+                <path class="mermaid-edge mermaid-edge--support" d="M340 400 H290" marker-end="url(#day06-arrow-support)"/>
+                <path class="mermaid-edge" d="M600 450 V500" marker-end="url(#day06-arrow)"/>
+                <path class="mermaid-edge mermaid-edge--support" d="M910 555 H860" marker-end="url(#day06-arrow-support)"/>
+                <path class="mermaid-edge" d="M600 610 V660" marker-end="url(#day06-arrow)"/>
+                <path class="mermaid-edge" d="M600 750 V800" marker-end="url(#day06-arrow)"/>
+                <path class="mermaid-edge" d="M600 900 V950" marker-end="url(#day06-arrow)"/>
+                <path class="mermaid-edge mermaid-edge--success" d="M410 1030 H300 V1180" marker-end="url(#day06-arrow-success)"/>
+                <path class="mermaid-edge mermaid-edge--error" d="M790 1030 H900 V1180" marker-end="url(#day06-arrow-error)"/>
+                <path class="mermaid-edge mermaid-edge--success" d="M300 1270 V1320" marker-end="url(#day06-arrow-success)"/>
+                <path class="mermaid-edge mermaid-edge--error" d="M900 1270 V1320" marker-end="url(#day06-arrow-error)"/>
+                <path class="mermaid-edge mermaid-edge--success" d="M300 1400 V1450" marker-end="url(#day06-arrow-success)"/>
+                <path class="mermaid-edge mermaid-edge--error" d="M900 1400 V1450" marker-end="url(#day06-arrow-error)"/>
+                <path class="mermaid-edge mermaid-edge--success" d="M300 1530 V1580" marker-end="url(#day06-arrow-success)"/>
+                <path class="mermaid-edge mermaid-edge--error" d="M900 1530 V1580" marker-end="url(#day06-arrow-error)"/>
+
+                <text class="mermaid-edge-caption" x="620" y="120">request + payload</text>
+                <text class="mermaid-edge-caption" x="620" y="220">同一组业务对象</text>
+                <text class="mermaid-edge-caption" x="620" y="340">POST + path + kwargs</text>
+                <text class="mermaid-edge-caption" x="620" y="490">清理后的传输参数</text>
+                <text class="mermaid-edge-caption" x="620" y="650">RequestContext</text>
+                <text class="mermaid-edge-caption" x="620" y="790">同一个Context</text>
+                <text class="mermaid-edge-caption" x="620" y="940">Session执行结果</text>
+
+                <g class="mermaid-branch-label mermaid-branch-label--success" transform="translate(300 1135)"><rect x="-62" y="-18" width="124" height="32" rx="16"/><text x="0" y="5" text-anchor="middle">Response</text></g>
+                <g class="mermaid-branch-label mermaid-branch-label--error" transform="translate(900 1135)"><rect x="-72" y="-18" width="144" height="32" rx="16"/><text x="0" y="5" text-anchor="middle">传输异常</text></g>
+
+                <g class="mermaid-node mermaid-node--start"><rect x="400" y="30" width="400" height="70" rx="35"/><text class="mermaid-node__title" x="600" y="58" text-anchor="middle">Test输入</text><text class="mermaid-node__detail" x="600" y="82" text-anchor="middle">request + payload</text></g>
+                <g class="mermaid-node mermaid-node--business"><rect x="400" y="130" width="400" height="70" rx="14"/><text class="mermaid-node__title" x="600" y="158" text-anchor="middle">Task.submit_echo()</text><text class="mermaid-node__detail" x="600" y="182" text-anchor="middle">表达业务动作，只做委托</text></g>
+                <g class="mermaid-node mermaid-node--business"><rect x="380" y="230" width="440" height="80" rx="14"/><text class="mermaid-node__title" x="600" y="258" text-anchor="middle">OfflineFrameworkRequest.echo()</text><text class="mermaid-node__detail" x="600" y="284" text-anchor="middle">生成POST、/v1/echo、json与runtime_metadata</text></g>
+
+                <g class="mermaid-node mermaid-node--runtime"><rect x="40" y="350" width="250" height="100" rx="14"/><text class="mermaid-node__title" x="165" y="380" text-anchor="middle">Operation事实</text><text class="mermaid-node__detail" x="165" y="406" text-anchor="middle">runtime_metadata</text><text class="mermaid-node__detail" x="165" y="430" text-anchor="middle">→ kind / name / role</text></g>
+                <g class="mermaid-node mermaid-node--business"><rect x="340" y="350" width="520" height="100" rx="14"/><text class="mermaid-node__title" x="600" y="380" text-anchor="middle">BaseRequest.request()</text><text class="mermaid-node__detail" x="600" y="406" text-anchor="middle">消费框架控制项，创建Operation</text><text class="mermaid-node__detail" x="600" y="430" text-anchor="middle">本用例选择单次发送路径</text></g>
+
+                <g class="mermaid-node mermaid-node--context"><rect x="340" y="500" width="520" height="110" rx="14"/><text class="mermaid-node__title" x="600" y="530" text-anchor="middle">_build_request_context()</text><text class="mermaid-node__detail" x="600" y="557" text-anchor="middle">拼接URL、复制kwargs、补齐timeout</text><text class="mermaid-node__detail" x="600" y="582" text-anchor="middle">合并Header，输出单次attempt事实</text></g>
+                <g class="mermaid-node mermaid-node--support"><rect x="910" y="500" width="250" height="110" rx="14"/><text class="mermaid-node__title" x="1035" y="530" text-anchor="middle">BaseRequest默认资源</text><text class="mermaid-node__detail" x="1035" y="557" text-anchor="middle">base_url / timeout</text><text class="mermaid-node__detail" x="1035" y="582" text-anchor="middle">Session.headers</text></g>
+
+                <g class="mermaid-node mermaid-node--runtime"><rect x="360" y="660" width="480" height="90" rx="14"/><text class="mermaid-node__title" x="600" y="691" text-anchor="middle">Request Group绑定Context</text><text class="mermaid-node__detail" x="600" y="718" text-anchor="middle">configured_max_attempts=1；group.bind(context)</text></g>
+                <g class="mermaid-node mermaid-node--business"><rect x="340" y="800" width="520" height="100" rx="14"/><text class="mermaid-node__title" x="600" y="830" text-anchor="middle">before Middleware → Session.request()</text><text class="mermaid-node__detail" x="600" y="857" text-anchor="middle">Session只消费method、完整url与标准kwargs</text><text class="mermaid-node__detail" x="600" y="882" text-anchor="middle">runtime_metadata不会进入服务端协议</text></g>
+
+                <g class="mermaid-decision"><polygon points="600,950 790,1030 600,1110 410,1030"/><text class="mermaid-decision__title" x="600" y="1024" text-anchor="middle">Session结果？</text><text class="mermaid-decision__detail" x="600" y="1050" text-anchor="middle">Response 或原始传输异常</text></g>
+
+                <g class="mermaid-node mermaid-node--success"><rect x="90" y="1180" width="420" height="90" rx="14"/><text class="mermaid-node__title" x="300" y="1212" text-anchor="middle">after_response Middleware</text><text class="mermaid-node__detail" x="300" y="1239" text-anchor="middle">观察并记录同一个Response</text></g>
+                <g class="mermaid-node mermaid-node--error"><rect x="690" y="1180" width="420" height="90" rx="14"/><text class="mermaid-node__title" x="900" y="1212" text-anchor="middle">on_exception Middleware</text><text class="mermaid-node__detail" x="900" y="1239" text-anchor="middle">记录原始异常与诊断信息</text></g>
+
+                <g class="mermaid-node mermaid-node--success"><rect x="90" y="1320" width="420" height="80" rx="14"/><text class="mermaid-node__title" x="300" y="1352" text-anchor="middle">finally：group.finish()</text><text class="mermaid-node__detail" x="300" y="1378" text-anchor="middle">完成Request Group事实</text></g>
+                <g class="mermaid-node mermaid-node--error"><rect x="690" y="1320" width="420" height="80" rx="14"/><text class="mermaid-node__title" x="900" y="1352" text-anchor="middle">finally：group.finish()</text><text class="mermaid-node__detail" x="900" y="1378" text-anchor="middle">异常路径也必须完成Group</text></g>
+
+                <g class="mermaid-node mermaid-node--success"><rect x="90" y="1450" width="420" height="80" rx="14"/><text class="mermaid-node__title" x="300" y="1482" text-anchor="middle">operation.finish_response()</text><text class="mermaid-node__detail" x="300" y="1508" text-anchor="middle">记录Response终点</text></g>
+                <g class="mermaid-node mermaid-node--error"><rect x="690" y="1450" width="420" height="80" rx="14"/><text class="mermaid-node__title" x="900" y="1482" text-anchor="middle">operation.finish_error()</text><text class="mermaid-node__detail" x="900" y="1508" text-anchor="middle">记录原始异常终点</text></g>
+
+                <g class="mermaid-node mermaid-node--success"><rect x="90" y="1580" width="420" height="80" rx="40"/><text class="mermaid-node__title" x="300" y="1612" text-anchor="middle">Response返回上层</text><text class="mermaid-node__detail" x="300" y="1638" text-anchor="middle">Task → Test → Assertions</text></g>
+                <g class="mermaid-node mermaid-node--error"><rect x="690" y="1580" width="420" height="80" rx="40"/><text class="mermaid-node__title" x="900" y="1612" text-anchor="middle">原异常重新抛出</text><text class="mermaid-node__detail" x="900" y="1638" text-anchor="middle">不创建伪Response</text></g>
+              </svg>
+            </div>
+          </figure>
+          <div class="callout blue"><strong>读图规则</strong>沿中央实线读取主调用链；虚线只表示Operation事实和默认配置的侧向注入；到达“Session结果？”后，只选择绿色Response路径或红色传输异常路径中的一条。</div>
+        </section>
+
+        <section id="oral-recap" data-section>
+          <p class="section-kicker">12 · 完整复述</p>
+          <h2>不用看源码，用一段话讲清这次请求</h2>
+          <p class="section-lead">复述不是背函数名，而是检查你能否连续说明输入对象如何变化、每层拥有哪部分责任，以及成功和异常在哪里分叉。</p>
+          <div class="oral-recap">
+            <div class="oral-recap__order" aria-label="复述顺序"><span>业务输入</span><span>Task委托</span><span>Request协议翻译</span><span>BaseRequest编排</span><span>Context标准化</span><span>Group与Session</span><span>Response或异常</span></div>
+            <blockquote>测试先构造业务payload，并调用Task的<code>submit_echo()</code>。Task只表达“提交Echo”这个业务动作，把Request对象和payload交给模块Request；模块Request决定使用POST、相对路径<code>/v1/echo</code>、JSON body和Runtime元数据。随后<code>BaseRequest.request()</code>消费框架控制项与Runtime元数据，创建Operation，并在本用例中选择无Retry分支。<code>_build_request_context()</code>生成完整URL、默认timeout和合并后的Header，把一次attempt的传输参数冻结到RequestContext。Request Group绑定这个Context，<code>_send()</code>依次经过before Middleware、Session和after Middleware。Session返回Response后，Operation按Response收口并交给Assertions；如果Session直接抛异常，则走exception Middleware、Group finally和Operation错误收口，再原样抛出。</blockquote>
+            <div class="oral-recap__checks">
+              <div class="oral-recap__check"><strong>对象连续</strong>能从payload一直讲到Context、Response和运行事实，中间不跳层。</div>
+              <div class="oral-recap__check"><strong>所有权准确</strong>Task不拥有HTTP执行，Session不拥有Operation，Context只属于一次attempt。</div>
+              <div class="oral-recap__check"><strong>边界保守</strong>不把HTTP 503说成传输异常，也不把运行元数据说成服务端JSON字段。</div>
+            </div>
           </div>
-          <button class="primary-button" id="submit-quiz" type="button" style="margin-top:16px">提交自测</button>
-          <div class="quiz-summary" id="quiz-summary" aria-live="polite">尚未提交。</div>
+          <div class="note-grid" style="margin-top:16px">
+            <div class="note-field"><label for="note-oral-recap">用自己的语言复述，不复制上面的参考答案</label><textarea id="note-oral-recap" data-note="oral-recap" placeholder="建议控制在150～250字，必须包含输入、关键函数、对象变化、成功终点和异常终点"></textarea></div>
+          </div>
         </section>
 
         <section id="exit-gate" data-section>
-          <p class="section-kicker">11 · 本课门禁</p>
+          <p class="section-kicker">13 · 本课门禁</p>
           <h2>能跟踪请求事实，再进入Middleware</h2>
           <p class="section-lead">门禁要求你能从模块入口讲到成功或异常终点，而不把框架控制项误认为服务协议。</p>
           <div class="exit-list">
@@ -518,10 +910,11 @@
             <label class="exit-item"><input type="checkbox" data-gate="context"><span>我能写出RequestContext主要字段及构造时复制、超时和Header标准化过程。</span></label>
             <label class="exit-item"><input type="checkbox" data-gate="parameters"><span>我能区分模块业务输入、框架控制参数和requests传输参数，并指出各自终点。</span></label>
             <label class="exit-item"><input type="checkbox" data-gate="branches"><span>我能画出成功Response与传输异常在Session处的分叉及共同收尾。</span></label>
-<label class="exit-item"><input type="checkbox" data-gate="debug"><span>我已跟踪离线echo POST，并记录成功和传输异常生命周期差异。</span></label>
+<label class="exit-item"><input type="checkbox" data-gate="answers"><span>我能依据整理答案说明echo POST的成功链、异常链、Context快照和参数去向。</span></label>
+<label class="exit-item"><input type="checkbox" data-gate="recap"><span>我能不看源码，用自己的语言连续复述payload、关键函数、Context、Response与异常终点。</span></label>
 <label class="exit-item"><input type="checkbox" data-gate="record" data-gate-requires-record="gate-evidence"><span>已填写可复查的成果位置或口头讲解记录。</span></label>
 </div>
-<div class="note-grid"><div class="note-field"><label for="gate-evidence">成果位置或口头记录（必填）</label><textarea id="gate-evidence" data-record="gate-evidence" placeholder="记录八阶段请求图/字段归属表路径，或口头讲解时对attempt边界的追问与订正"></textarea></div></div>
+<div class="note-grid"><div class="note-field"><label for="gate-evidence">成果位置或口头记录（必填）</label><textarea id="gate-evidence" data-record="gate-evidence" placeholder="记录七阶段请求图/字段归属表路径，或口头讲解时对attempt边界的追问与订正"></textarea></div></div>
 <p data-record-status="gate-evidence" style="color:var(--amber);font-size:13px">尚未记录；仅勾选复选框不能通过门禁。</p>
           <div class="callout green"><strong>当日产出</strong>一张请求主线图、一个带真实字段值的RequestContext快照，以及成功Response/传输异常两条生命周期对照表。</div>
           <div class="lesson-footer"><div class="footer-links"><a class="outline-button" href="第05天-离线测试分层与分类用例.html">← 上一课</a><a class="outline-button" href="../接口测试框架六周学习课程.html">返回课程大纲</a><a class="outline-button" href="第07天-请求中间件脱敏与诊断日志.html">下一课：请求中间件、脱敏与诊断日志 →</a></div></div>
@@ -535,7 +928,7 @@
       const storagePrefix = "api-case-course-v2-day06-";
 
       const contextDetails = {
-        identity: { title: "身份字段：method / path / url / protocol", body: "method被标准化为大写；path保留模块传入的业务路径；url是与Settings.base_url组合后的完整地址；protocol区分http与sse。", input: "POST + /v1/echo", output: "POST / loopback完整URL / http", consumer: "Request Group、Middleware、Session与Runtime Hooks" },
+        identity: { title: "身份字段：method / path / url / protocol", body: "method被标准化为大写；path保留模块传入的业务路径；url是与Settings.base_url组合后的完整地址；protocol区分http与sse。", input: "POST + /v1/echo", output: "POST / 完整URL / http", consumer: "Request Group、Middleware、Session与Runtime Hooks" },
         kwargs: { title: "传输字段：kwargs", body: "保存将传给requests.Session.request的标准参数，例如json、params、data、headers、timeout、stream。普通可变对象在构造时尽量深拷贝。", input: "json=payload, headers=..., timeout=...", output: "复制、补默认值、合并Header后的字典", consumer: "Middleware读取/记录，Session最终执行" },
         report: { title: "报告字段：attach_log与步骤名", body: "attach_log控制本attempt是否自动附加请求/响应；request_step_name与response_step_name提供报告步骤名称。", input: "默认接口请求 / 接口响应", output: "Logger使用的展示合同", consumer: "LoggingMiddleware与ApiCallLogger" },
         policy: { title: "策略字段：retry_policy / polling_policy", body: "Context携带当前attempt所处的策略背景，供观察和日志解释；策略对象不是服务端请求参数。", input: "可选RetryPolicy与PollingPolicy", output: "可观察的执行策略上下文", consumer: "Retry/Polling执行链和运行时观察" },
@@ -567,19 +960,15 @@
       for(const button of stepButtons)button.addEventListener("click",()=>{for(const item of stepButtons)item.classList.toggle("active",item===button);renderStep(Number(button.dataset.step));});
       renderStep(0);
 
-      for(const button of document.querySelectorAll(".copy-button"))button.addEventListener("click",async()=>{const text=button.parentElement.querySelector("pre").innerText;try{await navigator.clipboard.writeText(text);button.textContent="已复制";}catch(_){button.textContent="请手动复制";}setTimeout(()=>{button.textContent="复制";},1600);});
-
       const noteFields=[...document.querySelectorAll("[data-note]")];
-      for(const field of noteFields){const key=storagePrefix+"note:"+field.dataset.note;field.value=localStorage.getItem(key)||"";field.addEventListener("input",()=>{localStorage.setItem(key,field.value);const state=document.getElementById("save-state");state.textContent="已自动保存。";clearTimeout(field._saveTimer);field._saveTimer=setTimeout(()=>{state.textContent="调试记录保存在浏览器本地。";},1200);});}
-
-      document.getElementById("submit-quiz").addEventListener("click",()=>{const cards=[...document.querySelectorAll(".quiz-card")];let correct=0;for(const card of cards){const selected=card.querySelector("input:checked")?.value;const ok=selected===card.dataset.answer;card.classList.toggle("correct",ok);card.classList.toggle("wrong",!ok);if(ok)correct+=1;}const summary=document.getElementById("quiz-summary");summary.textContent=correct>=5?`${correct}/6：达标。请完成本课门禁。`:`${correct}/6：未达标。建议回看参数分流、Context解剖与两条生命周期。`;summary.style.background=correct>=5?"var(--green-soft)":"var(--amber-soft)";summary.style.color=correct>=5?"var(--green)":"var(--amber)";localStorage.setItem(storagePrefix+"quiz-score",String(correct));});
+      for(const field of noteFields){const key=storagePrefix+"note:"+field.dataset.note;field.value=localStorage.getItem(key)||"";field.addEventListener("input",()=>{localStorage.setItem(key,field.value);});}
 
       const gateChecks=[...document.querySelectorAll("[data-gate]")];
       function updateGateProgress(){const done=gateChecks.filter((item)=>item.checked).length;document.getElementById("gate-progress-text").textContent=`${done}/${gateChecks.length}`;document.getElementById("gate-progress-value").style.width=`${done/gateChecks.length*100}%`;}
       for(const check of gateChecks){const key=storagePrefix+"gate:"+check.dataset.gate;check.checked=localStorage.getItem(key)==="true";check.addEventListener("change",()=>{localStorage.setItem(key,String(check.checked));updateGateProgress();});}
       updateGateProgress();
 
-      document.getElementById("reset-button").addEventListener("click",()=>{if(!confirm("确认清除第6课的调试记录、门禁状态和自测分数？"))return;for(const key of Object.keys(localStorage)){if(key.startsWith(storagePrefix))localStorage.removeItem(key);}for(const field of noteFields)field.value="";for(const check of gateChecks)check.checked=false;for(const card of document.querySelectorAll(".quiz-card"))card.classList.remove("correct","wrong");document.getElementById("quiz-summary").textContent="尚未提交。";document.getElementById("quiz-summary").removeAttribute("style");updateGateProgress();});
+      document.getElementById("reset-button").addEventListener("click",()=>{if(!confirm("确认清除第6课的学习记录和门禁状态？"))return;for(const key of Object.keys(localStorage)){if(key.startsWith(storagePrefix))localStorage.removeItem(key);}for(const field of noteFields)field.value="";for(const check of gateChecks)check.checked=false;updateGateProgress();});
 
       const menuButton=document.getElementById("menu-button");
       menuButton.addEventListener("click",()=>{const open=document.body.classList.toggle("nav-open");menuButton.setAttribute("aria-expanded",String(open));});

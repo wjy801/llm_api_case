@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="接口测试框架源码架构与证据链六周课程第14天：稳定Runner入口、CLI参数边界、pytest参数分相与collect-only安全门">
   <title>第14天｜稳定入口与命令行参数</title>
+  <link rel="stylesheet" href="六周课程页.css">
   <style>
     :root{color-scheme:light;--ink:#172033;--muted:#5d6a7d;--line:#dbe4ef;--paper:#fff;--canvas:#f5f7fa;--blue:#2256d5;--blue2:#173e9d;--blue-soft:#eaf1ff;--indigo:#4f46a5;--indigo-soft:#eeedff;--green:#17784a;--green-soft:#e7f8ef;--amber:#985b0b;--amber-soft:#fff4dc;--red:#b4233e;--red-soft:#fff0f2;--cyan:#087a8f;--cyan-soft:#e5f8fb;--nav:290px;--shadow:0 18px 52px rgba(31,49,74,.1)}
     *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:28px}body{margin:0;background:var(--canvas);color:var(--ink);font:16px/1.75 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}button,input,select,textarea{font:inherit}a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}code{border-radius:5px;padding:.12em .38em;background:#edf2f8;color:#a52150;font:.9em/1.5 "Cascadia Code",Consolas,monospace}pre{margin:0;overflow:auto;border-radius:12px;padding:20px;background:#111827;color:#e7edf7;line-height:1.65}pre code{padding:0;background:transparent;color:inherit}h2{margin:0 0 14px;font-size:clamp(27px,3.4vw,38px);line-height:1.25;letter-spacing:-.025em}h3{margin:24px 0 9px;line-height:1.35}p{margin:9px 0}ul,ol{padding-left:1.45em}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid var(--line);padding:12px 13px;text-align:left;vertical-align:top}th{background:#f5f8fb;color:#34435a}
@@ -31,7 +32,7 @@
   <aside class="side" id="side-nav">
     <div class="mark"><small>接口测试框架源码架构与证据链六周课程</small><h2>第14天 · 参数权威边界</h2><p>第3周 / Runner、执行事实与报告</p></div>
     <nav class="nav-list" id="nav-list" aria-label="本课目录">
-      <a href="#goals"><span class="num">01</span><span>约束与学习目标</span></a><a href="#entry"><span class="num">02</span><span>稳定薄入口</span></a><a href="#flow"><span class="num">03</span><span>参数调用主线</span></a><a href="#boundary"><span class="num">04</span><span>框架/pytest边界</span></a><a href="#target"><span class="num">05</span><span>target优先级</span></a><a href="#partition"><span class="num">06</span><span>参数分相</span></a><a href="#selection"><span class="num">07</span><span>选择条件与计划</span></a><a href="#collect"><span class="num">08</span><span>collect-only安全门</span></a><a href="#design"><span class="num">D</span><span>设计选择与边界</span></a><a href="#lab"><span class="num">09</span><span>参数路由实验室</span></a><a href="#practice"><span class="num">10</span><span>离线实践</span></a><a href="#quiz"><span class="num">11</span><span>知识自测</span></a><a href="#gate"><span class="num">12</span><span>本课门禁</span></a>
+      <a href="#goals"><span class="num">01</span><span>约束与学习目标</span></a><a href="#code-first-walkthrough"><span class="num">C</span><span>代码先行</span></a><a href="#entry"><span class="num">02</span><span>稳定薄入口</span></a><a href="#flow"><span class="num">03</span><span>参数调用主线</span></a><a href="#boundary"><span class="num">04</span><span>框架/pytest边界</span></a><a href="#target"><span class="num">05</span><span>target优先级</span></a><a href="#partition"><span class="num">06</span><span>参数分相</span></a><a href="#selection"><span class="num">07</span><span>选择条件与计划</span></a><a href="#collect"><span class="num">08</span><span>collect-only安全门</span></a><a href="#design"><span class="num">D</span><span>设计选择与边界</span></a><a href="#lab"><span class="num">09</span><span>参数路由实验室</span></a><a href="#practice"><span class="num">10</span><span>离线实践</span></a><a href="#source-code"><span class="num">S</span><span>关键源码</span></a><a href="#lesson-flow-summary"><span class="num">F</span><span>课后流转总图</span></a><a href="#quiz"><span class="num">11</span><span>知识自测</span></a><a href="#gate"><span class="num">12</span><span>本课门禁</span></a>
     </nav>
     <div class="side-meter"><div class="meter-row"><span>门禁完成度</span><span id="gate-text">0/5</span></div><div class="meter-track"><div class="meter-value" id="gate-value"></div></div></div>
   </aside>
@@ -50,12 +51,190 @@
         <p class="lead">同一个 <code>-k polling</code> 如果收集时用一次、执行时又解释一次，最终执行集可能随插件、环境和文件变化而漂移。可靠 Runner 必须让选测只发生一次，然后只消费计划。</p>
         <div class="goals">
           <div class="goal"><b>1</b><div><h3>入口稳定</h3><p>外部只依赖少量公共符号，内部拆分不迫使 Jenkins 和用户改命令。</p></div></div>
-          <div class="goal"><b>2</b><div><h3>参数有主</h3><p>编排参数由 CLI 消费，pytest 参数透传后再按阶段分配。</p></div></div>
-          <div class="goal"><b>3</b><div><h3>选测唯一</h3><p>target、-k、-m、--ignore 共同进入同一次权威收集。</p></div></div>
+          <div class="goal"><b>2</b><div><h3>参数有主</h3><p>编排参数由 CLI 消费；未被positional target误吞的pytest参数再进入阶段分配。</p></div></div>
+          <div class="goal"><b>3</b><div><h3>选测唯一</h3><p>显式target与正确保留的-k、-m、--ignore共同进入同一次权威收集。</p></div></div>
           <div class="goal"><b>4</b><div><h3>预检无副作用</h3><p>collect-only 只形成并展示计划，不进入正式执行与质量生命周期。</p></div></div>
         </div>
         <div class="causal"><div class="causal-node"><b>参数被多层重复解释</b><small>CLI、Runner、pytest各猜一次</small></div><div class="arrow">→</div><div class="causal-node"><b>收集集与执行集漂移</b><small>条件或插件行为不一致</small></div><div class="arrow">→</div><div class="causal-node"><b>报告数量无法守恒</b><small>计划与事实对不上</small></div><div class="arrow">→</div><div class="causal-node"><b>结果不可审计</b><small>无法回答“为什么跑了它”</small></div></div>
         <div class="constraint"><strong>TOC 当前约束：</strong>不是 pytest 启动速度，而是“参数权威来源”不清。先固定根入口与参数所有者，再讨论第15天的权威收集和并串行集合守恒。</div>
+      </section>
+
+      <section id="code-first-walkthrough" data-section>
+        <p class="kicker">02 · Code-first walkthrough</p><h2>从一条安全命令编译出唯一参数计划</h2>
+        <p class="lead">先不背“框架参数、选择参数、执行参数”这些名词。直接运行一条collect-only命令，沿真实入口观察每层只消费自己拥有的意图，最后由Runner形成并打印不可变计划。</p>
+        <div class="guided-start">
+          <div class="guided-start__header"><h3>本节唯一主线：离线polling子集的安全预检</h3><p>命令显式给出target与<code>-k polling</code>，并用<code>--collect-only</code>确保只形成计划、不进入业务执行和产物生命周期。</p></div>
+          <div class="guided-command"><strong>先运行这个Runner入口</strong><code>python run_master.py module/offline_framework_example -k polling --collect-only -q</code></div>
+          <div class="guided-rule"><strong>TOC阅读规则</strong>当前瓶颈是参数权威来源不清。每到一层只问：它消费哪些参数、保留哪些参数、把结果交给谁；不要让CLI、Runner和pytest重复解释同一选择条件。</div>
+          <div class="guided-chain"><span>run_master.py</span><b>→</b><span>cli.main</span><b>→</b><span>parse_args</span><b>→</b><span>partition_pytest_args</span><b>→</b><span>runner.run / collect-only</span></div>
+        </div>
+
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">1</span><div><h3>根入口只转交argv和进程退出码</h3><p>稳定门牌不拥有参数语义，也不直接导入pytest执行细节。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source"><span class="guided-source__location">run_master.py · 连续源码第22至25行</span><pre><code>if __name__ == "__main__":
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    os.environ.setdefault("PYTHONUTF8", "1")
+    raise SystemExit(main(sys.argv[1:]))</code></pre></div>
+            <div class="guided-explanation"><h4>稳定入口的边界</h4><div class="guided-point"><strong>输入从哪里来</strong><p>操作系统提供<code>sys.argv[1:]</code>。</p></div><div class="guided-point"><strong>当前消费什么</strong><p>只设置UTF-8默认值，不识别target、<code>-k</code>或collect-only。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>argv交给公开<code>main()</code>，其整数结果交还进程。</p></div><div class="guided-point"><strong>谁负责收口</strong><p><code>SystemExit</code>负责进程退出；内部模块负责参数和执行语义。</p></div><div class="guided-point warning"><strong>易混点</strong><p>薄入口不是“多余包装”，它冻结外部调用合同和依赖方向。</p></div></div>
+          </div>
+        </article>
+
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">2</span><div><h3><code>cli.main()</code>只桥接解析结果到Runner</h3><p>命令行和Python公开调用最终进入同一个<code>runner.run()</code>。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source"><span class="guided-source__location">run_orchestration/cli.py::main · 连续源码第11至19行</span><pre><code>def main(argv: Sequence[str] | None = None) -&gt; int:
+    parsed_args, pytest_args = parse_args(argv or [])
+    return runner.run(
+        test_path=parsed_args.test_path,
+        extra_pytest_args=pytest_args,
+        numprocesses=parsed_args.numprocesses,
+        dist=parsed_args.dist,
+        serial_marker=parsed_args.serial_marker,
+    )</code></pre></div>
+            <div class="guided-explanation"><h4>桥接而不重解释</h4><div class="guided-point"><strong>输入从哪里来</strong><p>根入口传入完整argv。</p></div><div class="guided-point"><strong>当前消费什么</strong><p><code>main()</code>只消费<code>parse_args()</code>返回的结构化框架参数和pytest余量。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>命名参数进入<code>runner.run()</code>，返回值直接成为CLI退出码。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>Runner拥有计划与执行终点；CLI不捕获并改写其正常退出语义。</p></div><div class="guided-point warning"><strong>易混点</strong><p><code>main()</code>不应再解析<code>-k</code>或重新猜target，否则会出现第二权威。</p></div></div>
+          </div>
+        </article>
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">3</span><div><h3><code>parse_args()</code>只声明框架拥有的参数</h3><p><code>parse_known_args()</code>保留pytest及插件余量，target优先级在一个位置收口。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source"><span class="guided-source__location">run_orchestration/cli.py::parse_args · 连续源码第22至69行</span><pre><code>def parse_args(argv: Sequence[str]) -&gt; tuple[argparse.Namespace, list[str]]:
+    parser = argparse.ArgumentParser(description="API test framework runner")
+    parser.add_argument(
+        "target",
+        nargs="?",
+        help=f"Test collection path. Defaults to {DEFAULT_TEST_PATH}.",
+    )
+    parser.add_argument(
+        "--test-path",
+        dest="test_path",
+        help=f"Test collection path. Defaults to {DEFAULT_TEST_PATH}.",
+    )
+    parser.add_argument(
+        "-n",
+        "--numprocesses",
+        dest="numprocesses",
+        help="pytest-xdist worker count, for example auto, 2, 4.",
+    )
+    parser.add_argument(
+        "--dist",
+        dest="dist",
+        help=(
+            "pytest-xdist distribution strategy, for example load, "
+            "loadscope, worksteal."
+        ),
+    )
+    parser.add_argument(
+        "--serial-marker",
+        dest="serial_marker",
+        default=DEFAULT_SERIAL_MARKER,
+        help=(
+            "Marker name for cases that must run serially. "
+            f"Defaults to {DEFAULT_SERIAL_MARKER}."
+        ),
+    )
+    parser.add_argument(
+        "--parallel-first",
+        action="store_true",
+        help=(
+            "Compatibility flag. Passing -n already enables "
+            "parallel-first execution."
+        ),
+    )
+    parsed_args, pytest_args = parser.parse_known_args(list(argv))
+    parsed_args.test_path = (
+        parsed_args.test_path or parsed_args.target or DEFAULT_TEST_PATH
+    )
+    return parsed_args, pytest_args</code></pre></div>
+            <div class="guided-explanation"><h4>参数第一所有者</h4><div class="guided-point"><strong>输入从哪里来</strong><p>原始argv包含位置target、框架选项和pytest余量。</p></div><div class="guided-point"><strong>当前消费什么</strong><p>CLI只消费test_path、并发配置和serial marker等编排参数。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>框架参数进入Namespace；未知参数保持顺序进入<code>pytest_args</code>。</p></div><div class="guided-point"><strong>谁负责收口</strong><p><code>--test-path</code>、位置target和默认路径在此按优先级归一成唯一<code>test_path</code>。</p></div><div class="guided-point warning"><strong>失败与易混点</strong><p>已被positional target吞掉的值不会出现在pytest余量；所以CLI边界必须先被正确理解。</p></div></div>
+          </div>
+        </article>
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">4</span><div><h3><code>partition_pytest_args()</code>把选择意图与执行副作用分开</h3><p>选择条件只编译一次；产物与xdist参数不进入安全预检。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source"><span class="guided-source__location">run_orchestration/pytest_execution.py::partition_pytest_args · 连续源码第104至152行</span><pre><code>def partition_pytest_args(pytest_args: Sequence[str]) -&gt; PytestArgumentPlan:
+    collection_args: list[str] = []
+    execution_args: list[str] = []
+    selection_args: list[str] = []
+    collect_only = False
+    args = list(pytest_args)
+    index = 0
+    while index &lt; len(args):
+        arg = args[index]
+        if arg in COLLECT_ONLY_ARGS:
+            collect_only = True
+            index += 1
+            continue
+        if arg in _SELECTION_OPTIONS_WITH_VALUE:
+            if index + 1 &gt;= len(args):
+                raise ValueError(f"pytest selection option requires a value: {arg}")
+            pair = [arg, args[index + 1]]
+            collection_args.extend(pair)
+            selection_args.extend(pair)
+            index += 2
+            continue
+        if arg.startswith(_SELECTION_OPTION_PREFIXES):
+            collection_args.append(arg)
+            selection_args.append(arg)
+            index += 1
+            continue
+        if arg in _EXECUTION_OPTIONS_WITH_VALUE:
+            if index + 1 &gt;= len(args):
+                raise ValueError(f"pytest execution option requires a value: {arg}")
+            execution_args.extend([arg, args[index + 1]])
+            index += 2
+            continue
+        if arg.startswith(_EXECUTION_OPTION_PREFIXES) or arg in _EXECUTION_ONLY_FLAGS:
+            execution_args.append(arg)
+            index += 1
+            continue
+
+        collection_args.append(arg)
+        execution_args.append(arg)
+        index += 1
+
+    return PytestArgumentPlan(
+        collection_args=tuple(collection_args),
+        execution_args=tuple(execution_args),
+        selection_args=tuple(selection_args),
+        collect_only=collect_only,
+    )</code></pre></div>
+            <div class="guided-explanation"><h4>计划对象的四个事实</h4><div class="guided-point"><strong>输入从哪里来</strong><p><code>pytest_args</code>来自CLI保留的known-unknown余量。</p></div><div class="guided-point"><strong>当前消费什么</strong><p>函数按参数所有权识别collect-only、选择参数、执行参数和未知插件参数。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>三个不可变tuple与一个控制位写入<code>PytestArgumentPlan</code>。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>缺值选项在此返回ValueError；Runner把它转换为pytest usage exit code。</p></div><div class="guided-point warning"><strong>易混点</strong><p>未知参数两阶段共享是兼容策略，不代表Runner理解其语义；选择参数则必须只参与收集。</p></div></div>
+          </div>
+        </article>
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">5</span><div><h3><code>runner.run()</code>消费计划，并在执行生命周期前短路</h3><p>选择条件只交给权威收集；collect-only成功后只打印计划和分池数量。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source"><span class="guided-source__location">run_orchestration/runner.py::run · 有序教学选段：连续源码第26至38行与第66至79行；中间省略收集失败格式化与退出码写入</span><pre><code>try:
+    argument_plan = pytest_execution.partition_pytest_args(
+        extra_pytest_args or ()
+    )
+except ValueError as error:
+    print(f"Invalid pytest arguments: {error}", file=sys.stderr)
+    return pytest_execution.PYTEST_EXIT_USAGE_ERROR
+
+try:
+    collection = pytest_execution.collect_test_case_items(
+        test_path,
+        argument_plan.collection_args,
+    )</code></pre><pre><code>cases = collection.cases
+case_nodeids = tuple(case.nodeid for case in cases)
+print(f"Collected test cases: {len(cases)}")
+for nodeid in case_nodeids:
+    print(f"- {nodeid}")
+
+parallel_cases, serial_cases = scheduling.split_test_cases(
+    cases, serial_marker=serial_marker
+)
+if argument_plan.collect_only:
+    print(f"Parallel pool cases: {len(parallel_cases)}")
+    print(f"Serial pool cases: {len(serial_cases)}")
+    print(f"{len(cases)} tests collected")
+    return pytest_execution.PYTEST_EXIT_OK</code></pre></div>
+            <div class="guided-explanation"><h4>Runner的收口点</h4><div class="guided-point"><strong>输入从哪里来</strong><p>结构化test_path、pytest余量和编排参数由CLI传入。</p></div><div class="guided-point"><strong>当前消费什么</strong><p>先消费参数计划，再只用<code>collection_args</code>做一次权威收集。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>收集结果冻结为nodeid与marker计划，分池统计打印到标准输出。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>参数错误和收集错误映射为明确退出码；collect-only成功直接返回0。</p></div><div class="guided-point success"><strong>成功/失败/跳过</strong><p>收集失败不进入分池；collect-only跳过Allure、Quality和执行池；正式运行才继续消费execution_args。</p></div></div>
+          </div>
+        </article>
+        <div class="guided-conclusion"><h3>代码先行结论</h3><ol><li>根入口稳定，只交付argv与退出码。</li><li>CLI只消费框架编排参数，pytest余量保持顺序。</li><li>选择条件只在一次权威收集中生效，collect-only在所有执行副作用之前短路。</li></ol></div>
       </section>
 
       <section id="entry" data-section>
@@ -122,9 +301,9 @@ assert tuple(inspect.signature(run_master.run).parameters) == (
           <tr><td>--serial-marker</td><td>CLI + scheduling</td><td>决定哪种marker进入串行池。</td><td>分池算法，不发给pytest。</td></tr>
           <tr><td>--parallel-first</td><td>CLI</td><td>兼容标志；当前传入-n已启用并发优先。</td><td>不改变额外行为。</td></tr>
           <tr><td>-k / -m / --ignore</td><td>pytest collection</td><td>必须参与最终用例选择。</td><td>只进收集相。</td></tr>
-          <tr><td>-q / 插件未知参数</td><td>pytest</td><td>Runner不重写未知插件合同。</td><td>默认同时进入收集与执行相。</td></tr>
+          <tr><td>-q / 插件未知参数</td><td>pytest</td><td>CLI不重写未知插件合同。</td><td>通过CLI解析后，默认同时进入收集与执行相。</td></tr>
         </tbody></table></div>
-        <div class="callout warn"><strong>边界代价：</strong>框架未知的拼写错误也会透传给 pytest，最终由 pytest 返回 usage error。<code>parse_known_args()</code> 的目标是兼容 pytest 生态，不是静默接受错误。</div>
+        <div class="callout warn"><strong>边界代价：</strong>未知参数只有在未被可选positional target吸收时才会交给pytest；例如未显式给路径时，<code>-k smoke</code>中的<code>smoke</code>可能被解析为target。<code>parse_known_args()</code>提供兼容边界，但当前实现并非无条件透明透传。</div>
       </section>
 
       <section id="target" data-section>
@@ -150,7 +329,7 @@ assert tuple(inspect.signature(run_master.run).parameters) == (
           <tr><td>--junitxml / --alluredir / -n / --dist</td><td class="no">—</td><td class="yes">✓</td><td class="no">—</td><td>只影响执行和产物。</td></tr>
           <tr><td>--clean-alluredir</td><td class="no">—</td><td class="yes">✓</td><td class="no">—</td><td>预检不得清理产物。</td></tr>
           <tr><td>--collect-only / --co / --collectonly</td><td class="control">控制位</td><td class="no">—</td><td class="yes">collect_only=True</td><td>Runner短路，不进入执行池。</td></tr>
-          <tr><td>未知/插件参数，例如 -q</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">—</td><td>不重实现pytest完整parser。</td></tr>
+          <tr><td>未知/插件参数，例如 -q</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">—</td><td>不重实现pytest完整parser；前提是参数已通过CLI边界。</td></tr>
         </tbody></table></div>
         <div class="code-pair">
           <div><h3>输入</h3><pre><code>[
@@ -226,6 +405,181 @@ execution_args = (
         <div class="callout cyan"><strong>当前快照：</strong>完整离线计划为 23 项（23 parallel / 0 serial）；<code>-k polling</code> 后为 4 项（4 parallel / 0 serial）。数量用于发现意外丢失，长期合同仍是参数路由正确、计划唯一且集合自洽。</div>
         <h3>当日产出</h3>
         <div class="notes-grid"><label>参数转换图<textarea data-note="flow" placeholder="从argv开始，画出框架参数、pytest余量、collection_args、execution_args、nodeid计划。"></textarea></label><label>两次收集对比<textarea data-note="compare" placeholder="记录完整计划与-k polling计划的数量、nodeid范围和分池统计。"></textarea></label><label>安全边界<textarea data-note="safety" placeholder="解释为什么不带target的默认module在学习环境有风险，以及collect-only阻止了哪些副作用。"></textarea></label><label>所有者清单<textarea data-note="owners" placeholder="为target、-n、-k、--alluredir、未知插件参数分别写出第一所有者。"></textarea></label></div>
+      </section>
+
+      <div class="callout"><strong>复用入口：</strong><a href="第01天-项目边界与执行主线.html#source-card-D01-S1">返回 Day1 稳定根入口源码卡</a>；本课不重复复制 run_master.py。</div>
+
+<!-- SOURCE_CARDS:DAY14:START -->
+<section id="source-code" class="source-section" data-section aria-labelledby="source-code-title">
+<div class="source-section__header">
+<p class="source-section__kicker">Source Reading · Static Snapshot</p>
+<h2 id="source-code-title">关键源码</h2>
+<p>以下源码由当前工作区直接提取，经教学裁剪、真实行数统计和统一HTML转义后静态写入。本页共57行源码，浏览页面时不会读取仓库文件。</p>
+</div>
+<div class="source-card-list">
+<section class="source-card source-card--required source-card--expanded" id="source-card-D14-S1" data-default-open="true" data-source-lines="48">
+<div class="source-card__heading">
+<span class="source-importance">必读</span>
+<div><h3>CLI参数合同与positional target歧义</h3><p>run_orchestration/cli.py · 48行</p></div>
+</div>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D14-S1">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_run_orchestration_public_contract.py</code></span>
+<span><strong>测试函数</strong><code>test_root_entrypoint_reexports_the_public_orchestration_api</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_run_orchestration_public_contract.py::test_root_entrypoint_reexports_the_public_orchestration_api</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/cli.py::parse_args</code></span>
+<span><strong>真实行数</strong>48</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>哪些参数由Runner定义，未知pytest参数在什么条件下可能被target误吞？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制CLI参数合同与positional target歧义选段1" aria-describedby="source-copy-status-D14-S1-1" aria-controls="source-code-D14-S1-1" data-source-target="source-code-D14-S1-1" data-source-status="source-copy-status-D14-S1-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D14-S1-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D14-S1-1" tabindex="0" aria-label="CLI参数合同与positional target歧义，源码第22至69行，选段1"><code class="language-python" data-source-card="D14-S1" data-segment-index="1">def parse_args(argv: Sequence[str]) -&gt; tuple[argparse.Namespace, list[str]]:
+    parser = argparse.ArgumentParser(description="API test framework runner")
+    parser.add_argument(
+        "target",
+        nargs="?",
+        help=f"Test collection path. Defaults to {DEFAULT_TEST_PATH}.",
+    )
+    parser.add_argument(
+        "--test-path",
+        dest="test_path",
+        help=f"Test collection path. Defaults to {DEFAULT_TEST_PATH}.",
+    )
+    parser.add_argument(
+        "-n",
+        "--numprocesses",
+        dest="numprocesses",
+        help="pytest-xdist worker count, for example auto, 2, 4.",
+    )
+    parser.add_argument(
+        "--dist",
+        dest="dist",
+        help=(
+            "pytest-xdist distribution strategy, for example load, "
+            "loadscope, worksteal."
+        ),
+    )
+    parser.add_argument(
+        "--serial-marker",
+        dest="serial_marker",
+        default=DEFAULT_SERIAL_MARKER,
+        help=(
+            "Marker name for cases that must run serially. "
+            f"Defaults to {DEFAULT_SERIAL_MARKER}."
+        ),
+    )
+    parser.add_argument(
+        "--parallel-first",
+        action="store_true",
+        help=(
+            "Compatibility flag. Passing -n already enables "
+            "parallel-first execution."
+        ),
+    )
+    parsed_args, pytest_args = parser.parse_known_args(list(argv))
+    parsed_args.test_path = (
+        parsed_args.test_path or parsed_args.target or DEFAULT_TEST_PATH
+    )
+    return parsed_args, pytest_args</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D14-S1" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：CLI显式拥有路径、并行和串行标记参数，但未知pytest参数并非总能原样透传。机制：parse_known_args分离已知与未知；未显式给路径时，可选位置target可能把如-k后的smoke当作测试路径。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>定义可选target与Runner参数，parse_known_args拆分已知/未知参数，再按test_path、target、默认路径确定目标。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>返回Runner Namespace和剩余pytest参数，不启动收集或执行。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>CLI只显式定义Runner参数；可选positional target与未知pytest参数值存在解析歧义。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不能宣称任意未知pytest参数都会原样透传；例如未显式给路径时，-k smoke中的smoke可能成为target。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</section>
+<details class="source-card source-card--required" id="source-card-D14-S2" data-default-open="false" data-source-lines="9">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>main只桥接解析结果到Runner</strong><small>run_orchestration/cli.py · 9行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D14-S2">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_run_orchestration_public_contract.py</code></span>
+<span><strong>测试函数</strong><code>test_root_entrypoint_reexports_the_public_orchestration_api</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_run_orchestration_public_contract.py::test_root_entrypoint_reexports_the_public_orchestration_api</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/cli.py::main</code></span>
+<span><strong>真实行数</strong>9</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>哪些字段进入runner.run，哪个兼容标志没有继续传递？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制main只桥接解析结果到Runner选段1" aria-describedby="source-copy-status-D14-S2-1" aria-controls="source-code-D14-S2-1" data-source-target="source-code-D14-S2-1" data-source-status="source-copy-status-D14-S2-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D14-S2-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D14-S2-1" tabindex="0" aria-label="main只桥接解析结果到Runner，源码第11至19行，选段1"><code class="language-python" data-source-card="D14-S2" data-segment-index="1">def main(argv: Sequence[str] | None = None) -&gt; int:
+    parsed_args, pytest_args = parse_args(argv or [])
+    return runner.run(
+        test_path=parsed_args.test_path,
+        extra_pytest_args=pytest_args,
+        numprocesses=parsed_args.numprocesses,
+        dist=parsed_args.dist,
+        serial_marker=parsed_args.serial_marker,
+    )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D14-S2" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：main只是解析结果到runner.run的桥接层，parallel_first虽被解析却未继续传递。机制：它传入test_path、未知pytest参数、numprocesses、dist和serial_marker，并直接返回Runner退出码。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>调用parse_args，再把路径、pytest参数、并行参数和serial marker传给runner.run。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>触发Runner并返回退出码。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>main是CLI到Runner的参数桥接层，parallel_first虽被解析但未传入runner.run。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>桥接完成不等于pytest已经收集或执行；根入口测试也不证明参数路由正确。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_run_orchestration_public_contract.py::test_root_entrypoint_reexports_the_public_orchestration_api</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li><code>run_master.py</code></li>
+</ul></div>
+</div>
+</details>
+</div>
+</section>
+<!-- SOURCE_CARDS:DAY14:END -->
+
+      <section id="lesson-flow-summary" data-section>
+        <p class="kicker">Flow summary · Intent compilation</p><h2>课后流转总图：用户argv如何成为唯一可审计计划</h2>
+        <figure class="lesson-flow-map">
+          <figcaption class="flow-map-caption">函数链负责逐层翻译，数据链负责保持参数所有权、选择条件和退出语义不漂移。</figcaption>
+          <div class="flow-map-legend"><span class="flow-legend-chip function">函数与职责</span><span class="flow-legend-chip data">参数与计划</span><span class="flow-legend-chip branch">错误与短路</span></div>
+          <div class="flow-map-inputs"><div class="flow-input"><strong>位置输入</strong><span>module/offline_framework_example</span></div><div class="flow-input"><strong>选择输入</strong><span>-k polling</span></div><div class="flow-input"><strong>控制输入</strong><span>--collect-only -q</span></div></div>
+          <div class="flow-map-entry" aria-hidden="true">↓</div>
+          <div class="flow-map-spine">
+            <article class="flow-stage"><div class="flow-stage__index">1</div><div class="flow-stage__function"><h3><code>run_master.py</code></h3><p>把<code>sys.argv[1:]</code>交给公开<code>main()</code>，把整数结果交还进程。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>原始argv保持原样</h3><p>入口不拥有参数语义，因此不产生第二套解析结果。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">2</div><div class="flow-stage__function"><h3><code>cli.main()</code></h3><p>调用<code>parse_args()</code>，再把两类结果桥接到<code>runner.run()</code>。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>框架参数 / pytest余量</h3><p>两类数据在CLI边界分开，但顺序与原值仍可追溯。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">3</div><div class="flow-stage__function"><h3><code>parse_args()</code></h3><p>消费target、test-path、并发配置和serial marker，保留known-unknown余量。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>唯一test_path</h3><p><code>--test-path</code>优先，其次位置target，最后默认路径；其余pytest参数继续下传。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">4</div><div class="flow-stage__function"><h3><code>partition_pytest_args()</code></h3><p>生成collection、execution、selection三个参数tuple和collect-only控制位。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>不可变参数计划</h3><div class="flow-branch"><div class="flow-branch__path"><strong>选择参数</strong>只进入收集，最终编译为nodeid。</div><div class="flow-branch__path"><strong>执行参数</strong>只在正式运行影响产物与并发。</div></div></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">5</div><div class="flow-stage__function"><h3><code>runner.run()</code></h3><p>用collection_args做一次权威收集，打印计划并根据控制位选择终点。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>退出码与副作用边界</h3><div class="flow-branch"><div class="flow-branch__path"><strong>collect-only</strong>分池后返回0，不创建Allure/Quality、不执行测试。</div><div class="flow-branch__path"><strong>错误/正式运行</strong>错误保留对应退出码；正式运行只消费已计划nodeid与execution_args。</div></div></div></article>
+          </div>
+          <div class="flow-fact-footer"><strong>守恒事实</strong><p>同一选择条件只解释一次；收集计划拥有最终nodeid；后续阶段只能消费计划，不能重新选测。</p></div>
+        </figure>
       </section>
 
       <section id="quiz" data-section>

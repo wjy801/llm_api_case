@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="接口测试框架源码架构与证据链六周课程第4天：测试生命周期、断言与报告步骤">
   <title>第04天｜测试生命周期、断言与报告步骤</title>
+  <link rel="stylesheet" href="六周课程页.css">
   <style>
     :root {
       color-scheme: light;
@@ -276,6 +277,7 @@
       <div class="course-mark"><small>接口测试框架源码架构与证据链六周课程 · 第1周</small><h2>第04天</h2><p>测试生命周期、断言与报告步骤</p></div>
       <nav class="nav-list" id="nav-list">
         <a href="#learning-goals"><span class="nav-number">01</span><span>目标与核心约束</span></a>
+        <a href="#code-first-walkthrough"><span class="nav-number">C</span><span>代码先行精讲</span></a>
         <a href="#lifecycle"><span class="nav-number">02</span><span>pytest生命周期</span></a>
         <a href="#fixture-ownership"><span class="nav-number">03</span><span>fixture资源所有权</span></a>
         <a href="#aaa-flow"><span class="nav-number">04</span><span>四阶段用例主线</span></a>
@@ -285,6 +287,8 @@
         <a href="#offline-lab"><span class="nav-number">08</span><span>离线实践</span></a>
         <a href="#constraint-exercise"><span class="nav-number">09</span><span>所有权练习</span></a>
         <a href="#design-boundary"><span class="nav-number">D</span><span>设计选择与边界</span></a>
+        <a href="#source-code"><span class="nav-number">S</span><span>关键源码</span></a>
+        <a href="#lesson-flow-summary"><span class="nav-number">F</span><span>课后流转总图</span></a>
         <a href="#knowledge-check"><span class="nav-number">10</span><span>知识自测</span></a>
         <a href="#exit-gate"><span class="nav-number">11</span><span>本课门禁</span></a>
       </nav>
@@ -322,6 +326,92 @@
             <div class="constraint-node">创建者不明确</div><div class="constraint-node">关闭责任漂移</div><div class="constraint-node">Session或线程泄漏</div><div class="constraint-node">后续用例被污染</div><div class="constraint-node">失败无法复现</div>
           </div>
           <div class="callout blue"><strong>第一性原理</strong>任何有外部状态或关闭动作的对象，都必须拥有唯一、可验证、即使断言失败仍会执行的收尾路径。</div>
+        </section>
+
+        <section id="code-first-walkthrough" data-section>
+          <p class="section-kicker">代码先行 · 生命周期与断言证据</p>
+          <h2>先看一条测试如何执行和失败，再解释fixture与Allure</h2>
+          <p class="section-lead">本节使用可运行用例作为载体，但不讲离线服务怎样创建，也不展开第8天的Capture实现。只观察测试对象准备、业务Act、领域断言、通用Schema断言和Allure步骤包装。</p>
+          <div class="guided-start">
+            <div class="guided-start__header"><h3>本节主线：setup → Act → 分层Assert → 报告步骤</h3><p>测试是否通过由断言决定；Allure只记录执行过程。fixture拥有自己创建的资源，测试函数只使用资源，不接管其清理责任。</p></div>
+            <div class="guided-command"><strong>先运行这个用例</strong><code>python -m pytest -q module/offline_framework_example/test_capture_assertions.py::TestCaptureAndAssertions::test_output_capture_and_contract_assertions</code></div>
+            <div class="guided-rule"><strong>定位信息</strong>用例文件：<code>module/offline_framework_example/test_capture_assertions.py</code>；类方法：<code>TestCaptureAndAssertions.test_output_capture_and_contract_assertions</code>；本课选段主动跳过离线基础设施创建与Capture结果核对。</div>
+            <div class="guided-chain" aria-label="第4天代码阅读顺序"><span>setup_method</span><b>→</b><span>测试Act</span><b>→</b><span>领域断言</span><b>→</b><span>Schema断言</span><b>→</b><span>Allure步骤</span><b>→</b><span>fixture收口</span></div>
+          </div>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">1</span><div><h3><code>setup_method()</code>只准备无外部资源的协作者</h3><p>每条测试前重新创建Assertions与Task，避免测试间共享可变状态。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">module/offline_framework_example/test_capture_assertions.py::TestCaptureAndAssertions.setup_method</span><pre><code>def setup_method(self) -&gt; None:
+        self.assertions = OfflineFrameworkAssertions()
+        self.task = OfflineFrameworkTask()</code></pre></div><div class="guided-explanation"><h4>setup不是万能资源容器</h4><div class="guided-point"><strong>创建内容</strong><p>只创建轻量Task和Assertions对象。</p></div><div class="guided-point"><strong>生命周期</strong><p>pytest在每个测试方法前调用它，因此对象属于当前测试实例。</p></div><div class="guided-point warning"><strong>不负责</strong><p>具有关闭动作的服务、请求客户端和目录由fixture参数提供，不能把它们的清理责任转给这里。</p></div></div></div>
+          </article>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">2</span><div><h3>测试方法把Act与四层断言排成主线</h3><p>以下是同一测试函数中的连续选段；前面的fixture构造和后面的文件捕获检查未展示。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">module/offline_framework_example/test_capture_assertions.py::TestCaptureAndAssertions.test_output_capture_and_contract_assertions · 连续选段</span><pre><code>        response = self.task.create_and_poll_media_generation(
+            request,
+            payload,
+            poll_interval=0.01,
+            poll_timeout=1,
+            polling_policy=OFFLINE_POLLING_POLICY,
+        )
+
+        assert self.assertions.assert_status_code(response, 200) is response
+        assert self.assertions.assert_task_id(response, OFFLINE_TASK_ID) is response
+        assert self.assertions.assert_task_status(response, "succeeded") is response
+        assert (
+            self.assertions.assert_schema(
+                response,
+                OFFLINE_POLLING_SUCCESS_SCHEMA,
+            )
+            is response
+        )</code></pre></div><div class="guided-explanation"><h4>为什么断言要分层</h4><div class="guided-point success"><strong>Act只有一次</strong><p>组合动作返回最终Response，测试不重复执行请求。</p></div><div class="guided-point"><strong>从粗到细</strong><p>先检查HTTP状态，再检查任务ID、业务状态，最后验证整个JSON Schema。</p></div><div class="guided-point"><strong><code>is response</code></strong><p>每个断言成功后都应返回原Response，既证明无替换，也支持继续检查。</p></div></div></div>
+          </article>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">3</span><div><h3>模块断言把JSONPath变成领域语言</h3><p>测试写“任务应成功”，而不是重复写字段路径。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">module/offline_framework_example/assertions.py::OfflineFrameworkAssertions.assert_task_status</span><pre><code>def assert_task_status(
+        self,
+        response: requests.Response,
+        expected: str,
+    ) -&gt; requests.Response:
+        self.assert_json_value(response, "$.status", expected)
+        return response</code></pre></div><div class="guided-explanation"><h4>领域断言的最小价值</h4><div class="guided-point"><strong>稳定名称</strong><p><code>assert_task_status</code>表达业务意图。</p></div><div class="guided-point"><strong>集中路径</strong><p><code>$.status</code>由模块断言拥有，接口字段变化时无需散改所有测试。</p></div><div class="guided-point success"><strong>复用通用能力</strong><p>具体值比较仍委托<code>BaseAssertions.assert_json_value()</code>。</p></div></div></div>
+          </article>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">4</span><div><h3><code>assert_schema()</code>选择最精确的首个结构错误</h3><p>它先保证响应与Schema本身可解析，再执行领域结构校验。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">common/base_assertions.py::BaseAssertions.assert_schema</span><pre><code>def assert_schema(self, response: requests.Response, schema: Mapping[str, Any]) -&gt; requests.Response:
+        try:
+            body = response.json()
+        except ValueError as exc:
+            redacted_body = _redact_response_text(response)
+            raise AssertionError(f"Response body is not valid JSON. Response body: {redacted_body}") from exc
+
+        try:
+            validator_cls = validator_for(schema) if "$schema" in schema else Draft202012Validator
+            validator_cls.check_schema(schema)
+        except SchemaError as exc:
+            raise AssertionError(f"Invalid JSON Schema: {exc.message}") from exc
+
+        validator = validator_cls(schema)
+        errors = sorted(validator.iter_errors(body), key=_validation_error_sort_key)
+        if errors:
+            raise AssertionError(_format_schema_error(errors[0], response))
+
+        return response</code></pre></div><div class="guided-explanation"><h4>失败被分成三类</h4><div class="guided-point warning"><strong>响应不是JSON</strong><p>立即抛出带脱敏响应正文的AssertionError。</p></div><div class="guided-point warning"><strong>Schema自身非法</strong><p>这属于测试合同错误，不应伪装成接口返回错误。</p></div><div class="guided-point success"><strong>结构不匹配</strong><p>排序后报告第一个最稳定的验证错误，成功则返回原Response。</p></div></div></div>
+          </article>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">5</span><div><h3><code>allure_step()</code>包裹执行但不改变结果</h3><p>报告步骤属于描述层；原函数返回值和异常继续向外传播。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">common/base_decorators.py::BaseDecorators.allure_step</span><pre><code>def allure_step(self, title: str | None = None) -&gt; Callable[[AnyCallable], AnyCallable]:
+        def decorator(func: AnyCallable) -&gt; AnyCallable:
+            @wraps(func)
+            def wrapper(*args: Any, **kwargs: Any) -&gt; Any:
+                step_title = self._build_step_title(func, title, args, kwargs)
+                with allure.step(step_title):
+                    return func(*args, **kwargs)
+
+            return wrapper
+
+        return decorator</code></pre></div><div class="guided-explanation"><h4>报告与判定不能混同</h4><div class="guided-point"><strong>调用时生成标题</strong><p>标题可结合当前实参，而不是装饰阶段固定死。</p></div><div class="guided-point"><strong>原函数仍执行</strong><p>返回值直接透出；断言失败也不会被装饰器吞掉。</p></div><div class="guided-point warning"><strong>证据边界</strong><p>Allure步骤帮助定位发生了什么，但pytest结果和断言才决定通过或失败。</p></div></div></div>
+          </article>
+          <div class="guided-conclusion"><h3>概念复盘顺序</h3><p>先用代码确认“谁创建、谁调用、谁断言、谁记录”，再阅读后续pytest生命周期和资源所有权章节。这样不会把fixture、断言与报告误当成同一种机制。</p></div>
         </section>
 
         <section id="lifecycle" data-section>
@@ -532,7 +622,473 @@ assertions.assert_schema(response, success_schema)</code></pre>
           </div>
         </section>
 
-        <section id="knowledge-check" data-section>
+<!-- SOURCE_CARDS:DAY4:START -->
+<section id="source-code" class="source-section" data-section aria-labelledby="source-code-title">
+<div class="source-section__header">
+<p class="source-section__kicker">Source Reading · Static Snapshot</p>
+<h2 id="source-code-title">关键源码</h2>
+<p>以下源码由当前工作区直接提取，经教学裁剪、真实行数统计和统一HTML转义后静态写入。本页共98行源码，浏览页面时不会读取仓库文件。</p>
+</div>
+<div class="source-card-list">
+<section class="source-card source-card--required source-card--expanded" id="source-card-D04-S1" data-default-open="true" data-source-lines="11">
+<div class="source-card__heading">
+<span class="source-importance">必读</span>
+<div><h3>Allure步骤包装执行过程</h3><p>common/base_decorators.py · 11行</p></div>
+</div>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D04-S1">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>module/offline_framework_example/test_capture_assertions.py</code></span>
+<span><strong>类方法</strong><code>TestCaptureAndAssertions.test_output_capture_and_contract_assertions</code></span>
+<span><strong>pytest nodeid</strong><code>module/offline_framework_example/test_capture_assertions.py::TestCaptureAndAssertions::test_output_capture_and_contract_assertions</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>common/base_decorators.py::BaseDecorators.allure_step</code></span>
+<span><strong>真实行数</strong>11</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>步骤标题何时生成，原函数在哪个上下文中执行？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Allure步骤包装执行过程选段1" aria-describedby="source-copy-status-D04-S1-1" aria-controls="source-code-D04-S1-1" data-source-target="source-code-D04-S1-1" data-source-status="source-copy-status-D04-S1-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D04-S1-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D04-S1-1" tabindex="0" aria-label="Allure步骤包装执行过程，源码第38至48行，选段1"><code class="language-python" data-source-card="D04-S1" data-segment-index="1">    def allure_step(self, title: str | None = None) -&gt; Callable[[AnyCallable], AnyCallable]:
+        def decorator(func: AnyCallable) -&gt; AnyCallable:
+            @wraps(func)
+            def wrapper(*args: Any, **kwargs: Any) -&gt; Any:
+                step_title = self._build_step_title(func, title, args, kwargs)
+                with allure.step(step_title):
+                    return func(*args, **kwargs)
+
+            return wrapper
+
+        return decorator</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D04-S1" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>步骤标题在包装函数每次被调用时才由 _build_step_title 根据函数、显式标题和实参生成，不是在装饰阶段固定。原函数随后运行于 with allure.step(step_title) 上下文内，其返回值直接透出。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>装饰时返回wrapper；调用时构建标题，进入allure.step并执行原函数。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>增加报告步骤上下文，但原函数返回值与异常继续传播。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Allure步骤是执行过程描述层。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不替代pytest结果、资源清理或机器退出码。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</section>
+<details class="source-card source-card--required" id="source-card-D04-S2" data-default-open="false" data-source-lines="11">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>模块断言组合领域合同</strong><small>module/offline_framework_example/assertions.py · 11行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D04-S2">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>module/offline_framework_example/test_capture_assertions.py</code></span>
+<span><strong>类方法</strong><code>TestCaptureAndAssertions.test_output_capture_and_contract_assertions</code></span>
+<span><strong>pytest nodeid</strong><code>module/offline_framework_example/test_capture_assertions.py::TestCaptureAndAssertions::test_output_capture_and_contract_assertions</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>module/offline_framework_example/assertions.py::OfflineFrameworkAssertions.assert_echo_accepted</code></span>
+<span><strong>真实行数</strong>11</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>模块断言如何复用基础断言并保持链式返回？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制模块断言组合领域合同选段1" aria-describedby="source-copy-status-D04-S2-1" aria-controls="source-code-D04-S2-1" data-source-target="source-code-D04-S2-1" data-source-status="source-copy-status-D04-S2-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D04-S2-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D04-S2-1" tabindex="0" aria-label="模块断言组合领域合同，源码第13至23行，选段1"><code class="language-python" data-source-card="D04-S2" data-segment-index="1">    @allure_step("校验离线Echo响应")
+    def assert_echo_accepted(
+        self,
+        response: requests.Response,
+        expected_payload: dict[str, Any],
+    ) -&gt; requests.Response:
+        self.assert_status_code(response, 200)
+        self.assert_json_value(response, "$.status", "accepted")
+        self.assert_json_value(response, "$.authorization_present", True)
+        self.assert_json_value(response, "$.received", expected_payload)
+        return response</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D04-S2" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>模块断言继承并调用基础层的 assert_status_code 与 assert_json_value，依次检查 200、accepted、授权存在和回显载荷。它不改写响应，所有基础断言通过后返回同一个 response，保持链式使用。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>调用状态码和JSONPath基础断言，最后返回原Response。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>失败时在调用位置抛出断言异常；由测试函数调用时，pytest会记录为call阶段失败。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>领域断言可集中复用并由Allure装饰器描述步骤。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不证明报告附件或teardown已执行。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--support" id="source-card-D04-S3" data-default-open="false" data-source-lines="19">
+<summary class="source-card__summary">
+<span class="source-importance">支撑</span>
+<span><strong>基础JSONPath断言保留诊断信息</strong><small>common/base_assertions.py · 19行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D04-S3">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>module/offline_framework_example/test_capture_assertions.py</code></span>
+<span><strong>类方法</strong><code>TestCaptureAndAssertions.test_output_capture_and_contract_assertions</code></span>
+<span><strong>pytest nodeid</strong><code>module/offline_framework_example/test_capture_assertions.py::TestCaptureAndAssertions::test_output_capture_and_contract_assertions</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>common/base_assertions.py::BaseAssertions.assert_json_value</code></span>
+<span><strong>真实行数</strong>19</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>非法JSON、无匹配和数值不等分别如何失败？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制基础JSONPath断言保留诊断信息选段1" aria-describedby="source-copy-status-D04-S3-1" aria-controls="source-code-D04-S3-1" data-source-target="source-code-D04-S3-1" data-source-status="source-copy-status-D04-S3-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D04-S3-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D04-S3-1" tabindex="0" aria-label="基础JSONPath断言保留诊断信息，源码第25至43行，选段1"><code class="language-python" data-source-card="D04-S3" data-segment-index="1">    def assert_json_value(
+        self,
+        response: requests.Response,
+        json_path: str,
+        expected: Any,
+    ) -&gt; requests.Response:
+        assert json_path.startswith("$"), f"JSONPath 表达式必须以 '$' 开头，当前值：{json_path!r}"
+
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise AssertionError(f"响应内容不是合法 JSON。响应内容：{response.text}") from exc
+
+        matches = [match.value for match in parse(json_path).find(body)]
+        assert matches, f"JSONPath {json_path!r} 未匹配到任何值。响应内容：{response.text}"
+
+        actual = matches[0] if len(matches) == 1 else matches
+        assert actual == expected, f"JSONPath 断言失败：路径 {json_path!r}，期望 {expected!r}，实际 {actual!r}"
+        return response</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D04-S3" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>响应解析抛出 ValueError 时会改为带原响应文本的 AssertionError；JSONPath 无匹配时由非空断言失败；有匹配后，单值取首项、多值保留列表，与 expected 不等时报告路径、期望值和实际值。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>校验表达式，解析JSON，查找匹配，归一单值/多值并比较期望。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>只读取响应；不同失败点给出不同AssertionError信息。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>断言失败事实由函数调用产生，而不是由报告页面渲染产生。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不证明所有JSONPath边界都被当前测试覆盖。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--support" id="source-card-D04-S4" data-default-open="false" data-source-lines="11">
+<summary class="source-card__summary">
+<span class="source-importance">支撑</span>
+<span><strong>setup阶段启动资源收集</strong><small>module/conftest.py · 11行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D04-S4">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>module/offline_framework_example/test_capture_assertions.py</code></span>
+<span><strong>类方法</strong><code>TestCaptureAndAssertions.test_output_capture_and_contract_assertions</code></span>
+<span><strong>pytest nodeid</strong><code>module/offline_framework_example/test_capture_assertions.py::TestCaptureAndAssertions::test_output_capture_and_contract_assertions</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>module/conftest.py::collect_test_resources</code></span>
+<span><strong>真实行数</strong>11</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>资源收集token存放在哪里，fixture何时让出控制权？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制setup阶段启动资源收集选段1" aria-describedby="source-copy-status-D04-S4-1" aria-controls="source-code-D04-S4-1" data-source-target="source-code-D04-S4-1" data-source-status="source-copy-status-D04-S4-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D04-S4-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D04-S4-1" tabindex="0" aria-label="setup阶段启动资源收集，源码第55至65行，选段1"><code class="language-python" data-source-card="D04-S4" data-segment-index="1">@pytest.fixture(scope="function", autouse=True)
+def collect_test_resources(request: pytest.FixtureRequest):
+    setattr(
+        request.node,
+        TEST_RESOURCE_STATE_ATTR,
+        {
+            "media_download_token": start_media_download_collection(),
+            "model_result_token": start_model_result_collection(),
+        },
+    )
+    yield</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D04-S4" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>fixture 在测试节点 request.node 的 _api_case_resource_state 属性中保存媒体下载 token 和模型结果 token。两个收集器都启动并写入状态后才执行 yield，把控制权交给测试及其后续 fixture 生命周期。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>autouse fixture把两个收集token写入request.node，然后yield进入测试。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>启动媒体下载和模型结果收集。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>资源收集由function级fixture在call前建立。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>仅凭此卡不能证明token被停止或附件已生成。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--support" id="source-card-D04-S5" data-default-open="false" data-source-lines="5">
+<summary class="source-card__summary">
+<span class="source-importance">支撑</span>
+<span><strong>teardown hook触发附件收口</strong><small>module/conftest.py · 5行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D04-S5">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>module/offline_framework_example/test_capture_assertions.py</code></span>
+<span><strong>类方法</strong><code>TestCaptureAndAssertions.test_output_capture_and_contract_assertions</code></span>
+<span><strong>pytest nodeid</strong><code>module/offline_framework_example/test_capture_assertions.py::TestCaptureAndAssertions::test_output_capture_and_contract_assertions</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>module/conftest.py::pytest_runtest_teardown</code></span>
+<span><strong>真实行数</strong>5</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>hookwrapper为什么先yield再附加资源？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制teardown hook触发附件收口选段1" aria-describedby="source-copy-status-D04-S5-1" aria-controls="source-code-D04-S5-1" data-source-target="source-code-D04-S5-1" data-source-status="source-copy-status-D04-S5-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D04-S5-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D04-S5-1" tabindex="0" aria-label="teardown hook触发附件收口，源码第68至72行，选段1"><code class="language-python" data-source-card="D04-S5" data-segment-index="1">@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_teardown(item: pytest.Item):
+    outcome = yield
+    _attach_collected_test_resources(item)
+    outcome.get_result()</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D04-S5" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>hookwrapper先yield，让其他teardown逻辑完成并产生待收集资源；恢复后再调用附件函数。只有附件函数成功返回时，outcome.get_result()才会继续传播原teardown结果或异常；若附件函数自身抛错，get_result()不会执行，原异常仍可能被遮蔽。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>让pytest先执行teardown链，再调用附件所有者，最后传播hook结果。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>触发已收集资源的停止与附件流程。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>附件收口属于teardown，而不是测试call。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不展开具体token如何停止和文件如何附加，也不保证附件函数失败时原teardown异常仍能保留。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li><code>module/conftest.py::_attach_collected_test_resources</code></li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--required" id="source-card-D04-S6" data-default-open="false" data-source-lines="16">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>附件所有者停止收集并写入Allure</strong><small>module/conftest.py · 16行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D04-S6">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>module/offline_framework_example/test_capture_assertions.py</code></span>
+<span><strong>类方法</strong><code>TestCaptureAndAssertions.test_output_capture_and_contract_assertions</code></span>
+<span><strong>pytest nodeid</strong><code>module/offline_framework_example/test_capture_assertions.py::TestCaptureAndAssertions::test_output_capture_and_contract_assertions</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>module/conftest.py::_attach_collected_test_resources</code></span>
+<span><strong>真实行数</strong>16</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>谁消费token、停止收集并决定是否创建模型结果步骤？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制附件所有者停止收集并写入Allure选段1" aria-describedby="source-copy-status-D04-S6-1" aria-controls="source-code-D04-S6-1" data-source-target="source-code-D04-S6-1" data-source-status="source-copy-status-D04-S6-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D04-S6-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D04-S6-1" tabindex="0" aria-label="附件所有者停止收集并写入Allure，源码第75至90行，选段1"><code class="language-python" data-source-card="D04-S6" data-segment-index="1">def _attach_collected_test_resources(item: pytest.Item) -&gt; None:
+    state = getattr(item, TEST_RESOURCE_STATE_ATTR, None)
+    if not state:
+        return
+    media_download_token = state.pop("media_download_token", None)
+    if media_download_token is not None:
+        attach_media_download_steps(
+            stop_media_download_collection(media_download_token)
+        )
+    model_result_token = state.pop("model_result_token", None)
+    if model_result_token is not None:
+        model_result_files = stop_model_result_collection(model_result_token)
+        if model_result_files:
+            with allure.step("模型响应结果"):
+                for file_path in model_result_files:
+                    attach_model_result_file(file_path)</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D04-S6" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>_attach_collected_test_resources 从 pytest item 的资源状态中 pop 两类 token，并分别停止对应收集。媒体结果交给 attach_media_download_steps；模型文件仅在非空时创建“模型响应结果”步骤并逐个附加。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>从item取出并pop token，停止两类收集；有模型结果文件时逐个附加。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>消费node状态、停止收集并写Allure附件。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>资源附件与停止的实现所有权位于该辅助函数。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>附件成功不等于测试通过，也不替代pytest退出码。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--support" id="source-card-D04-S7" data-default-open="false" data-source-lines="7">
+<summary class="source-card__summary">
+<span class="source-importance">支撑</span>
+<span><strong>TestContext在finally中清理</strong><small>module/conftest.py · 7行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D04-S7">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>module/offline_framework_example/test_capture_assertions.py</code></span>
+<span><strong>类方法</strong><code>TestCaptureAndAssertions.test_output_capture_and_contract_assertions</code></span>
+<span><strong>pytest nodeid</strong><code>module/offline_framework_example/test_capture_assertions.py::TestCaptureAndAssertions::test_output_capture_and_contract_assertions</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>module/conftest.py::test_context</code></span>
+<span><strong>真实行数</strong>7</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>测试call失败时谁仍负责执行context.cleanup？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制TestContext在finally中清理选段1" aria-describedby="source-copy-status-D04-S7-1" aria-controls="source-code-D04-S7-1" data-source-target="source-code-D04-S7-1" data-source-status="source-copy-status-D04-S7-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D04-S7-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D04-S7-1" tabindex="0" aria-label="TestContext在finally中清理，源码第102至108行，选段1"><code class="language-python" data-source-card="D04-S7" data-segment-index="1">@pytest.fixture
+def test_context() -&gt; TestContext:
+    context = TestContext()
+    try:
+        yield context
+    finally:
+        context.cleanup()</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D04-S7" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>test_context fixture 自己负责兜底清理。它在 try 中 yield TestContext，而 context.cleanup() 位于 finally，因此无论测试 call 正常返回还是抛出失败，pytest 恢复 fixture 后都会执行 cleanup。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>创建并yield TestContext，fixture退出时在finally调用cleanup。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>清理TestContext登记的资源。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>fixture所有者通过finally保证清理入口被调用。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不展开cleanup内部LIFO和多错误处理。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--evidence" id="source-card-D04-T1" data-default-open="false" data-source-lines="18">
+<summary class="source-card__summary">
+<span class="source-importance">测试证据</span>
+<span><strong>断言入口共享同步实现的证据</strong><small>tests/test_assertions_entrypoints.py · 18行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--source" data-source-example="D04-T1">
+<p class="source-example__label">本段讲解用例 · 本卡测试源码</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_assertions_entrypoints.py</code></span>
+<span><strong>测试函数</strong><code>test_sync_async_and_module_status_entrypoints_share_the_sync_method</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_assertions_entrypoints.py::test_sync_async_and_module_status_entrypoints_share_the_sync_method</code></span>
+</div>
+<p class="source-example__note">本卡展示的源码本身就是测试用例，定位直接指向当前测试函数或类方法。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>tests/test_assertions_entrypoints.py::test_sync_async_and_module_status_entrypoints_share_the_sync_method</code></span>
+<span><strong>真实行数</strong>18</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>测试如何证明四个入口最终命中同一同步方法？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制断言入口共享同步实现的证据选段1" aria-describedby="source-copy-status-D04-T1-1" aria-controls="source-code-D04-T1-1" data-source-target="source-code-D04-T1-1" data-source-status="source-copy-status-D04-T1-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D04-T1-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D04-T1-1" tabindex="0" aria-label="断言入口共享同步实现的证据，源码第12至29行，选段1"><code class="language-python" data-source-card="D04-T1" data-segment-index="1">def test_sync_async_and_module_status_entrypoints_share_the_sync_method(monkeypatch):
+    response = make_response("https://example.com/items", status_code=204)
+    calls = []
+
+    def canonical(self, actual_response, expected):
+        calls.append((self, actual_response, expected))
+        return actual_response
+
+    monkeypatch.setattr(BaseAssertions, "assert_status_code", canonical)
+
+    instance = BaseAssertions()
+    assert instance.assert_status_code(response, 204) is response
+    assert asyncio.run(instance.async_assert_status_code(response, 204)) is response
+    assert common.assert_status_code(response, 204) is response
+    assert asyncio.run(common.async_assert_status_code(response, 204)) is response
+
+    assert len(calls) == 4
+    assert all(call[1:] == (response, 204) for call in calls)</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D04-T1" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>测试用 monkeypatch 将 BaseAssertions.assert_status_code 替换为记录调用的 canonical，再分别调用实例同步、实例异步、模块同步和模块异步入口。四次都返回原 response，记录也都携带同一 response 与 204。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>Arrange替换canonical方法，Act调用实例/模块的同步与异步入口，Assert调用次数与参数。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>仅monkeypatch方法并记录calls。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>同步、异步和模块入口共享同步断言实现。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>该测试不证明Allure步骤、资源附件或teardown生命周期。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>本卡自身即为测试证据。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+</div>
+</section>
+<!-- SOURCE_CARDS:DAY4:END -->
+
+        <section id="lesson-flow-summary" data-section>
+          <p class="section-kicker">课后总结 · 生命周期、状态与证据流</p>
+          <h2>一条测试从准备到收口发生了什么</h2>
+          <div class="lesson-flow-map"><div class="flow-stage-list">
+            <article class="flow-stage"><div class="flow-stage__index">1</div><div class="flow-stage__function"><h3>pytest准备阶段</h3><p><code>setup_method()</code>创建Task与Assertions；fixture参数提供各自拥有的资源。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>所有权建立</h3><p>轻量对象属于测试实例；外部资源仍由创建它们的fixture负责最终清理。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">2</div><div class="flow-stage__function"><h3>测试Act</h3><p>调用Task组合动作并取得最终Response。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>业务事实</h3><p>payload、策略和Response构成测试主线；Capture实现不属于本课解释范围。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">3</div><div class="flow-stage__function"><h3>模块与基础断言</h3><p>状态码、任务ID、业务状态和Schema逐层验证。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>判定状态</h3><p>任一断言失败都会抛出AssertionError；成功断言返回原Response供下一层继续检查。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">4</div><div class="flow-stage__function"><h3>Allure步骤包装</h3><p>装饰器在执行时创建报告步骤并调用原函数。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>报告证据</h3><p>步骤标题和附件帮助定位过程，但不改写pytest结果或原始异常。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">5</div><div class="flow-stage__function"><h3>pytest收尾</h3><p>无论测试成功或断言失败，fixture按自身生命周期执行teardown。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>资源终态</h3><p>清理责任回到创建者；报告只记录收口，不替代关闭、删除或上下文回滚。</p></div></article>
+          </div><div class="flow-fact-footer"><strong>最小记忆单元</strong><p>fixture管理资源，Test组织场景，Assertions决定合同是否成立，Allure描述过程；四者不能互相替代。</p></div></div>
+        </section>
+
+      <section id="knowledge-check" data-section>
           <p class="section-kicker">10 · 知识自测</p>
           <h2>确认你能解释失败路径</h2>
           <p class="section-lead">建议达到4/5再完成门禁。生命周期是否可靠，必须从“测试中途失败”而不是只从成功路径判断。</p>

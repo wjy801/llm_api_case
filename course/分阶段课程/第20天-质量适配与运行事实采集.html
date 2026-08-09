@@ -1,12 +1,105 @@
 <!doctype html>
 <html lang='zh-CN'>
-<head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta name='description' content='接口测试框架源码架构与证据链六周课程第20天：QualityRuntimeHooks适配、pytest worker上下文、P0与Semantic事实采集和分片写入'><title>第20天｜质量适配与运行事实采集</title><link rel='stylesheet' href='六周课程页.css'></head>
+<head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta name='description' content='接口测试框架源码架构与证据链六周课程第20天：QualityRuntimeHooks适配、pytest worker上下文、P0与Semantic事实采集和分片写入'><title>第20天｜质量适配与运行事实采集</title><link rel='stylesheet' href="六周课程页.css"></head>
 <body data-day='20'>
-  <aside class='side' id='side'><div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第20天 · 适配只翻译事实</h2><p>第4周 / Quality采集</p></div><nav class='nav'><a href='#question'><span class='num'>01</span><span>问题与边界</span></a><a href='#binding'><span class='num'>02</span><span>worker绑定</span></a><a href='#adapter'><span class='num'>03</span><span>适配器映射</span></a><a href='#attempt'><span class='num'>04</span><span>请求attempt事实</span></a><a href='#semantic'><span class='num'>05</span><span>语义事实入口</span></a><a href='#collector'><span class='num'>06</span><span>Collector分片</span></a><a href='#case'><span class='num'>07</span><span>pytest用例事实</span></a><a href='#failure'><span class='num'>08</span><span>完整性与fail-open</span></a><a href='#tests'><span class='num'>09</span><span>现有测试证据</span></a><a href='#design'><span class='num'>D</span><span>设计选择与边界</span></a><a href='#practice'><span class='num'>10</span><span>本轮产物实践</span></a><a href='#review'><span class='num'>R</span><span>第4周复盘</span></a><a href='#quiz'><span class='num'>11</span><span>知识自测</span></a><a href='#gate'><span class='num'>12</span><span>学习门禁</span></a></nav><div class='meter'><div class='meter-row'><span>门禁完成度</span><strong id='gate-text'>0/5</strong></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div></aside>
+  <aside class='side' id='side'><div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第20天 · 适配只翻译事实</h2><p>第4周 / Quality采集</p></div><nav class='nav'><a href='#question'><span class='num'>01</span><span>问题与边界</span></a><a href='#code-first-walkthrough'><span class='num'>C</span><span>代码先行精讲</span></a><a href='#binding'><span class='num'>02</span><span>worker绑定</span></a><a href='#adapter'><span class='num'>03</span><span>适配器映射</span></a><a href='#attempt'><span class='num'>04</span><span>请求attempt事实</span></a><a href='#semantic'><span class='num'>05</span><span>语义事实入口</span></a><a href='#collector'><span class='num'>06</span><span>Collector分片</span></a><a href='#case'><span class='num'>07</span><span>pytest用例事实</span></a><a href='#failure'><span class='num'>08</span><span>完整性与fail-open</span></a><a href='#tests'><span class='num'>09</span><span>现有测试证据</span></a><a href='#design'><span class='num'>D</span><span>设计选择与边界</span></a><a href='#practice'><span class='num'>10</span><span>本轮产物实践</span></a><a href='#review'><span class='num'>R</span><span>第4周复盘</span></a><a href="#source-code"><span class='num'>S</span><span>关键源码</span></a><a href='#lesson-flow-summary'><span class='num'>F</span><span>全课流转图</span></a><a href='#quiz'><span class='num'>11</span><span>知识自测</span></a><a href='#gate'><span class='num'>12</span><span>学习门禁</span></a></nav><div class='meter'><div class='meter-row'><span>门禁完成度</span><strong id='gate-text'>0/5</strong></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div></aside>
   <main class='main'><div class='topbar'><div>接口测试框架源码架构与证据链六周课程 <span>›</span> 第4周 <span>›</span> Day 20</div><div class='toolbar'><button class='menu' id='menu'>目录</button><a class='button' href='../接口测试框架六周学习课程.html'>课程大纲</a><a class='button' href='../接口测试框架六周学习课程.html#section-4'>术语表</a><button class='button' id='reset'>清除本课记录</button></div></div><article class='lesson'>
     <header class='hero'><p class='eyebrow'>WEEK 4 · DAY 20</p><h1>质量适配与运行事实采集</h1><p class='hero-lead'>三日职责必须分开：Day18只在公共控制流发出中性事件，Day19管理Quality的disabled/collect-only/enabled接入与阶段，Day20才由<code>QualityRuntimeHooks</code>适配事件并在实际worker中采集P0、Semantic和Case事实。</p><div class='pills'><span class='pill'>建议时长 3 小时</span><span class='pill'>Runtime Adapter</span><span class='pill'>Worker Shards</span><span class='pill'>Case Context</span></div><div class='outcome'><strong>可核验产出：</strong>中性事件到质量事实映射表、worker采集生命周期图、分片命名说明和本轮shards/merged证据记录。</div></header>
 
     <section id='question' data-section><p class='kicker'>01 · First principles</p><h2>适配器的职责是翻译，不是重新拥有HTTP控制流</h2><p class='lead'><code>QualityRuntimeHooks</code>实现中性Protocol，但不发起请求、不决定Retry、不推进Polling，也不消费SSE。它只把已经发生的运行事件转换为质量层已有模型。</p><div class='flow'><span>Day18：发中性事件</span><i>→</i><span>Day19：管理Quality接入</span><i>→</i><span>Day20：适配并采集事实</span></div><div class='grid3'><div class='card'><h3>P0事实</h3><p>一次真实请求attempt的耗时、状态、业务结果和usage。</p></div><div class='card'><h3>Semantic事实</h3><p>Operation、Request Group、Polling Session和Stream之间的关系。</p></div><div class='card'><h3>pytest事实</h3><p>setup、call、teardown三个阶段的CaseResult和JUnit身份。</p></div></div><div class='callout warn'><strong>TOC约束：</strong>本层最容易出现的错误是把三类事实揉成一个结论。采集阶段只记录各自事实，Day21～23再按顺序归并、建关系和计算指标。</div></section>
+
+    <section id="code-first-walkthrough" data-section>
+      <p class="kicker">02 · Code first walkthrough</p><h2>从一个完整Adapter测试追踪P0与Semantic双路事实</h2><p class="lead">同一次HTTP运行事件会同时产生RequestMetric和语义关系，但Adapter只翻译事件，不拥有重试、请求发送或最终归并。</p>
+      <div class="guided-start"><div class="guided-start__header"><h3>本节主线：Operation → Group → RequestContext → P0 Metric → Semantic引用</h3><p>先用测试确认三类输出，再进入Adapter、Collector和pytest Case事实。</p></div><div class="guided-command"><strong>先运行这个用例</strong><code>python -m pytest -q tests/quality/test_runtime_adapter.py::test_adapter_links_p0_metric_to_existing_semantic_group</code></div><div class="guided-rule"><strong>用例定位</strong> 文件：<code>tests/quality/test_runtime_adapter.py</code>；测试函数：<code>test_adapter_links_p0_metric_to_existing_semantic_group</code>；pytest nodeid：<code>tests/quality/test_runtime_adapter.py::test_adapter_links_p0_metric_to_existing_semantic_group</code>。</div><div class="guided-chain"><span>begin Operation</span><b>→</b><span>start Group</span><b>→</b><span>bind Context</span><b>→</b><span>request metric</span><b>→</b><span>finish Group/Operation</span></div></div>
+      <article class="guided-step"><div class="guided-step__title"><span class="guided-step__number">1</span><div><h3>测试先验收P0事件与Semantic关系是否使用同一身份</h3><p>三类文件分别保存事件、逻辑请求和业务操作。</p></div></div><div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">tests/quality/test_runtime_adapter.py::test_adapter_links_p0_metric_to_existing_semantic_group</span><pre><code>    group = hooks.start_request_group(
+        method="GET",
+        path="/v1/items",
+        protocol="http",
+        configured_max_attempts=1,
+    )
+    context = _context()
+    hooks.bind_request_context(context, group)
+    hooks.request_started(context)
+    hooks.request_succeeded(context, _response({"usage": {"prompt_tokens": 2}}))
+    hooks.finish_request_group(group)
+    hooks.finish_operation(operation.native_handle, RuntimeOperationOutcome.SUCCESS)
+
+    metrics = read_jsonl(semantic_runtime.p0.paths.requests)
+    groups = read_jsonl(semantic_runtime.semantic.paths.request_groups)
+    operations = read_jsonl(semantic_runtime.semantic.paths.operations)
+
+    assert len(metrics) == len(groups) == len(operations) == 1
+    assert groups[0]["attempt_event_ids"] == [metrics[0]["request_event_id"]]
+    assert operations[0]["request_group_ids"] == [groups[0]["request_group_id"]]
+    assert operations[0]["usage"]["input_tokens"] == 2</code></pre></div><div class="guided-explanation"><h4>三层输出</h4><div class="guided-point"><strong>P0</strong><p>一次真实attempt对应一个RequestMetric。</p></div><div class="guided-point"><strong>Semantic</strong><p>Group引用event id，Operation引用group id。</p></div><div class="guided-point success"><strong>Usage</strong><p>响应usage经同一事件关系累计到Operation。</p></div></div></div></article>
+      <article class="guided-step"><div class="guided-step__title"><span class="guided-step__number">2</span><div><h3>Adapter把中性方法窄映射到已有Quality上下文</h3><p>它不重新解释HTTP控制流。</p></div></div><div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">quality/runtime_adapter.py::QualityRuntimeHooks.start_request_group / bind_request_context / finish_request_group</span><pre><code>    def start_request_group(
+        self,
+        *,
+        method: str,
+        path: str,
+        protocol: str,
+        configured_max_attempts: int,
+    ) -&gt; object | None:
+        return semantic_context.start_request_group(
+            method=method,
+            path=path,
+            protocol=protocol,
+            configured_max_attempts=configured_max_attempts,
+        )
+
+    def bind_request_context(self, context: Any, native_handle: object | None) -&gt; None:
+        semantic_context.bind_request_context(
+            context,
+            native_handle if isinstance(native_handle, str) else None,
+        )
+
+    def finish_request_group(
+        self,
+        native_handle: object | None,
+        *,
+        retry_wait_seconds: float = 0.0,
+    ) -&gt; None:
+        semantic_context.finish_request_group(
+            native_handle if isinstance(native_handle, str) else None,
+            retry_wait_seconds=retry_wait_seconds,
+        )</code></pre></div><div class="guided-explanation"><h4>输入与所有权</h4><div class="guided-point"><strong>输入</strong><p>中性的method、path、protocol、attempt上限和不透明handle。</p></div><div class="guided-point"><strong>状态</strong><p>Semantic Context建立Group并把group id绑定到RequestContext。</p></div><div class="guided-point warning"><strong>不拥有</strong><p>Adapter不决定是否重试，也不计算最终Metrics。</p></div></div></div></article>
+      <article class="guided-step"><div class="guided-step__title"><span class="guided-step__number">3</span><div><h3>请求采集失败进入Integrity，主分片由Collector按worker隔离写入</h3><p>采集失败不能替换业务响应。</p></div></div><div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">quality/runtime_adapter.py::QualityRuntimeHooks._capture_request_call</span><pre><code>    @staticmethod
+    def _capture_request_call(context: Any, function: Any, *args: Any) -&gt; None:
+        try:
+            function(*args)
+        except Exception as error:
+            collector = get_collector()
+            if collector is None:
+                return
+            collector.capture_integrity(
+                source="request_metrics",
+                code="request_capture_failed",
+                message=f"{type(error).__name__}: {error}",
+                related_id=context.attributes.get(request_metrics.REQUEST_EVENT_ID_ATTR),
+            )</code></pre><span class="guided-source__location">quality/collector.py::QualityCollector.record_request</span><pre><code>    def record_request(self, metric: RequestMetric) -&gt; bool:
+        return self._record_primary(
+            self.paths.requests,
+            metric,
+            failure_code="request_write_failed",
+            related_id=metric.request_event_id,
+        )</code></pre></div><div class="guided-explanation"><h4>异常与分片边界</h4><div class="guided-point"><strong>失败开放</strong><p>普通采集Exception转换为IntegrityIssue，不抛回HTTP主链。</p></div><div class="guided-point"><strong>分片</strong><p>Collector路径包含execution_id与worker_id，避免并发进程争写同一文件。</p></div><div class="guided-point warning"><strong>后续责任</strong><p>分片写成不等于可信归并；Day21才扫描、去重和提交P0。</p></div></div></div></article>
+      <article class="guided-step"><div class="guided-step__title"><span class="guided-step__number">4</span><div><h3>pytest hook按setup/call/teardown写CaseResult</h3><p>Case事实与Request事实在采集阶段保持分离。</p></div></div><div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">quality/pytest_plugin_runtime.py::pytest_runtest_logreport</span><pre><code>def pytest_runtest_logreport(report: pytest.TestReport) -&gt; None:
+    collector = _active_collector()
+    if collector is None or report.when not in {"setup", "call", "teardown"}:
+        return
+
+    case_context = get_case_context()
+    if case_context is None:
+        collector.capture_integrity(
+            source="pytest_plugin",
+            code="case_context_build_failed",
+            message=f"case context missing for {report.when} report",
+            related_id=None,
+            severity=IssueSeverity.ERROR,
+        )
+        return</code></pre></div><div class="guided-explanation"><h4>Case事实入口</h4><div class="guided-point"><strong>输入</strong><p>pytest TestReport和当前CaseContext。</p></div><div class="guided-point"><strong>输出</strong><p>每个阶段各自形成CaseResult，归并时再折叠invocation终态。</p></div><div class="guided-point warning"><strong>边界</strong><p>该hook不扫描JSONL，也不生成最终manifest。</p></div></div></div></article>
+      <div class="guided-conclusion"><h3>代码后复盘</h3><p>P0、Semantic和pytest Case是三组不同事实；Adapter只把中性事件送到对应采集入口。</p></div>
+    </section>
 
     <section id='binding' data-section><p class='kicker'>02 · Worker binding</p><h2>controller传配置，真正执行测试的进程拥有采集器</h2><ol><li>轻量插件确认Quality开启后动态注册<code>quality.pytest_plugin_runtime</code>。</li><li>xdist controller不创建Collector，只通过<code>pytest_configure_node</code>把run_id、execution_id、输出目录和Semantic开关传入workerinput。</li><li>worker或非xdist进程构造<code>QualityRunContext</code>：run、execution、worker三层身份齐备。</li><li>runtime plugin配置P0 Collector、可选SemanticCollector，并绑定<code>QualityRuntimeHooks</code>。</li><li><code>pytest_unconfigure</code>按逆序完成pending记录并reset hooks、run context和collector。</li></ol><div class='flow'><span>Runner stage env</span><i>→</i><span>controller workerinput</span><i>→</i><span>worker RunContext</span><i>→</i><span>Collectors</span><i>→</i><span>Hooks bind</span></div></section>
 
@@ -20,7 +113,7 @@
 
     <section id='case' data-section><p class='kicker'>07 · Pytest case facts</p><h2>每个用例先建立稳定CaseContext，再记录三个阶段</h2><ol><li><code>pytest_runtest_protocol</code>根据nodeid和参数构造case_id、param_hash与invocation_id，并写入ContextVar。</li><li>autouse fixture把case_id和invocation_id写入JUnit properties，供P0归并对账。</li><li><code>pytest_runtest_logreport</code>只接受setup、call、teardown，按report状态映射passed、failed、error、skipped、xfail和xpass。</li><li>每个阶段形成独立CaseResult，保存duration、起止时间、raw_status和final_status。</li><li>协议结束时finalize pending语义记录，并reset CaseContext。</li></ol><p>CaseResult不是“用例最终一行”。setup、call和teardown事实先分别保存，Day21再用<code>fold_case_status()</code>归并为invocation终态。</p></section>
 
-    <section id='failure' data-section><p class='kicker'>08 · Integrity and fail-open</p><h2>采集错误进入完整性事实，不得替换业务结果</h2><div class='table-wrap'><table><thead><tr><th>问题</th><th>处理</th></tr></thead><tbody><tr><td>Request捕获函数异常</td><td>适配器捕获并写<code>request_capture_failed</code></td></tr><tr><td>Case或Request主分片写失败</td><td>Collector尝试写ERROR级完整性问题并返回False</td></tr><tr><td>完整性分片自身写失败</td><td>只向warning sink报告，避免递归写失败</td></tr><tr><td>CaseContext构造失败</td><td>记录<code>case_context_build_failed</code>，pytest继续</td></tr><tr><td>SemanticCollector初始化失败</td><td>关闭Semantic采集并警告，P0仍可继续</td></tr></tbody></table></div><p>fail-open不等于“采集成功”。业务控制流保持原样，采集完整性通过显式Issue表达，后续归并据此判定complete、degraded或failed。</p></section>
+    <section id='failure' data-section><p class='kicker'>08 · Integrity and fail-open</p><h2>采集错误进入完整性事实，不得替换业务结果</h2><div class='table-wrap'><table><thead><tr><th>问题</th><th>处理</th></tr></thead><tbody><tr><td>Request捕获函数抛出<code>Exception</code></td><td>适配器捕获并写<code>request_capture_failed</code></td></tr><tr><td>Case或Request主分片写失败</td><td>Collector尝试写ERROR级完整性问题并返回False</td></tr><tr><td>完整性分片自身写失败</td><td>只向warning sink报告，避免递归写失败</td></tr><tr><td>CaseContext构造失败</td><td>记录<code>case_context_build_failed</code>，pytest继续</td></tr><tr><td>SemanticCollector初始化失败</td><td>关闭Semantic采集并警告，P0仍可继续</td></tr></tbody></table></div><p>fail-open不等于“采集成功”。这里的捕获边界是<code>Exception</code>，不含<code>KeyboardInterrupt</code>、<code>SystemExit</code>等<code>BaseException</code>；对已捕获异常，业务控制流保持原样，采集完整性通过显式Issue表达，后续归并据此判定complete、degraded或failed。</p></section>
 
     <section id='tests' data-section><p class='kicker'>09 · Existing tests</p><h2>运行适配器、Collector与兼容性专项测试</h2><div class='command'><button class='copy'>复制</button><pre><code>.\.venv\Scripts\python.exe -m pytest `
   tests/quality/test_runtime_adapter.py `
@@ -56,8 +149,741 @@ finally { foreach ($name in $names) { [Environment]::SetEnvironmentVariable($nam
 
     <section id='review' data-section><p class='kicker'>Week 4 review · 30～45分钟</p><h2>第4周复盘：从执行事实走到可采集证据</h2><p class='lead'>按一条职责链复盘：Day16提交执行事实，Day17管理报告所有权，Day18发事件，Day19管理Quality接入，Day20适配采集。不要把相邻层的职责互相代做。</p><div class='table-wrap'><table><thead><tr><th>时间</th><th>动作</th><th>验收信号</th></tr></thead><tbody><tr><td>0～10分钟</td><td>画Day16～20职责链并标出每层输入/输出。</td><td>Day18/19/20三段职责无重叠。</td></tr><tr><td>10～20分钟</td><td>核对execution-result、Allure、Quality shards三类产物所有者。</td><td>每类产物只有一个写入/收口所有者。</td></tr><tr><td>20～30分钟</td><td>用一次attempt追踪事件、适配、分片与完整性事实。</td><td>能说明失败何时影响业务、何时只降级采集。</td></tr><tr><td>30～45分钟</td><td>复用本周主成果完成一次综合更新并进行六维0～2评分。</td><td>总分至少9/12，所有权和证据映射均不为0分。</td></tr></tbody></table></div><h3>可选草稿：详细拆分记录</h3><div class='notes'><label>① 跨日关系图<textarea data-note='week4-chain' placeholder='Day16执行事实 → Day17报告所有权 → Day18事件 → Day19接入 → Day20采集'></textarea></label><label>② 错误订正表<textarea data-note='week4-correction' placeholder='记录至少一个被源码、测试或机器产物纠正的Runner、Allure、Hooks或Quality误解'></textarea></label><label>③ 相邻场景迁移<textarea data-note='week4-transfer' placeholder='把事件到事实的映射迁移到另一个已有Retry、Polling或SSE场景'></textarea></label><label>④ 术语关系更新<textarea data-note='week4-terms' placeholder='更新execution_id、Runtime Hooks、Lease、run_id、P0事实的所属层、上下游与不等同于'></textarea></label></div><h3>六维0～2统一评分</h3><p>统一维度为源码定位、调用链与状态、所有权、证据映射、设计边界和迁移能力。总分至少9/12，且所有权、证据映射不得为0分。</p><div class='table-wrap'><table><thead><tr><th>维度</th><th>评分</th><th>2分判据</th></tr></thead><tbody><tr><td>源码定位</td><td><input type='number' min='0' max='2' step='1' data-note='week4-score-source' aria-label='源码定位评分'></td><td>能从Runner入口独立定位Allure、Hooks、Quality生命周期与Adapter。</td></tr><tr><td>调用链与状态</td><td><input type='number' min='0' max='2' step='1' data-note='week4-score-chain' aria-label='调用链评分'></td><td>能解释执行、报告、事件、接入和采集五段状态转换。</td></tr><tr><td>所有权</td><td><input type='number' min='0' max='2' step='1' data-note='week4-score-ownership' aria-label='所有权评分'></td><td>能区分Runner、Allure、common Hooks和Quality的唯一写入与收口责任。</td></tr><tr><td>证据映射</td><td><input type='number' min='0' max='2' step='1' data-note='week4-score-evidence' aria-label='证据映射评分'></td><td>能说明execution-result、Allure raw和Quality分片分别证明什么。</td></tr><tr><td>设计边界</td><td><input type='number' min='0' max='2' step='1' data-note='week4-score-boundary' aria-label='设计边界评分'></td><td>能比较中性Hooks与common直连Quality的耦合后果。</td></tr><tr><td>迁移能力</td><td><input type='number' min='0' max='2' step='1' data-note='week4-score-transfer' aria-label='迁移能力评分'></td><td>能把事件到事实映射独立迁移到相邻已有场景。</td></tr></tbody></table></div><div class='notes'><label>综合复盘增量与六维评分（复用本周主成果）<textarea data-note='week4-summary' placeholder='在同一成果中记录一处职责关系订正、一处相邻迁移、必要术语变化，以及六项分数和总分/12'></textarea></label></div></section>
 
+<!-- SOURCE_CARDS:DAY20:START -->
+<section id="source-code" class="source-section" data-section aria-labelledby="source-code-title">
+<div class="source-section__header">
+<p class="source-section__kicker">Source Reading · Static Snapshot</p>
+<h2 id="source-code-title">关键源码</h2>
+<p>以下源码由当前工作区直接提取，经教学裁剪、真实行数统计和统一HTML转义后静态写入。本页共161行源码，浏览页面时不会读取仓库文件。</p>
+</div>
+<div class="source-card-list">
+<details class="source-card source-card--required" id="source-card-D20-S1" data-default-open="false" data-source-lines="14">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>Adapter启动Request Group语义映射</strong><small>quality/runtime_adapter.py · 14行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D20-S1">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/quality/test_runtime_adapter.py</code></span>
+<span><strong>测试函数</strong><code>test_adapter_links_p0_metric_to_existing_semantic_group</code></span>
+<span><strong>pytest nodeid</strong><code>tests/quality/test_runtime_adapter.py::test_adapter_links_p0_metric_to_existing_semantic_group</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>quality/runtime_adapter.py::QualityRuntimeHooks.start_request_group</code></span>
+<span><strong>真实行数</strong>14</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>中性method、path、protocol和重试上限如何进入Quality语义Request Group？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Adapter启动Request Group语义映射选段1" aria-describedby="source-copy-status-D20-S1-1" aria-controls="source-code-D20-S1-1" data-source-target="source-code-D20-S1-1" data-source-status="source-copy-status-D20-S1-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D20-S1-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D20-S1-1" tabindex="0" aria-label="Adapter启动Request Group语义映射，源码第50至63行，选段1"><code class="language-python" data-source-card="D20-S1" data-segment-index="1">    def start_request_group(
+        self,
+        *,
+        method: str,
+        path: str,
+        protocol: str,
+        configured_max_attempts: int,
+    ) -&gt; object | None:
+        return semantic_context.start_request_group(
+            method=method,
+            path=path,
+            protocol=protocol,
+            configured_max_attempts=configured_max_attempts,
+        )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D20-S1" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：Adapter只把中性的Request Group启动参数窄映射到Quality Semantic层，不生成CaseResult。机制：method、path、protocol和最大尝试次数原样传给semantic_context.start_request_group，并返回其语义句柄。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>接收Runtime Hooks参数，原样映射给semantic_context.start_request_group并返回语义句柄。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>建立Request Group语义上下文；不写CaseResult。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Adapter负责把中性Request Group事件映射到Quality Semantic层。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>它不产生CaseResult，也不扫描或归并P0分片。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/quality/test_runtime_adapter.py::test_adapter_links_p0_metric_to_existing_semantic_group</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li><code>quality/pytest_plugin_runtime.py::pytest_runtest_logreport</code></li><li><code>quality/aggregator.py::merge_quality_run</code></li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--required" id="source-card-D20-S2" data-default-open="false" data-source-lines="10">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>Adapter结束Request Group并提交重试等待事实</strong><small>quality/runtime_adapter.py · 10行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D20-S2">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/quality/test_runtime_adapter.py</code></span>
+<span><strong>测试函数</strong><code>test_adapter_links_p0_metric_to_existing_semantic_group</code></span>
+<span><strong>pytest nodeid</strong><code>tests/quality/test_runtime_adapter.py::test_adapter_links_p0_metric_to_existing_semantic_group</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>quality/runtime_adapter.py::QualityRuntimeHooks.finish_request_group</code></span>
+<span><strong>真实行数</strong>10</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>结束事件如何校验句柄并把累计retry wait映射到Semantic层？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Adapter结束Request Group并提交重试等待事实选段1" aria-describedby="source-copy-status-D20-S2-1" aria-controls="source-code-D20-S2-1" data-source-target="source-code-D20-S2-1" data-source-status="source-copy-status-D20-S2-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D20-S2-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D20-S2-1" tabindex="0" aria-label="Adapter结束Request Group并提交重试等待事实，源码第71至80行，选段1"><code class="language-python" data-source-card="D20-S2" data-segment-index="1">    def finish_request_group(
+        self,
+        native_handle: object | None,
+        *,
+        retry_wait_seconds: float = 0.0,
+    ) -&gt; None:
+        semantic_context.finish_request_group(
+            native_handle if isinstance(native_handle, str) else None,
+            retry_wait_seconds=retry_wait_seconds,
+        )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D20-S2" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：Adapter结束Request Group时只接受字符串语义句柄，并提交累计retry wait。机制：字符串原样传递，其他类型降为None，再调用semantic_context.finish_request_group；此动作不产生CaseResult或执行P0归并。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>仅接受字符串语义句柄，否则传None；随后调用semantic_context.finish_request_group。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>结束Request Group语义记录并提交重试等待秒数。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Adapter只做中性句柄和Quality语义API之间的窄映射。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>Request Group结束不代表CaseResult已经产生，也不执行最终P0 merge。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/quality/test_runtime_adapter.py::test_adapter_links_p0_metric_to_existing_semantic_group</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li><code>quality/pytest_plugin_runtime.py::pytest_runtest_logreport</code></li><li><code>quality/aggregator.py::merge_quality_run</code></li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--required" id="source-card-D20-S3" data-default-open="false" data-source-lines="10">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>Adapter结束Polling语义会话</strong><small>quality/runtime_adapter.py · 10行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D20-S3">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/quality/test_runtime_adapter.py</code></span>
+<span><strong>测试函数</strong><code>test_adapter_links_p0_metric_to_existing_semantic_group</code></span>
+<span><strong>pytest nodeid</strong><code>tests/quality/test_runtime_adapter.py::test_adapter_links_p0_metric_to_existing_semantic_group</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>quality/runtime_adapter.py::QualityRuntimeHooks.finish_polling_session</code></span>
+<span><strong>真实行数</strong>10</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>中性RuntimePollingOutcome如何转换为Quality PollingOutcome？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Adapter结束Polling语义会话选段1" aria-describedby="source-copy-status-D20-S3-1" aria-controls="source-code-D20-S3-1" data-source-target="source-code-D20-S3-1" data-source-status="source-copy-status-D20-S3-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D20-S3-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D20-S3-1" tabindex="0" aria-label="Adapter结束Polling语义会话，源码第102至111行，选段1"><code class="language-python" data-source-card="D20-S3" data-segment-index="1">    def finish_polling_session(
+        self,
+        native_handle: object | None,
+        outcome: RuntimePollingOutcome,
+    ) -&gt; None:
+        if isinstance(native_handle, PollingSessionHandle):
+            semantic_context.finish_polling_session(
+                native_handle,
+                PollingOutcome(outcome.value),
+            )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D20-S3" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：Polling结束的职责是Adapter完成类型校验和结果枚举转换，不是生成pytest CaseResult。机制：仅当句柄为PollingSessionHandle时，按outcome.value构造Quality PollingOutcome并结束对应语义会话。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>先校验PollingSessionHandle，再按枚举值构造Quality结果并结束语义会话。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>更新Polling语义事实。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Polling结果转换属于Adapter映射责任。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>Polling语义事实不是pytest CaseResult，也不是最终归并产物。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li><code>quality/aggregator.py::merge_quality_run</code></li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--required" id="source-card-D20-S4" data-default-open="false" data-source-lines="9">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>Adapter结束Stream语义事实</strong><small>quality/runtime_adapter.py · 9行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D20-S4">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/quality/test_runtime_adapter.py</code></span>
+<span><strong>测试函数</strong><code>test_adapter_links_p0_metric_to_existing_semantic_group</code></span>
+<span><strong>pytest nodeid</strong><code>tests/quality/test_runtime_adapter.py::test_adapter_links_p0_metric_to_existing_semantic_group</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>quality/runtime_adapter.py::QualityRuntimeHooks.finish_stream</code></span>
+<span><strong>真实行数</strong>9</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>Stream句柄与中性结果如何进入Quality Semantic实现？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Adapter结束Stream语义事实选段1" aria-describedby="source-copy-status-D20-S4-1" aria-controls="source-code-D20-S4-1" data-source-target="source-code-D20-S4-1" data-source-status="source-copy-status-D20-S4-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D20-S4-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D20-S4-1" tabindex="0" aria-label="Adapter结束Stream语义事实，源码第125至133行，选段1"><code class="language-python" data-source-card="D20-S4" data-segment-index="1">    def finish_stream(
+        self,
+        native_handle: object | None,
+        outcome: RuntimeStreamOutcome,
+    ) -&gt; None:
+        semantic_context.finish_stream(
+            native_handle if isinstance(native_handle, str) else None,
+            StreamOutcome(outcome.value),
+        )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D20-S4" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：Stream结束由Adapter把中性句柄和结果转换给Semantic实现，不负责worker分片归并。机制：字符串句柄保留、其他类型变为None，RuntimeStreamOutcome按值转换成Quality StreamOutcome后提交。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>字符串句柄被保留，其他类型降为None；RuntimeStreamOutcome按值转换后提交。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>结束Stream语义记录。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Adapter负责Stream中性事件到Semantic事实的类型映射。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>它不生成CaseResult，也不负责worker分片的最终归并。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li><code>quality/pytest_plugin_runtime.py::pytest_runtest_logreport</code></li><li><code>quality/aggregator.py::merge_quality_run</code></li>
+</ul></div>
+</div>
+</details>
+<section class="source-card source-card--required source-card--expanded" id="source-card-D20-S5" data-default-open="true" data-source-lines="14">
+<div class="source-card__heading">
+<span class="source-importance">必读</span>
+<div><h3>Request事实采集失败的fail-open边界</h3><p>quality/runtime_adapter.py · 14行</p></div>
+</div>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D20-S5">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/quality/test_runtime_adapter.py</code></span>
+<span><strong>测试函数</strong><code>test_adapter_request_failure_is_fail_open_and_records_integrity</code></span>
+<span><strong>pytest nodeid</strong><code>tests/quality/test_runtime_adapter.py::test_adapter_request_failure_is_fail_open_and_records_integrity</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>quality/runtime_adapter.py::QualityRuntimeHooks._capture_request_call</code></span>
+<span><strong>真实行数</strong>14</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>Request采集函数抛出Exception后，Adapter如何尝试记录完整性问题并保持业务控制流？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Request事实采集失败的fail-open边界选段1" aria-describedby="source-copy-status-D20-S5-1" aria-controls="source-code-D20-S5-1" data-source-target="source-code-D20-S5-1" data-source-status="source-copy-status-D20-S5-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D20-S5-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D20-S5-1" tabindex="0" aria-label="Request事实采集失败的fail-open边界，源码第135至148行，选段1"><code class="language-python" data-source-card="D20-S5" data-segment-index="1">    @staticmethod
+    def _capture_request_call(context: Any, function: Any, *args: Any) -&gt; None:
+        try:
+            function(*args)
+        except Exception as error:
+            collector = get_collector()
+            if collector is None:
+                return
+            collector.capture_integrity(
+                source="request_metrics",
+                code="request_capture_failed",
+                message=f"{type(error).__name__}: {error}",
+                related_id=context.attributes.get(request_metrics.REQUEST_EVENT_ID_ATTR),
+            )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D20-S5" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：Request事实采集的普通Exception不会重新抛出覆盖业务调用结果，Adapter只会尝试记录request_capture_failed；BaseException不在边界内。机制：采集失败后获取当前Collector，存在则调用capture_integrity，但其返回False时不能保证issue已经落盘；不存在则直接返回。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>调用Request事实函数；Exception发生时获取当前Collector，存在则尝试记录request_capture_failed，否则直接返回。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>成功路径产生Request事实；失败路径最多追加integrity issue。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Adapter对Request采集的Exception执行fail-open降级，不重新抛出该Exception。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>它不创建CaseResult；也不捕获KeyboardInterrupt、SystemExit等BaseException，最终P0 merge仍属于Aggregator。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/quality/test_runtime_adapter.py::test_adapter_request_failure_is_fail_open_and_records_integrity</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li><code>quality/pytest_plugin_runtime.py::pytest_runtest_logreport</code></li><li><code>quality/aggregator.py::merge_quality_run</code></li>
+</ul></div>
+</div>
+</section>
+<details class="source-card source-card--required" id="source-card-D20-S6" data-default-open="false" data-source-lines="19">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>Collector初始化execution与worker专属分片</strong><small>quality/collector.py · 19行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D20-S6">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/quality/test_quality_collector.py</code></span>
+<span><strong>测试函数</strong><code>test_collector_initializes_worker_owned_shards</code></span>
+<span><strong>pytest nodeid</strong><code>tests/quality/test_quality_collector.py::test_collector_initializes_worker_owned_shards</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>quality/collector.py::QualityCollector.__init__</code></span>
+<span><strong>真实行数</strong>19</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>execution_id和worker_id如何共同决定cases、requests与integrity分片名？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Collector初始化execution与worker专属分片选段1" aria-describedby="source-copy-status-D20-S6-1" aria-controls="source-code-D20-S6-1" data-source-target="source-code-D20-S6-1" data-source-status="source-copy-status-D20-S6-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D20-S6-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D20-S6-1" tabindex="0" aria-label="Collector初始化execution与worker专属分片，源码第27至45行，选段1"><code class="language-python" data-source-card="D20-S6" data-segment-index="1">    def __init__(
+        self,
+        run_context: QualityRunContext,
+        *,
+        warning_sink: WarningSink | None = None,
+    ) -&gt; None:
+        self.run_context = run_context
+        self._warning_sink = warning_sink or _default_warning_sink
+        self._write_lock = RLock()
+
+        layout = ensure_quality_dirs(run_context.output_dir)
+        suffix = f"{run_context.execution_id}-{run_context.worker_id}.jsonl"
+        self.paths = QualityShardPaths(
+            cases=layout.shards / f"cases-{suffix}",
+            requests=layout.shards / f"requests-{suffix}",
+            integrity=layout.shards / f"integrity-{suffix}",
+        )
+        for path in (self.paths.cases, self.paths.requests, self.paths.integrity):
+            path.write_text("", encoding="utf-8")</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D20-S6" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：Collector只拥有当前execution与worker的三类运行期分片，不拥有跨分片归并。机制：以execution_id-worker_id组成后缀，创建cases、requests、integrity路径并清空初始化；扫描、去重和最终输出属于Aggregator。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>创建Quality目录，以execution-worker组成后缀，建立三类JSONL路径并清空当前分片。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>创建并初始化当前execution/worker拥有的三个分片文件。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Collector写入的是worker与execution隔离的运行期分片。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>初始化分片不代表已有事实；跨分片扫描、去重和最终P0输出属于aggregator。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/quality/test_quality_collector.py::test_collector_initializes_worker_owned_shards</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li><code>quality/aggregator.py::merge_quality_run</code></li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--required" id="source-card-D20-S7" data-default-open="false" data-source-lines="7">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>Collector接收而非生产CaseResult</strong><small>quality/collector.py · 7行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D20-S7">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/quality/test_quality_collector.py</code></span>
+<span><strong>测试函数</strong><code>test_primary_write_failure_becomes_integrity_issue</code></span>
+<span><strong>pytest nodeid</strong><code>tests/quality/test_quality_collector.py::test_primary_write_failure_becomes_integrity_issue</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>quality/collector.py::QualityCollector.record_case</code></span>
+<span><strong>真实行数</strong>7</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>CaseResult从何处进入cases分片，写失败使用什么关联标识？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Collector接收而非生产CaseResult选段1" aria-describedby="source-copy-status-D20-S7-1" aria-controls="source-code-D20-S7-1" data-source-target="source-code-D20-S7-1" data-source-status="source-copy-status-D20-S7-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D20-S7-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D20-S7-1" tabindex="0" aria-label="Collector接收而非生产CaseResult，源码第47至53行，选段1"><code class="language-python" data-source-card="D20-S7" data-segment-index="1">    def record_case(self, result: CaseResult) -&gt; bool:
+        return self._record_primary(
+            self.paths.cases,
+            result,
+            failure_code="case_write_failed",
+            related_id=result.invocation_id,
+        )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D20-S7" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：Collector只接收并持久化已构造的CaseResult，生产所有权属于runtime插件的pytest_runtest_logreport。机制：record_case选择cases分片，以invocation_id关联统一写入；最终扫描与归并仍由Aggregator负责。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>接收已构造的CaseResult，选择cases分片，以invocation_id调用统一主事实写入。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>尝试追加一条CaseResult到当前worker/execution cases分片。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Collector只持久化CaseResult；结果对象由调用方传入。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>CaseResult不是Adapter生成的；真实构造点是runtime pytest_runtest_logreport。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/quality/test_quality_collector.py::test_primary_write_failure_becomes_integrity_issue</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li><code>quality/pytest_plugin_runtime.py::pytest_runtest_logreport</code></li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--required" id="source-card-D20-S8" data-default-open="false" data-source-lines="7">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>Collector写入RequestMetric分片</strong><small>quality/collector.py · 7行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D20-S8">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/quality/test_runtime_adapter.py</code></span>
+<span><strong>测试函数</strong><code>test_adapter_links_p0_metric_to_existing_semantic_group</code></span>
+<span><strong>pytest nodeid</strong><code>tests/quality/test_runtime_adapter.py::test_adapter_links_p0_metric_to_existing_semantic_group</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>quality/collector.py::QualityCollector.record_request</code></span>
+<span><strong>真实行数</strong>7</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>Adapter产生的RequestMetric如何路由到requests分片？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Collector写入RequestMetric分片选段1" aria-describedby="source-copy-status-D20-S8-1" aria-controls="source-code-D20-S8-1" data-source-target="source-code-D20-S8-1" data-source-status="source-copy-status-D20-S8-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D20-S8-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D20-S8-1" tabindex="0" aria-label="Collector写入RequestMetric分片，源码第55至61行，选段1"><code class="language-python" data-source-card="D20-S8" data-segment-index="1">    def record_request(self, metric: RequestMetric) -&gt; bool:
+        return self._record_primary(
+            self.paths.requests,
+            metric,
+            failure_code="request_write_failed",
+            related_id=metric.request_event_id,
+        )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D20-S8" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：RequestMetric与CaseResult分流到独立分片，Collector写入的还不是最终request-metrics文件。机制：record_request选择当前requests分片，以request_event_id调用统一主事实写入；最终文件由Aggregator归并。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>选择requests分片，以request_event_id调用统一主事实写入。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>尝试追加一条RequestMetric到当前worker/execution requests分片。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Request事实与Case事实进入不同运行期分片。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>分片写入不是最终request-metrics.jsonl；最终文件由aggregator归并生成。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/quality/test_runtime_adapter.py::test_adapter_links_p0_metric_to_existing_semantic_group</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li><code>quality/aggregator.py::merge_quality_run</code></li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--required" id="source-card-D20-S9" data-default-open="false" data-source-lines="10">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>Integrity分片写失败只告警</strong><small>quality/collector.py · 10行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D20-S9">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/quality/test_runtime_adapter.py</code></span>
+<span><strong>测试函数</strong><code>test_adapter_links_p0_metric_to_existing_semantic_group</code></span>
+<span><strong>pytest nodeid</strong><code>tests/quality/test_runtime_adapter.py::test_adapter_links_p0_metric_to_existing_semantic_group</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>quality/collector.py::QualityCollector.record_integrity</code></span>
+<span><strong>真实行数</strong>10</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>连integrity issue本身也无法写入时，Collector如何避免递归失败？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Integrity分片写失败只告警选段1" aria-describedby="source-copy-status-D20-S9-1" aria-controls="source-code-D20-S9-1" data-source-target="source-code-D20-S9-1" data-source-status="source-copy-status-D20-S9-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D20-S9-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D20-S9-1" tabindex="0" aria-label="Integrity分片写失败只告警，源码第63至72行，选段1"><code class="language-python" data-source-card="D20-S9" data-segment-index="1">    def record_integrity(self, issue: IntegrityIssue) -&gt; bool:
+        try:
+            self._append(self.paths.integrity, issue)
+            return True
+        except Exception as error:
+            self._warn(
+                "quality integrity write failed: "
+                f"{type(error).__name__}: {_safe_message(error)}"
+            )
+            return False</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D20-S9" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：integrity分片追加抛出普通Exception时，Collector不递归创建新issue，而是尝试输出脱敏告警并返回False；告警sink抛出的Exception也会被吞掉。该保护不覆盖KeyboardInterrupt、SystemExit等BaseException，它们仍可能传播。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>尝试追加integrity分片；异常时输出脱敏告警并返回False，不再创建新的issue。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>成功时追加IntegrityIssue；失败时最多产生告警。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>完整性分片追加的Exception不会触发递归issue写入，告警sink的Exception也不会覆盖业务结果。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>该fail-open不捕获BaseException；返回True也只代表当前分片追加成功，不代表最终P0 merge完整。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li><code>quality/aggregator.py::merge_quality_run</code></li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--required" id="source-card-D20-S10" data-default-open="false" data-source-lines="20">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>主事实写失败降级为IntegrityIssue</strong><small>quality/collector.py · 20行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D20-S10">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/quality/test_quality_collector.py</code></span>
+<span><strong>测试函数</strong><code>test_primary_write_failure_becomes_integrity_issue</code></span>
+<span><strong>pytest nodeid</strong><code>tests/quality/test_quality_collector.py::test_primary_write_failure_becomes_integrity_issue</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>quality/collector.py::QualityCollector._record_primary</code></span>
+<span><strong>真实行数</strong>20</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>Case或Request主事实追加抛出Exception时，Collector如何尝试降级并让调用方判断失败？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制主事实写失败降级为IntegrityIssue选段1" aria-describedby="source-copy-status-D20-S10-1" aria-controls="source-code-D20-S10-1" data-source-target="source-code-D20-S10-1" data-source-status="source-copy-status-D20-S10-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D20-S10-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D20-S10-1" tabindex="0" aria-label="主事实写失败降级为IntegrityIssue，源码第101至120行，选段1"><code class="language-python" data-source-card="D20-S10" data-segment-index="1">    def _record_primary(
+        self,
+        path: Path,
+        record: CaseResult | RequestMetric,
+        *,
+        failure_code: str,
+        related_id: str,
+    ) -&gt; bool:
+        try:
+            self._append(path, record)
+            return True
+        except Exception as error:
+            self.capture_integrity(
+                source="collector",
+                code=failure_code,
+                message=f"{type(error).__name__}: {_safe_message(error)}",
+                related_id=related_id,
+                severity=IssueSeverity.ERROR,
+            )
+            return False</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D20-S10" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：主分片追加抛出普通Exception后，Collector尝试写入ERROR级IntegrityIssue，并无论该尝试是否成功都返回False，让调用方识别主写入失败。机制：_record_primary传入failure_code和related_id调用capture_integrity，但忽略其返回值；BaseException仍可能传播。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>正常追加返回True；Exception发生时尝试记录collector来源、failure_code和关联ID的ERROR issue，然后返回False。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>写主分片，或在失败时尝试写integrity分片。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>主事实追加的Exception会触发一次完整性降级尝试，并以False显式报告主写入失败。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不保证IntegrityIssue一定落盘，也不捕获BaseException；Collector还不负责跨worker扫描或最终P0去重、reconcile和原子输出。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/quality/test_quality_collector.py::test_primary_write_failure_becomes_integrity_issue</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li><code>quality/aggregator.py::merge_quality_run</code></li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--evidence" id="source-card-D20-T1" data-default-open="false" data-source-lines="9">
+<summary class="source-card__summary">
+<span class="source-importance">测试证据</span>
+<span><strong>证据：Collector创建worker专属空分片</strong><small>tests/quality/test_quality_collector.py · 9行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D20-T1">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/quality/test_quality_collector.py</code></span>
+<span><strong>测试函数</strong><code>test_collector_initializes_worker_owned_shards</code></span>
+<span><strong>pytest nodeid</strong><code>tests/quality/test_quality_collector.py::test_collector_initializes_worker_owned_shards</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>tests/quality/test_quality_collector.py::test_collector_initializes_worker_owned_shards</code></span>
+<span><strong>真实行数</strong>9</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>测试如何同时验证三类分片命名与初始空内容？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制证据：Collector创建worker专属空分片选段1" aria-describedby="source-copy-status-D20-T1-1" aria-controls="source-code-D20-T1-1" data-source-target="source-code-D20-T1-1" data-source-status="source-copy-status-D20-T1-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D20-T1-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D20-T1-1" tabindex="0" aria-label="证据：Collector创建worker专属空分片，源码第78至86行，选段1"><code class="language-python" data-source-card="D20-T1" data-segment-index="1">def test_collector_initializes_worker_owned_shards(tmp_path):
+    collector = QualityCollector(_run_context(tmp_path))
+
+    assert collector.paths.cases.name == "cases-serial-pool-master.jsonl"
+    assert collector.paths.requests.name == "requests-serial-pool-master.jsonl"
+    assert collector.paths.integrity.name == "integrity-serial-pool-master.jsonl"
+    assert collector.paths.cases.read_text(encoding="utf-8") == ""
+    assert collector.paths.requests.read_text(encoding="utf-8") == ""
+    assert collector.paths.integrity.read_text(encoding="utf-8") == ""</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D20-T1" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该测试只证明execution_id与worker_id进入三类分片名，且初始化内容为空。机制：以serial-pool/master上下文创建Collector，逐一断言cases、requests、integrity文件名和空文本；不证明已采集或已聚合。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>用serial-pool/master上下文创建Collector，断言三个文件名和空文本。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>在临时目录初始化三个Quality分片。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>execution_id与worker_id进入分片名，且三类分片独立初始化。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>空分片不证明采集已发生，也不证明aggregator已运行。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/quality/test_quality_collector.py::test_collector_initializes_worker_owned_shards</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li><code>quality/aggregator.py::merge_quality_run</code></li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--evidence" id="source-card-D20-T2" data-default-open="false" data-source-lines="17">
+<summary class="source-card__summary">
+<span class="source-importance">测试证据</span>
+<span><strong>证据：Adapter采集异常fail-open并记录完整性</strong><small>tests/quality/test_runtime_adapter.py · 17行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D20-T2">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/quality/test_runtime_adapter.py</code></span>
+<span><strong>测试函数</strong><code>test_adapter_request_failure_is_fail_open_and_records_integrity</code></span>
+<span><strong>pytest nodeid</strong><code>tests/quality/test_runtime_adapter.py::test_adapter_request_failure_is_fail_open_and_records_integrity</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>tests/quality/test_runtime_adapter.py::test_adapter_request_failure_is_fail_open_and_records_integrity</code></span>
+<span><strong>真实行数</strong>17</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>record_response抛异常后，测试为何仍能继续读取integrity分片？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制证据：Adapter采集异常fail-open并记录完整性选段1" aria-describedby="source-copy-status-D20-T2-1" aria-controls="source-code-D20-T2-1" data-source-target="source-code-D20-T2-1" data-source-status="source-copy-status-D20-T2-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D20-T2-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D20-T2-1" tabindex="0" aria-label="证据：Adapter采集异常fail-open并记录完整性，源码第70至86行，选段1"><code class="language-python" data-source-card="D20-T2" data-segment-index="1">def test_adapter_request_failure_is_fail_open_and_records_integrity(
+    semantic_runtime,
+    monkeypatch,
+):
+    hooks = QualityRuntimeHooks()
+    context = _context()
+    hooks.request_started(context)
+    monkeypatch.setattr(
+        "quality.request_metrics.record_response",
+        lambda context, response: (_ for _ in ()).throw(RuntimeError("token=secret")),
+    )
+
+    hooks.request_succeeded(context, _response())
+
+    issues = read_jsonl(semantic_runtime.p0.paths.integrity)
+    assert issues[-1]["code"] == "request_capture_failed"
+    assert "secret" not in issues[-1]["message"]</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D20-T2" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该测试只证明record_response抛RuntimeError不会传播，并产生脱敏的request_capture_failed记录。机制：先启动请求捕获，注入异常后调用request_succeeded，再读取integrity分片检查代码且消息不含secret。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>启动Request捕获，注入record_response异常，调用request_succeeded后断言issue代码与脱敏消息。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>制造Request采集失败并写入integrity分片。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>测试证明RuntimeError未传播，并把旁路失败转换为request_capture_failed。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不覆盖KeyboardInterrupt、SystemExit等BaseException，也不涉及CaseResult构造或最终P0 merge。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/quality/test_runtime_adapter.py::test_adapter_request_failure_is_fail_open_and_records_integrity</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li><code>quality/pytest_plugin_runtime.py::pytest_runtest_logreport</code></li><li><code>quality/aggregator.py::merge_quality_run</code></li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--evidence" id="source-card-D20-T3" data-default-open="false" data-source-lines="15">
+<summary class="source-card__summary">
+<span class="source-importance">测试证据</span>
+<span><strong>证据：主分片写失败转为IntegrityIssue</strong><small>tests/quality/test_quality_collector.py · 15行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D20-T3">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/quality/test_quality_collector.py</code></span>
+<span><strong>测试函数</strong><code>test_primary_write_failure_becomes_integrity_issue</code></span>
+<span><strong>pytest nodeid</strong><code>tests/quality/test_quality_collector.py::test_primary_write_failure_becomes_integrity_issue</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>tests/quality/test_quality_collector.py::test_primary_write_failure_becomes_integrity_issue</code></span>
+<span><strong>真实行数</strong>15</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>cases分片写入失败后，返回值、issue代码和敏感信息分别如何断言？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制证据：主分片写失败转为IntegrityIssue选段1" aria-describedby="source-copy-status-D20-T3-1" aria-controls="source-code-D20-T3-1" data-source-target="source-code-D20-T3-1" data-source-status="source-copy-status-D20-T3-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D20-T3-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D20-T3-1" tabindex="0" aria-label="证据：主分片写失败转为IntegrityIssue，源码第142至156行，选段1"><code class="language-python" data-source-card="D20-T3" data-segment-index="1">def test_primary_write_failure_becomes_integrity_issue(tmp_path, monkeypatch):
+    collector = QualityCollector(_run_context(tmp_path))
+    original_append = __import__("quality.collector", fromlist=["append_jsonl"]).append_jsonl
+
+    def fail_case_write(path, record):
+        if path == collector.paths.cases:
+            raise OSError("Authorization=secret?token=secret")
+        return original_append(path, record)
+
+    monkeypatch.setattr("quality.collector.append_jsonl", fail_case_write)
+
+    assert collector.record_case(_case_result()) is False
+    issues = read_jsonl(collector.paths.integrity)
+    assert issues[0]["code"] == "case_write_failed"
+    assert "secret" not in issues[0]["message"]</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D20-T3" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该测试只证明cases分片写入失败时record_case返回False，并记录脱敏的case_write_failed。机制：仅对cases路径注入OSError，随后读取integrity分片断言代码和秘密缺失；CaseResult来自测试fixture。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>仅让cases路径抛OSError，调用record_case，随后读取integrity分片检查失败代码与脱敏结果。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>模拟CaseResult分片写失败并产生ERROR完整性记录。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Collector主事实失败返回False，并把case_write_failed写入独立integrity分片。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>测试中的CaseResult由fixture构造；生产环境CaseResult仍由pytest_runtest_logreport产生，最终merge仍属于aggregator。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/quality/test_quality_collector.py::test_primary_write_failure_becomes_integrity_issue</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li><code>quality/pytest_plugin_runtime.py::pytest_runtest_logreport</code></li><li><code>quality/aggregator.py::merge_quality_run</code></li>
+</ul></div>
+</div>
+</details>
+</div>
+</section>
+<!-- SOURCE_CARDS:DAY20:END -->
+    <section id="lesson-flow-summary" data-section><p class="kicker">Flow summary · Runtime facts</p><h2>第20天总图：中性运行事件如何变成worker分片</h2><div class="lesson-flow-map"><p class="flow-map-caption">同一运行过程产生P0、Semantic和Case三路事实，采集阶段不把它们提前揉成结论。</p><div class="flow-map-spine"><div class="flow-stage"><span class="flow-stage__index">1</span><div class="flow-stage__function"><h3>pytest runtime <code>pytest_configure()</code></h3><p>worker创建RunContext、P0 Collector、SemanticCollector并绑定Adapter。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>worker身份</h3><p>run_id、execution_id、worker_id和独立分片路径。</p></div></div><div class="flow-stage"><span class="flow-stage__index">2</span><div class="flow-stage__function"><h3>common Runtime Hooks</h3><p>HTTP、Retry、Polling、SSE发送中性事件。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>运行数据</h3><p>Context、Response、异常、Group和Operation句柄。</p></div></div><div class="flow-stage"><span class="flow-stage__index">3</span><div class="flow-stage__function"><h3><code>QualityRuntimeHooks</code></h3><p>把事件窄映射给request_metrics与semantic_context。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>P0 / Semantic草稿</h3><p>RequestMetric、Request Group、Polling Session、Operation引用。</p></div></div><div class="flow-stage"><span class="flow-stage__index">4</span><div class="flow-stage__function"><h3><code>pytest_runtest_logreport()</code></h3><p>按setup/call/teardown记录CaseResult。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>pytest事实</h3><p>case_id、invocation_id、phase、raw/final status和duration。</p></div></div><div class="flow-stage"><span class="flow-stage__index">5</span><div class="flow-stage__function"><h3>Collector / SemanticCollector</h3><p>按execution与worker写独立JSONL，失败写Integrity。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>产物状态</h3><p>shards已写但未归并；Day21/22分别提交P0与Semantic。</p></div></div></div><div class="flow-fact-footer"><strong>三路事实</strong><p>RequestMetric回答attempt发生了什么；Semantic回答对象如何关联；CaseResult回答pytest阶段发生了什么。</p></div></div></section>
+
     <section id='quiz' data-section><p class='kicker'>11 · Knowledge check</p><h2>知识自测</h2><div class='quiz' data-answer='c'><strong>1. QualityRuntimeHooks是否拥有HTTP重试决策？</strong><label><input type='radio' name='q1' value='a'>拥有全部决策</label><label><input type='radio' name='q1' value='b'>只拥有最后一次</label><label><input type='radio' name='q1' value='c'>不拥有，只翻译已经发生的事件</label></div><div class='quiz' data-answer='b'><strong>2. xdist controller为什么不创建Collector？</strong><label><input type='radio' name='q2' value='a'>它没有run_id</label><label><input type='radio' name='q2' value='b'>事实应由实际执行测试的worker拥有</label><label><input type='radio' name='q2' value='c'>JSONL不支持controller</label></div><div class='quiz' data-answer='a'><strong>3. 一次Retry有三个真实attempt，应产生多少RequestMetric？</strong><label><input type='radio' name='q3' value='a'>三个</label><label><input type='radio' name='q3' value='b'>一个</label><label><input type='radio' name='q3' value='c'>零个</label></div><div class='quiz' data-answer='c'><strong>4. CaseResult为什么按setup、call、teardown分别记录？</strong><label><input type='radio' name='q4' value='a'>为了增加文件大小</label><label><input type='radio' name='q4' value='b'>为了替代JUnit</label><label><input type='radio' name='q4' value='c'>先保留阶段事实，归并时再计算invocation终态</label></div><div class='quiz' data-answer='b'><strong>5. 主分片写失败如何表达？</strong><label><input type='radio' name='q5' value='a'>修改业务响应</label><label><input type='radio' name='q5' value='b'>记录完整性Issue并保持业务控制流</label><label><input type='radio' name='q5' value='c'>伪造成功记录</label></div><button class='primary' id='submit-quiz'>提交答案</button><div class='verdict' id='quiz-summary'>建议达到4/5再进入门禁。</div></section>
 
-    <section id='gate' data-section><p class='kicker'>12 · Exit gate</p><h2>本课门禁</h2><div class='gate-list'><label class='gate'><input type='checkbox' data-gate='mapping'><span>已完成中性事件到P0/Semantic事实映射表。</span></label><label class='gate'><input type='checkbox' data-gate='worker'><span>能解释controller与worker在Quality插件中的不同职责。</span></label><label class='gate'><input type='checkbox' data-gate='attempt'><span>能说明RequestMetric为何按真实attempt记录。</span></label><label class='gate'><input type='checkbox' data-gate='case'><span>能追踪CaseContext、JUnit identity和三阶段CaseResult。</span></label><label class='gate'><input type='checkbox' data-gate='evidence'><span>已核对本轮分片、P0 manifest和Semantic manifest。</span></label></div><div class='notes'><label>门禁成果位置 / 口头记录<textarea data-note='gate-record' placeholder='填写事件映射、分片台账或第4周复盘的位置；口头验收时记录复述要点'></textarea></label></div><div class='callout good'><strong>验收句：</strong>我能从worker绑定追踪到Case、Request和Semantic分片，并证明适配器只翻译运行事件，采集异常只进入完整性事实。</div><div class='footer'><div class='footer-links'><a class='button' href='第19天-可选质量能力与执行阶段.html'>← 上一课</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a><a class='button' href='第21天-质量事实归并与完整性.html'>下一课 →</a></div></div></section>
-  </article></main><script src='六周课程页.js'></script>
+    <section id='gate' data-section><p class='kicker'>12 · Exit gate</p><h2>本课门禁</h2><div class='gate-list'><label class='gate'><input type='checkbox' data-gate='mapping'><span>已完成中性事件到P0/Semantic事实映射表。</span></label><label class='gate'><input type='checkbox' data-gate='worker'><span>能解释controller与worker在Quality插件中的不同职责。</span></label><label class='gate'><input type='checkbox' data-gate='attempt'><span>能说明RequestMetric为何按真实attempt记录。</span></label><label class='gate'><input type='checkbox' data-gate='case'><span>能追踪CaseContext、JUnit identity和三阶段CaseResult。</span></label><label class='gate'><input type='checkbox' data-gate='evidence'><span>已核对本轮分片、P0 manifest和Semantic manifest。</span></label></div><div class='notes'><label>门禁成果位置 / 口头记录<textarea data-note='gate-record' placeholder='填写事件映射、分片台账或第4周复盘的位置；口头验收时记录复述要点'></textarea></label></div><div class='callout good'><strong>验收句：</strong>我能从worker绑定追踪到Case、Request和Semantic分片，并证明适配器只翻译运行事件；普通Exception级采集失败进入完整性事实，BaseException仍传播。</div><div class='footer'><div class='footer-links'><a class='button' href='第19天-可选质量能力与执行阶段.html'>← 上一课</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a><a class='button' href='第21天-质量事实归并与完整性.html'>下一课 →</a></div></div></section>
+  </article></main><script src="六周课程页.js"></script>
 </body></html>

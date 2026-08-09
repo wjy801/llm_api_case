@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="接口测试框架源码架构与证据链六周课程第2天：离线黄金路径与模块四件套">
   <title>第02天｜离线黄金路径与模块四件套</title>
+  <link rel="stylesheet" href="六周课程页.css">
   <style>
     :root {
       color-scheme: light;
@@ -318,6 +319,7 @@
       </div>
       <nav class="nav-list" id="nav-list">
         <a href="#learning-goals"><span class="nav-number">01</span><span>目标与前置复盘</span></a>
+        <a href="#code-first-walkthrough"><span class="nav-number">C</span><span>代码先行精讲</span></a>
         <a href="#four-parts"><span class="nav-number">02</span><span>模块四件套</span></a>
         <a href="#golden-path"><span class="nav-number">03</span><span>黄金路径播放器</span></a>
         <a href="#call-chain"><span class="nav-number">04</span><span>调用链与所有权</span></a>
@@ -326,6 +328,8 @@
         <a href="#reading-lab"><span class="nav-number">07</span><span>阅读与离线实践</span></a>
         <a href="#constraint-routing"><span class="nav-number">08</span><span>约束与归属练习</span></a>
         <a href="#design-boundary"><span class="nav-number">D</span><span>设计选择与边界</span></a>
+        <a href="#source-code"><span class="nav-number">S</span><span>关键源码</span></a>
+        <a href="#lesson-flow-summary"><span class="nav-number">F</span><span>课后流转总图</span></a>
         <a href="#knowledge-check"><span class="nav-number">09</span><span>知识自测</span></a>
         <a href="#exit-gate"><span class="nav-number">10</span><span>本课门禁</span></a>
       </nav>
@@ -380,6 +384,62 @@
             <div class="chain-node">Assertions<br>解释结果</div>
           </div>
           <div class="callout blue"><strong>本课范围护栏</strong>Retry、Polling、TestContext、Capture、Runtime Hooks和线程上下文都只作为“已被公共层提供的能力”观察。它们的状态机、边界条件和实现算法会在后续课程单独拆解。</div>
+        </section>
+
+        <section id="code-first-walkthrough" data-section>
+          <p class="section-kicker">代码先行 · 一条普通module业务链</p>
+          <h2>先抓住测试中的Act，再辨认模块四件套</h2>
+          <p class="section-lead">示例用例运行在离线环境中只是为了稳定复现。本节不讲离线服务、fixture或环境怎样创建，只把它当作普通module用例，追踪Test怎样依次调用Task、Request和Assertions。</p>
+          <div class="guided-start">
+            <div class="guided-start__header"><h3>本节主线：Echo业务动作的四层分工</h3><p>同一份payload向下变成HTTP请求，Response向上变成领域结论。每一层只处理一种变化。</p></div>
+            <div class="guided-command"><strong>先运行这个用例</strong><code>python -m pytest -q module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline::test_request_uses_default_middleware_and_runtime_metadata</code></div>
+            <div class="guided-rule"><strong>定位信息</strong>用例文件：<code>module/offline_framework_example/test_request_pipeline.py</code>；类方法：<code>TestRequestPipeline.test_request_uses_default_middleware_and_runtime_metadata</code>；只观察普通module调用过程。</div>
+            <div class="guided-chain" aria-label="第2天代码阅读顺序"><span>Test组织场景</span><b>→</b><span>Task表达动作</span><b>→</b><span>Request翻译协议</span><b>→</b><span>BaseRequest执行</span><b>→</b><span>Assertions解释结果</span></div>
+          </div>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">1</span><div><h3>Test只组织输入、动作和验收</h3><p>以下是测试方法中的连续业务选段；后续中间件和运行事实断言未展示。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline::test_request_uses_default_middleware_and_runtime_metadata · 连续选段</span><pre><code>        payload = self.task.build_echo_payload()
+
+        response = self.task.submit_echo(self.request, payload)
+
+        self.assertions.assert_echo_accepted(response, payload)</code></pre></div><div class="guided-explanation"><h4>三行代码对应AAA</h4><div class="guided-point"><strong>Arrange</strong><p><code>build_echo_payload()</code>准备业务输入，但不决定HTTP路径。</p></div><div class="guided-point success"><strong>Act</strong><p><code>submit_echo()</code>是业务可读入口；测试不直接拼URL或调用Session。</p></div><div class="guided-point"><strong>Assert</strong><p><code>assert_echo_accepted()</code>把通用HTTP结果解释成Echo领域合同。</p></div></div></div>
+          </article>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">2</span><div><h3>Task把“我要做什么”写成业务动作</h3><p>它接收Request对象和payload，不持有HTTP细节。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">module/offline_framework_example/task.py::OfflineFrameworkTask.submit_echo</span><pre><code>def submit_echo(
+        self,
+        request_client: OfflineFrameworkRequest,
+        payload: dict[str, Any],
+    ) -&gt; requests.Response:
+        return request_client.echo(payload)</code></pre></div><div class="guided-explanation"><h4>薄函数仍然有边界价值</h4><div class="guided-point"><strong>输入</strong><p>业务payload和模块Request实例。</p></div><div class="guided-point"><strong>职责</strong><p>把测试语言“提交Echo”转交给Request语言<code>echo()</code>，不重复协议配置。</p></div><div class="guided-point warning"><strong>不负责</strong><p>不拼接<code>/v1/echo</code>，不选择POST，也不判断响应是否accepted。</p></div></div></div>
+          </article>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">3</span><div><h3>Request把业务动作翻译成HTTP协议</h3><p>路径、method、body位置和运行时元数据在这里被确定。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">module/offline_framework_example/request.py::OfflineFrameworkRequest.echo</span><pre><code>def echo(self, payload: dict[str, Any]) -&gt; requests.Response:
+        return self.post(
+            self.echo_path,
+            json=payload,
+            runtime_metadata=runtime_metadata(
+                RuntimeOperationKind.HTTP,
+                name="offline_echo",
+                role=RuntimeTrafficRole.WORKLOAD,
+            ),
+        )</code></pre></div><div class="guided-explanation"><h4>这里发生协议翻译</h4><div class="guided-point"><strong>业务名</strong><p><code>echo(payload)</code>对上层保持领域可读。</p></div><div class="guided-point success"><strong>HTTP事实</strong><p>下层收到POST、<code>echo_path</code>和<code>json=payload</code>。</p></div><div class="guided-point"><strong>证据标签</strong><p><code>runtime_metadata</code>描述Operation身份；具体消费过程留到后续课程。</p></div></div></div>
+          </article>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">4</span><div><h3>Assertions把Response解释成领域结论</h3><p>通用断言被组合成Echo接口的完整成功合同。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">module/offline_framework_example/assertions.py::OfflineFrameworkAssertions.assert_echo_accepted</span><pre><code>def assert_echo_accepted(
+        self,
+        response: requests.Response,
+        expected_payload: dict[str, Any],
+    ) -&gt; requests.Response:
+        self.assert_status_code(response, 200)
+        self.assert_json_value(response, "$.status", "accepted")
+        self.assert_json_value(response, "$.authorization_present", True)
+        self.assert_json_value(response, "$.received", expected_payload)
+        return response</code></pre></div><div class="guided-explanation"><h4>断言为什么不散落在Test里</h4><div class="guided-point"><strong>传输层</strong><p>状态码必须是200。</p></div><div class="guided-point"><strong>领域层</strong><p>状态、鉴权存在性和回显payload共同定义“Echo已接受”。</p></div><div class="guided-point success"><strong>返回原对象</strong><p>成功后返回同一个Response，便于继续链式核对其他事实。</p></div></div></div>
+          </article>
+          <div class="guided-conclusion"><h3>概念章节现在是第二遍复盘</h3><p>接下来的“四件套、黄金路径和调用链”不再是需要先背的定义，而是对刚才四段代码的归纳：Test组织、Task表达、Request翻译、Assertions解释。</p></div>
         </section>
 
         <section id="four-parts" data-section>
@@ -609,7 +669,318 @@ OfflineFrameworkTask</code></pre>
           </div>
         </section>
 
-        <section id="knowledge-check" data-section>
+<!-- SOURCE_CARDS:DAY2:START -->
+<section id="source-code" class="source-section" data-section aria-labelledby="source-code-title">
+<div class="source-section__header">
+<p class="source-section__kicker">Source Reading · Static Snapshot</p>
+<h2 id="source-code-title">关键源码</h2>
+<p>以下源码由当前工作区直接提取，经教学裁剪、真实行数统计和统一HTML转义后静态写入。本页共71行源码，浏览页面时不会读取仓库文件。</p>
+</div>
+<div class="source-card-list">
+<details class="source-card source-card--support" id="source-card-D02-S0" data-default-open="false" data-source-lines="10">
+<summary class="source-card__summary">
+<span class="source-importance">支撑</span>
+<span><strong>测试类的autouse fixture所有权</strong><small>module/offline_framework_example/test_request_pipeline.py · 10行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D02-S0">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>module/offline_framework_example/test_request_pipeline.py</code></span>
+<span><strong>类方法</strong><code>TestRequestPipeline.test_request_uses_default_middleware_and_runtime_metadata</code></span>
+<span><strong>pytest nodeid</strong><code>module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline::test_request_uses_default_middleware_and_runtime_metadata</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline._setup</code></span>
+<span><strong>真实行数</strong>10</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>测试方法中的service、request、task和assertions由谁准备？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制测试类的autouse fixture所有权选段1" aria-describedby="source-copy-status-D02-S0-1" aria-controls="source-code-D02-S0-1" data-source-target="source-code-D02-S0-1" data-source-status="source-copy-status-D02-S0-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D02-S0-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D02-S0-1" tabindex="0" aria-label="测试类的autouse fixture所有权，源码第27至36行，选段1"><code class="language-python" data-source-card="D02-S0" data-segment-index="1">    @pytest.fixture(autouse=True)
+    def _setup(
+        self,
+        offline_service: OfflineService,
+        offline_request: OfflineFrameworkRequest,
+    ):
+        self.service = offline_service
+        self.request = offline_request
+        self.assertions = OfflineFrameworkAssertions()
+        self.task = OfflineFrameworkTask()</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D02-S0" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>autouse 的 _setup fixture 准备四件套：pytest 注入 offline_service、offline_request 并保存为实例属性；fixture 再创建 OfflineFrameworkTask 与 OfflineFrameworkAssertions。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>pytest先注入离线service与request，再把四个协作者挂到测试实例。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>只建立每个测试函数的实例属性，不发送HTTP。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>后续测试方法依赖同文件autouse fixture，而不是隐式全局对象。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不展开离线service/request fixture自身如何构造。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline::test_request_uses_default_middleware_and_runtime_metadata</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<section class="source-card source-card--required source-card--expanded" id="source-card-D02-S1" data-default-open="true" data-source-lines="33">
+<div class="source-card__heading">
+<span class="source-importance">必读</span>
+<div><h3>Test组织Echo请求主链并核对运行事实</h3><p>module/offline_framework_example/test_request_pipeline.py · 33行</p></div>
+</div>
+<div class="source-card__body">
+<div class="source-example source-example--source" data-source-example="D02-S1">
+<p class="source-example__label">本段讲解用例 · 本卡测试源码</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>module/offline_framework_example/test_request_pipeline.py</code></span>
+<span><strong>类方法</strong><code>TestRequestPipeline.test_request_uses_default_middleware_and_runtime_metadata</code></span>
+<span><strong>pytest nodeid</strong><code>module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline::test_request_uses_default_middleware_and_runtime_metadata</code></span>
+</div>
+<p class="source-example__note">本卡展示的源码本身就是测试用例，定位直接指向当前测试函数或类方法。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline.test_request_uses_default_middleware_and_runtime_metadata</code></span>
+<span><strong>真实行数</strong>33</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>Arrange、Act、Assert分别调用了四件套中的哪一层？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Test组织Echo请求主链并核对运行事实选段1" aria-describedby="source-copy-status-D02-S1-1" aria-controls="source-code-D02-S1-1" data-source-target="source-code-D02-S1-1" data-source-status="source-copy-status-D02-S1-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D02-S1-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D02-S1-1" tabindex="0" aria-label="Test组织Echo请求主链并核对运行事实，源码第38至70行，选段1"><code class="language-python" data-source-card="D02-S1" data-segment-index="1">    def test_request_uses_default_middleware_and_runtime_metadata(
+        self,
+        offline_runtime_recorder: OfflineRuntimeRecorder,
+    ) -&gt; None:
+        payload = self.task.build_echo_payload()
+
+        response = self.task.submit_echo(self.request, payload)
+
+        self.assertions.assert_echo_accepted(response, payload)
+        assert self.request.config.base_url == self.service.base_url
+        assert self.request.session.trust_env is False
+        assert tuple(type(middleware) for middleware in self.request.middlewares) == (
+            RuntimeObservationMiddleware,
+            MediaResourceMiddleware,
+            RedactionMiddleware,
+            LoggingMiddleware,
+        )
+
+        metadata = offline_runtime_recorder.operation_metadata[-1]
+        assert metadata.kind == RuntimeOperationKind.HTTP
+        assert metadata.name == "offline_echo"
+        assert metadata.role == RuntimeTrafficRole.WORKLOAD
+
+        group = offline_runtime_recorder.request_groups[-1]
+        assert group.method == "POST"
+        assert group.path == "/v1/echo"
+        assert group.protocol == "http"
+        assert group.configured_max_attempts == 1
+        assert len(group.contexts) == 1
+        assert "runtime_metadata" not in group.contexts[0].kwargs
+        assert "begin_operation" in offline_runtime_recorder.delegated_calls
+        assert "request_started" in offline_runtime_recorder.delegated_calls
+        assert self.service.state.snapshot()["endpoint_call_counts"]["echo_calls"] == 1</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D02-S1" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>Arrange 用 Task.build_echo_payload 构造载荷；Act 调用 Task.submit_echo，由其转交 Request；Assert 用 Assertions 校验领域响应，并直接核查 Request 配置、中间件、运行时记录及 Service 调用计数。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>Task构造payload并提交，Assertions校验业务响应，随后测试直接核对配置、中间件、元数据和请求组。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>通过离线服务完成一次POST，并在运行时记录器中留下HTTP操作与请求组事实。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Test负责场景编排和证据组合，不直接实现HTTP发送。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不展开BaseRequest内部中间件、Retry或Quality事件。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>本卡自身即为测试证据。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</section>
+<details class="source-card source-card--support" id="source-card-D02-S2" data-default-open="false" data-source-lines="7">
+<summary class="source-card__summary">
+<span class="source-importance">支撑</span>
+<span><strong>Task表达业务动作</strong><small>module/offline_framework_example/task.py · 7行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D02-S2">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>module/offline_framework_example/test_request_pipeline.py</code></span>
+<span><strong>类方法</strong><code>TestRequestPipeline.test_request_uses_default_middleware_and_runtime_metadata</code></span>
+<span><strong>pytest nodeid</strong><code>module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline::test_request_uses_default_middleware_and_runtime_metadata</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>module/offline_framework_example/task.py::OfflineFrameworkTask.submit_echo</code></span>
+<span><strong>真实行数</strong>7</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>Task是否自己发送HTTP？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Task表达业务动作选段1" aria-describedby="source-copy-status-D02-S2-1" aria-controls="source-code-D02-S2-1" data-source-target="source-code-D02-S2-1" data-source-status="source-copy-status-D02-S2-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D02-S2-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D02-S2-1" tabindex="0" aria-label="Task表达业务动作，源码第72至78行，选段1"><code class="language-python" data-source-card="D02-S2" data-segment-index="1">    @allure_step("提交离线Echo请求")
+    def submit_echo(
+        self,
+        request_client: OfflineFrameworkRequest,
+        payload: dict[str, Any],
+    ) -&gt; requests.Response:
+        return request_client.echo(payload)</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D02-S2" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>Task 不直接发送 HTTP。submit_echo 只接收 Request 客户端和 payload，然后返回 request_client.echo(payload) 的结果；路径、请求方法、会话与中间件处理均留在 Request 及其基础设施中。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>接收Request与payload，然后委托request_client.echo。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>自身不改变状态，返回Request产生的Response。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Task拥有业务动作命名和调用编排。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不证明HTTP中间件、重试或底层会话行为。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline::test_request_uses_default_middleware_and_runtime_metadata</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--support" id="source-card-D02-S3" data-default-open="false" data-source-lines="10">
+<summary class="source-card__summary">
+<span class="source-importance">支撑</span>
+<span><strong>Request拥有HTTP边界</strong><small>module/offline_framework_example/request.py · 10行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D02-S3">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>module/offline_framework_example/test_request_pipeline.py</code></span>
+<span><strong>类方法</strong><code>TestRequestPipeline.test_request_uses_default_middleware_and_runtime_metadata</code></span>
+<span><strong>pytest nodeid</strong><code>module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline::test_request_uses_default_middleware_and_runtime_metadata</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>module/offline_framework_example/request.py::OfflineFrameworkRequest.echo</code></span>
+<span><strong>真实行数</strong>10</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>哪一层决定POST路径、JSON参数和运行时元数据？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Request拥有HTTP边界选段1" aria-describedby="source-copy-status-D02-S3-1" aria-controls="source-code-D02-S3-1" data-source-target="source-code-D02-S3-1" data-source-status="source-copy-status-D02-S3-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D02-S3-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D02-S3-1" tabindex="0" aria-label="Request拥有HTTP边界，源码第52至61行，选段1"><code class="language-python" data-source-card="D02-S3" data-segment-index="1">    def echo(self, payload: dict[str, Any]) -&gt; requests.Response:
+        return self.post(
+            self.echo_path,
+            json=payload,
+            runtime_metadata=runtime_metadata(
+                RuntimeOperationKind.HTTP,
+                name="offline_echo",
+                role=RuntimeTrafficRole.WORKLOAD,
+            ),
+        )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D02-S3" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>Request 层决定具体请求合同：echo 使用 self.post，路径取 echo_path，业务载荷放入 json，并附加 kind 为 HTTP、name 为 offline_echo、role 为 WORKLOAD 的运行时元数据。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>把payload放入json参数，并调用继承的post方法。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>触发一次HTTP POST并携带WORKLOAD元数据。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Request是四件套中真正进入HTTP主干的一层。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不展开post内部的中间件、日志和重试实现。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline::test_request_uses_default_middleware_and_runtime_metadata</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--support" id="source-card-D02-S4" data-default-open="false" data-source-lines="11">
+<summary class="source-card__summary">
+<span class="source-importance">支撑</span>
+<span><strong>Assertions集中领域断言</strong><small>module/offline_framework_example/assertions.py · 11行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D02-S4">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>module/offline_framework_example/test_request_pipeline.py</code></span>
+<span><strong>类方法</strong><code>TestRequestPipeline.test_request_uses_default_middleware_and_runtime_metadata</code></span>
+<span><strong>pytest nodeid</strong><code>module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline::test_request_uses_default_middleware_and_runtime_metadata</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>module/offline_framework_example/assertions.py::OfflineFrameworkAssertions.assert_echo_accepted</code></span>
+<span><strong>真实行数</strong>11</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>领域响应合同由哪些基础断言组合而成？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Assertions集中领域断言选段1" aria-describedby="source-copy-status-D02-S4-1" aria-controls="source-code-D02-S4-1" data-source-target="source-code-D02-S4-1" data-source-status="source-copy-status-D02-S4-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D02-S4-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D02-S4-1" tabindex="0" aria-label="Assertions集中领域断言，源码第13至23行，选段1"><code class="language-python" data-source-card="D02-S4" data-segment-index="1">    @allure_step("校验离线Echo响应")
+    def assert_echo_accepted(
+        self,
+        response: requests.Response,
+        expected_payload: dict[str, Any],
+    ) -&gt; requests.Response:
+        self.assert_status_code(response, 200)
+        self.assert_json_value(response, "$.status", "accepted")
+        self.assert_json_value(response, "$.authorization_present", True)
+        self.assert_json_value(response, "$.received", expected_payload)
+        return response</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D02-S4" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>该领域合同由一个状态码断言和三个 JSONPath 值断言组成：响应必须为 200，status 为 accepted，authorization_present 为 true，received 与原 payload 相等；全部通过后返回原 response。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>依次校验状态码、业务状态、授权存在和回显payload，最后返回原Response。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>只读取Response；失败时抛出断言错误。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Assertions把可复用领域合同与测试编排分离。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不证明报告渲染或pytest退出码。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>module/offline_framework_example/test_request_pipeline.py::TestRequestPipeline::test_request_uses_default_middleware_and_runtime_metadata</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+</div>
+</section>
+<!-- SOURCE_CARDS:DAY2:END -->
+
+        <section id="lesson-flow-summary" data-section>
+          <p class="section-kicker">课后总结 · 函数与业务数据流</p>
+          <h2>payload怎样向下，Response怎样向上</h2>
+          <p class="section-lead">一条业务链包含两个方向：调用向下进入公共执行层，含义向上被领域断言解释。</p>
+          <div class="lesson-flow-map"><div class="flow-stage-list">
+            <article class="flow-stage"><div class="flow-stage__index">1</div><div class="flow-stage__function"><h3>Test Arrange / Act</h3><p>构造payload并调用<code>Task.submit_echo()</code>。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>业务场景</h3><p>输入是业务字段；测试只声明要执行Echo，不拥有method和path。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">2</div><div class="flow-stage__function"><h3><code>Task.submit_echo()</code></h3><p>把业务动作委托给模块Request。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>领域调用</h3><p>payload不改变；调用语言从“提交Echo”转成<code>request.echo(payload)</code>。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">3</div><div class="flow-stage__function"><h3><code>Request.echo()</code></h3><p>选择POST、路径、JSON body和Operation元数据。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>HTTP描述</h3><p>业务数据进入<code>json</code>参数；协议事实交给<code>BaseRequest</code>统一执行。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">4</div><div class="flow-stage__function"><h3>BaseRequest / Session</h3><p>公共层构造请求上下文并完成HTTP传输。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>Response事实</h3><p>下行参数变成一次请求；返回值是尚未被领域解释的Response。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">5</div><div class="flow-stage__function"><h3><code>Assertions.assert_echo_accepted()</code></h3><p>组合状态码与JSON字段断言。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>领域结论与证据</h3><p>Response被解释为“Echo接受且未改变payload”；失败时断言指出具体合同位置。</p></div></article>
+          </div><div class="flow-fact-footer"><strong>最小记忆单元</strong><p>四件套不是文件数量约定，而是变化隔离：场景变化留在Test，动作变化留在Task，协议变化留在Request，合同变化留在Assertions。</p></div></div>
+        </section>
+
+      <section id="knowledge-check" data-section>
           <p class="section-kicker">09 · 知识自测</p>
           <h2>确认你能用边界解释代码</h2>
           <p class="section-lead">建议达到4/5再完成门禁。答错时不要背答案，回到“变化原因”和“调用方向”重新判断。</p>

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="接口测试框架源码架构与证据链六周课程第15天：pytest权威收集、nodeid与marker计划、并串行互斥并集和集合守恒">
   <title>第15天｜权威收集与并串行调度</title>
+  <link rel="stylesheet" href="六周课程页.css">
   <style>
     :root{color-scheme:light;--ink:#172033;--muted:#5d6a7d;--line:#dbe4ef;--paper:#fff;--canvas:#f3f7f6;--blue:#2256d5;--blue2:#173e9d;--blue-soft:#eaf1ff;--green:#19724d;--green2:#11593b;--green-soft:#e7f8ef;--teal:#08766e;--teal-soft:#e4f7f3;--amber:#985b0b;--amber-soft:#fff4dc;--red:#b4233e;--red-soft:#fff0f2;--violet:#6741ad;--violet-soft:#f2edff;--nav:290px;--shadow:0 18px 52px rgba(31,49,74,.1)}
     *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:28px}body{margin:0;background:var(--canvas);color:var(--ink);font:16px/1.75 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}button,input,select,textarea{font:inherit}a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}code{border-radius:5px;padding:.12em .38em;background:#edf2f8;color:#a52150;font:.9em/1.5 "Cascadia Code",Consolas,monospace}pre{margin:0;overflow:auto;border-radius:12px;padding:20px;background:#111827;color:#e7edf7;line-height:1.65}pre code{padding:0;background:transparent;color:inherit}h2{margin:0 0 14px;font-size:clamp(27px,3.4vw,38px);line-height:1.25;letter-spacing:-.025em}h3{margin:24px 0 9px;line-height:1.35}p{margin:9px 0}ul,ol{padding-left:1.45em}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid var(--line);padding:12px 13px;text-align:left;vertical-align:top}th{background:#f5f8fb;color:#34435a}
@@ -29,7 +30,7 @@
   <aside class="side" id="side-nav">
     <div class="mark"><small>接口测试框架源码架构与证据链六周课程</small><h2>第15天 · 集合守恒</h2><p>第3周 / Runner、执行事实与报告</p></div>
     <nav class="nav-list" id="nav-list" aria-label="本课目录">
-      <a href="#goals"><span class="num">01</span><span>约束与不变量</span></a><a href="#authority"><span class="num">02</span><span>权威收集</span></a><a href="#facts"><span class="num">03</span><span>nodeid与marker</span></a><a href="#duplicates"><span class="num">04</span><span>重复防线</span></a><a href="#algorithm"><span class="num">05</span><span>纯分池算法</span></a><a href="#algebra"><span class="num">06</span><span>集合守恒证明</span></a><a href="#runtime"><span class="num">07</span><span>两种运行形态</span></a><a href="#evidence"><span class="num">08</span><span>证据边界</span></a><a href="#design"><span class="num">D</span><span>设计选择与边界</span></a><a href="#lab"><span class="num">09</span><span>计划验证实验室</span></a><a href="#practice"><span class="num">10</span><span>离线实践</span></a><a href="#review"><span class="num">R</span><span>第3周复盘</span></a><a href="#quiz"><span class="num">11</span><span>知识自测</span></a><a href="#gate"><span class="num">12</span><span>本课门禁</span></a>
+      <a href="#goals"><span class="num">01</span><span>约束与不变量</span></a><a href="#code-first-walkthrough"><span class="num">C</span><span>代码先行</span></a><a href="#authority"><span class="num">02</span><span>权威收集</span></a><a href="#facts"><span class="num">03</span><span>nodeid与marker</span></a><a href="#duplicates"><span class="num">04</span><span>重复防线</span></a><a href="#algorithm"><span class="num">05</span><span>纯分池算法</span></a><a href="#algebra"><span class="num">06</span><span>集合守恒证明</span></a><a href="#runtime"><span class="num">07</span><span>两种运行形态</span></a><a href="#evidence"><span class="num">08</span><span>证据边界</span></a><a href="#design"><span class="num">D</span><span>设计选择与边界</span></a><a href="#lab"><span class="num">09</span><span>计划验证实验室</span></a><a href="#practice"><span class="num">10</span><span>离线实践</span></a><a href="#review"><span class="num">R</span><span>第3周复盘</span></a><a href="#source-code"><span class="num">S</span><span>关键源码</span></a><a href="#lesson-flow-summary"><span class="num">F</span><span>课后流转总图</span></a><a href="#quiz"><span class="num">11</span><span>知识自测</span></a><a href="#gate"><span class="num">12</span><span>本课门禁</span></a>
     </nav>
     <div class="side-meter"><div class="meter-row"><span>门禁完成度</span><span id="gate-text">0/5</span></div><div class="meter-track"><div class="meter-value" id="gate-value"></div></div></div>
   </aside>
@@ -50,6 +51,154 @@
         <div class="goals"><div class="goal"><b>1</b><div><h3>唯一权威</h3><p>只让 pytest 解释收集路径、选择表达式与marker继承。</p></div></div><div class="goal"><b>2</b><div><h3>身份冻结</h3><p>把最终item映射为不可变nodeid与markers事实。</p></div></div><div class="goal"><b>3</b><div><h3>纯函数分池</h3><p>调度算法不导入pytest，不扫描文件，只消费计划。</p></div></div><div class="goal"><b>4</b><div><h3>失败优先</h3><p>重复、交集或并集不等立即拒绝，不带病执行。</p></div></div></div>
         <div class="causal"><div class="causal-node"><b>多次重新收集</b><small>插件/环境/选择条件可能变化</small></div><div class="arrow">→</div><div class="causal-node"><b>两池看到不同世界</b><small>nodeid或marker集合漂移</small></div><div class="arrow">→</div><div class="causal-node"><b>遗漏或重复执行</b><small>数量表面相近也可能错</small></div><div class="arrow">→</div><div class="causal-node"><b>质量事实失真</b><small>无法对应原始选择意图</small></div></div>
         <div class="constraint"><strong>TOC 当前约束：</strong>吞吐量不是首要瓶颈，计划的单一真相源才是。先冻结 nodeid/marker 计划并证明集合守恒，xdist worker 数才有优化意义。</div>
+      </section>
+
+      <section id="code-first-walkthrough" data-section>
+        <p class="kicker">02 · Code-first walkthrough</p><h2>从Runner安全预检追到权威items与互斥分池</h2>
+        <p class="lead">先让真实Runner形成计划，再进入pytest收集函数、collector钩子和纯分池算法。概念只在看见nodeid、markers和集合检查之后命名。</p>
+        <div class="guided-start">
+          <div class="guided-start__header"><h3>本节唯一主线：带并发配置的collect-only计划</h3><p>命令会真实导入并收集离线测试，冻结nodeid与marker并计算两池，但在Allure、Quality和执行池之前返回。</p></div>
+          <div class="guided-command"><strong>先运行这个Runner入口</strong><code>python run_master.py module/offline_framework_example --collect-only -n 2 -q</code></div>
+          <div class="guided-rule"><strong>TOC阅读规则</strong>吞吐量不是当前约束。先验证单一收集源、nodeid唯一、两池互斥且并集等于权威计划，再讨论worker数量和执行顺序。</div>
+          <div class="guided-chain"><span>runner.run</span><b>→</b><span>collect_test_case_items</span><b>→</b><span>pytest_collection_finish</span><b>→</b><span>split_test_cases</span><b>→</b><span>collect-only短路</span></div>
+        </div>
+
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">1</span><div><h3><code>runner.run()</code>先编译参数，再只调用一次权威收集</h3><p>收集失败会在任何分池或执行生命周期之前结束。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source"><span class="guided-source__location">run_orchestration/runner.py::run · 连续源码第26至45行</span><pre><code>try:
+    argument_plan = pytest_execution.partition_pytest_args(
+        extra_pytest_args or ()
+    )
+except ValueError as error:
+    print(f"Invalid pytest arguments: {error}", file=sys.stderr)
+    return pytest_execution.PYTEST_EXIT_USAGE_ERROR
+
+try:
+    collection = pytest_execution.collect_test_case_items(
+        test_path,
+        argument_plan.collection_args,
+    )
+except Exception as error:
+    print(
+        f"Authoritative pytest collection failed: "
+        f"{type(error).__name__}: {error}",
+        file=sys.stderr,
+    )
+    return pytest_execution.PYTEST_EXIT_TESTS_FAILED</code></pre></div>
+            <div class="guided-explanation"><h4>权威入口</h4><div class="guided-point"><strong>输入从哪里来</strong><p>CLI提供test_path、pytest余量和<code>-n 2</code>等编排配置。</p></div><div class="guided-point"><strong>当前消费什么</strong><p>Runner先消费参数计划，再把唯一test_path与collection_args交给收集器。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>成功结果写入<code>CollectionResult</code>；异常转换为明确错误输出和退出码。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>Runner拥有流程终点，但不自行解释nodeid或marker。</p></div><div class="guided-point warning"><strong>易混点</strong><p>“权威一次”不是缓存优化，而是保证两池看到同一个选择世界。</p></div></div>
+          </div>
+        </article>
+
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">2</span><div><h3><code>collect_test_case_items()</code>固定安全参数并调用pytest</h3><p>pytest是选择表达式、插件、nodeid和marker继承的唯一解释器。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source"><span class="guided-source__location">run_orchestration/pytest_execution.py::collect_test_case_items · 连续源码第155至181行</span><pre><code>def collect_test_case_items(
+    test_path: str | Path,
+    pytest_args: Sequence[str] = (),
+) -&gt; CollectionResult:
+    collector = _CaseCollector()
+    stdout = StringIO()
+    stderr = StringIO()
+    args = [
+        "--collect-only",
+        "-q",
+        "-o",
+        "addopts=",
+        *pytest_args,
+        str(test_path),
+    ]
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        exit_code = int(pytest.main(args, plugins=[collector]))
+
+    if collector.duplicate_nodeids:
+        duplicates = ", ".join(sorted(collector.duplicate_nodeids))
+        raise RuntimeError(f"pytest collection produced duplicate nodeids: {duplicates}")
+    return CollectionResult(
+        raw_pytest_exit_code=exit_code,
+        cases=tuple(collector.items),
+        stdout=stdout.getvalue(),
+        stderr=stderr.getvalue(),
+    )</code></pre></div>
+            <div class="guided-explanation"><h4>收集函数的事实</h4><div class="guided-point"><strong>输入从哪里来</strong><p>test_path与只允许进入收集相的参数来自Runner计划。</p></div><div class="guided-point"><strong>当前消费什么</strong><p>固定<code>--collect-only -q -o addopts=</code>后调用一次<code>pytest.main()</code>。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>退出码、不可变cases、stdout和stderr写入<code>CollectionResult</code>。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>收集器检查重复nodeid；函数把pytest原始退出事实交回Runner。</p></div><div class="guided-point warning"><strong>失败边界</strong><p>collect-only仍会导入测试与执行收集钩子；它只保证不运行测试函数。</p></div></div>
+          </div>
+        </article>
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">3</span><div><h3><code>pytest_collection_finish()</code>从最终items冻结身份事实</h3><p>调度层只需要nodeid和完整marker集合，不泄漏pytest Item对象。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source"><span class="guided-source__location">run_orchestration/pytest_execution.py::_CaseCollector.pytest_collection_finish · 连续源码第195至212行</span><pre><code>class _CaseCollector:
+    def __init__(self) -&gt; None:
+        self.items: list[CollectedTestCase] = []
+        self.duplicate_nodeids: set[str] = set()
+
+    def pytest_collection_finish(self, session: pytest.Session) -&gt; None:
+        seen: set[str] = set()
+        for item in session.items:
+            if item.nodeid in seen:
+                self.duplicate_nodeids.add(item.nodeid)
+                continue
+            seen.add(item.nodeid)
+            self.items.append(
+                CollectedTestCase(
+                    nodeid=item.nodeid,
+                    markers=frozenset(marker.name for marker in item.iter_markers()),
+                )
+            )</code></pre></div>
+            <div class="guided-explanation"><h4>身份冻结点</h4><div class="guided-point"><strong>输入从哪里来</strong><p><code>session.items</code>是pytest完成选择、参数化与marker继承后的最终结果。</p></div><div class="guided-point"><strong>当前消费什么</strong><p>钩子消费每个item的nodeid与<code>iter_markers()</code>。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>唯一项写入<code>CollectedTestCase</code>列表，重复项写入duplicate集合。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>collector拥有收集事实；外层函数看到重复集合后拒绝生成计划。</p></div><div class="guided-point warning"><strong>易混点</strong><p>marker不是只看函数装饰器；<code>iter_markers()</code>还包含类级和文件级继承。</p></div></div>
+          </div>
+        </article>
+
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">4</span><div><h3><code>split_test_cases()</code>只消费冻结计划并证明集合守恒</h3><p>纯函数不重新导入pytest、不扫描文件、不二次选择。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source"><span class="guided-source__location">run_orchestration/scheduling.py::split_test_cases · 连续源码第8至31行</span><pre><code>def split_test_cases(
+    cases: Sequence[CollectedTestCase],
+    serial_marker: str = DEFAULT_SERIAL_MARKER,
+) -&gt; tuple[tuple[str, ...], tuple[str, ...]]:
+    parallel_cases: list[str] = []
+    serial_cases: list[str] = []
+    seen: set[str] = set()
+
+    for case in cases:
+        if case.nodeid in seen:
+            raise ValueError(f"duplicate nodeid in execution plan: {case.nodeid}")
+        seen.add(case.nodeid)
+        if serial_marker in case.markers:
+            serial_cases.append(case.nodeid)
+        else:
+            parallel_cases.append(case.nodeid)
+
+    parallel = tuple(parallel_cases)
+    serial = tuple(serial_cases)
+    if set(parallel) &amp; set(serial):
+        raise ValueError("parallel and serial execution pools overlap")
+    if set(parallel) | set(serial) != seen:
+        raise ValueError("execution pool union differs from the authoritative plan")
+    return parallel, serial</code></pre></div>
+            <div class="guided-explanation"><h4>纯分池不变量</h4><div class="guided-point"><strong>输入从哪里来</strong><p>唯一输入是冻结的<code>CollectedTestCase</code>序列和serial marker名称。</p></div><div class="guided-point"><strong>当前消费什么</strong><p>每个case只检查nodeid是否重复、marker是否包含serial。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>nodeid恰好追加到parallel或serial列表，最后冻结为tuple。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>函数自己验证重复、交集和并集，不把坏计划交给执行器。</p></div><div class="guided-point success"><strong>成功/失败边界</strong><p>成功返回互斥两池；任一不变量失败立即抛错，禁止带病执行。</p></div></div>
+          </div>
+        </article>
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">5</span><div><h3>Runner打印权威计划，并在collect-only分支返回</h3><p>此时<code>-n 2</code>只描述若正式执行时的并发形态，不会启动worker。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source"><span class="guided-source__location">run_orchestration/runner.py::run · 连续源码第66至79行</span><pre><code>cases = collection.cases
+case_nodeids = tuple(case.nodeid for case in cases)
+print(f"Collected test cases: {len(cases)}")
+for nodeid in case_nodeids:
+    print(f"- {nodeid}")
+
+parallel_cases, serial_cases = scheduling.split_test_cases(
+    cases, serial_marker=serial_marker
+)
+if argument_plan.collect_only:
+    print(f"Parallel pool cases: {len(parallel_cases)}")
+    print(f"Serial pool cases: {len(serial_cases)}")
+    print(f"{len(cases)} tests collected")
+    return pytest_execution.PYTEST_EXIT_OK</code></pre></div>
+            <div class="guided-explanation"><h4>计划终点不是执行结果</h4><div class="guided-point"><strong>输入从哪里来</strong><p>cases来自唯一CollectionResult，serial marker来自CLI编排配置。</p></div><div class="guided-point"><strong>当前消费什么</strong><p>Runner消费冻结计划，打印每个nodeid并调用纯分池函数。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>总数、nodeid和两池数量写入标准输出；退出码返回0。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>collect-only分支在Allure、Quality和<code>execute_pool()</code>之前拥有最终返回权。</p></div><div class="guided-point warning"><strong>证据边界</strong><p>输出能证明收集与计划守恒，不能证明测试通过、池已执行或报告产物已生成。</p></div></div>
+          </div>
+        </article>
+        <div class="guided-conclusion"><h3>代码先行结论</h3><ol><li>pytest只收集一次并冻结最终nodeid/marker事实。</li><li>调度器只做纯分池，并用重复、交集和并集门禁保护计划。</li><li>collect-only只证明计划；正式执行必须继续使用已计划nodeid，不能重新选择。</li></ol></div>
       </section>
 
       <section id="authority" data-section>
@@ -170,6 +319,656 @@ $LASTEXITCODE  # 应为 5</code></pre></div><div class="command"><div class="com
         <h3>六维0～2统一评分</h3><p>统一维度为源码定位、调用链与状态、所有权、证据映射、设计边界和迁移能力。总分至少9/12，且所有权、证据映射不得为0分。</p>
         <div class="table-wrap"><table><thead><tr><th>维度</th><th>评分</th><th>2分判据</th></tr></thead><tbody><tr><td>源码定位</td><td><input type="number" min="0" max="2" step="1" data-note="week3-score-source" aria-label="源码定位评分"></td><td>能从测试或公开入口独立定位Streaming、Context、传播器与收集器。</td></tr><tr><td>调用链与状态</td><td><input type="number" min="0" max="2" step="1" data-note="week3-score-chain" aria-label="调用链评分"></td><td>能解释流终态、清理状态、上下文传播和收集终态。</td></tr><tr><td>所有权</td><td><input type="number" min="0" max="2" step="1" data-note="week3-score-ownership" aria-label="所有权评分"></td><td>能解释Response、cleanup、Session、参数和nodeid计划的唯一所有者。</td></tr><tr><td>证据映射</td><td><input type="number" min="0" max="2" step="1" data-note="week3-score-evidence" aria-label="证据映射评分"></td><td>能说明专项测试与collect-only分别证明什么及不能证明什么。</td></tr><tr><td>设计边界</td><td><input type="number" min="0" max="2" step="1" data-note="week3-score-boundary" aria-label="设计边界评分"></td><td>能比较ContextVar/显式传参与一次权威收集/重复收集的边界。</td></tr><tr><td>迁移能力</td><td><input type="number" min="0" max="2" step="1" data-note="week3-score-transfer" aria-label="迁移能力评分"></td><td>能把隔离与集合守恒模型独立迁移到相邻现有场景。</td></tr></tbody></table></div>
         <div class="notes-grid"><label>综合复盘增量与六维评分（复用本周主成果）<textarea data-note="week3-summary" placeholder="在同一成果中记录一处关系订正、一处相邻迁移、必要术语变化，以及六项分数和总分/12。"></textarea></label></div>
+      </section>
+
+<!-- SOURCE_CARDS:DAY15:START -->
+<section id="source-code" class="source-section" data-section aria-labelledby="source-code-title">
+<div class="source-section__header">
+<p class="source-section__kicker">Source Reading · Static Snapshot</p>
+<h2 id="source-code-title">关键源码</h2>
+<p>以下源码由当前工作区直接提取，经教学裁剪、真实行数统计和统一HTML转义后静态写入。本页共170行源码，浏览页面时不会读取仓库文件。</p>
+</div>
+<div class="source-card-list">
+<details class="source-card source-card--required" id="source-card-D15-S1" data-default-open="false" data-source-lines="6">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>pytest参数按收集与执行分相</strong><small>run_orchestration/pytest_execution.py · 6行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D15-S1">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_run_with_numprocesses_runs_parallel_pool_before_serial_pool</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_run_with_numprocesses_runs_parallel_pool_before_serial_pool</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/pytest_execution.py::PytestArgumentPlan</code></span>
+<span><strong>真实行数</strong>6</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>collection、execution、selection与collect_only为什么要分别保存？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制pytest参数按收集与执行分相选段1" aria-describedby="source-copy-status-D15-S1-1" aria-controls="source-code-D15-S1-1" data-source-target="source-code-D15-S1-1" data-source-status="source-copy-status-D15-S1-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D15-S1-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D15-S1-1" tabindex="0" aria-label="pytest参数按收集与执行分相，源码第70至75行，选段1"><code class="language-python" data-source-card="D15-S1" data-segment-index="1">@dataclass(frozen=True)
+class PytestArgumentPlan:
+    collection_args: tuple[str, ...]
+    execution_args: tuple[str, ...]
+    selection_args: tuple[str, ...]
+    collect_only: bool</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D15-S1" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：PytestArgumentPlan只表达收集、执行、选择和collect-only四类计划事实，本身不做分类。机制：冻结数据类分别保存三组参数元组和一个布尔标志，分类正确性由构造它的逻辑负责。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>数据类保存参数分相结果，不执行pytest。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>只承载不可变执行计划。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>收集参数与执行参数是不同事实。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>计划对象本身不保证参数分类正确。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<section class="source-card source-card--required source-card--expanded" id="source-card-D15-S2" data-default-open="true" data-source-lines="13">
+<div class="source-card__heading">
+<span class="source-importance">必读</span>
+<div><h3>Collector从session.items建立权威事实</h3><p>run_orchestration/pytest_execution.py · 13行</p></div>
+</div>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D15-S2">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_collect_test_case_items_reads_function_class_and_file_markers</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_collect_test_case_items_reads_function_class_and_file_markers</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/pytest_execution.py::_CaseCollector.pytest_collection_finish</code></span>
+<span><strong>真实行数</strong>13</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>nodeid、marker与重复事实真正从哪里形成？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Collector从session.items建立权威事实选段1" aria-describedby="source-copy-status-D15-S2-1" aria-controls="source-code-D15-S2-1" data-source-target="source-code-D15-S2-1" data-source-status="source-copy-status-D15-S2-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D15-S2-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D15-S2-1" tabindex="0" aria-label="Collector从session.items建立权威事实，源码第200至212行，选段1"><code class="language-python" data-source-card="D15-S2" data-segment-index="1">    def pytest_collection_finish(self, session: pytest.Session) -&gt; None:
+        seen: set[str] = set()
+        for item in session.items:
+            if item.nodeid in seen:
+                self.duplicate_nodeids.add(item.nodeid)
+                continue
+            seen.add(item.nodeid)
+            self.items.append(
+                CollectedTestCase(
+                    nodeid=item.nodeid,
+                    markers=frozenset(marker.name for marker in item.iter_markers()),
+                )
+            )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D15-S2" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：权威nodeid与marker来自pytest收集完成后的session.items，不来自后续调度推测。机制：Collector遍历item，重复nodeid记入集合；首次出现的项用item.iter_markers生成不可变marker集。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>遍历session.items，记录nodeid与iter_markers结果；重复nodeid单独登记。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>建立CollectedTestCase列表和重复nodeid集合。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>权威nodeid/marker事实由pytest collection_finish中的session.items产生。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>Collector不决定parallel或serial分池，也不执行测试函数。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_master_service_parallel_serial.py::test_collect_test_case_items_reads_function_class_and_file_markers</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</section>
+<details class="source-card source-card--required" id="source-card-D15-S3" data-default-open="false" data-source-lines="27">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>collect-only启动与重复nodeid门禁</strong><small>run_orchestration/pytest_execution.py · 27行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D15-S3">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_collect_test_case_items_reads_function_class_and_file_markers</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_collect_test_case_items_reads_function_class_and_file_markers</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/pytest_execution.py::collect_test_case_items</code></span>
+<span><strong>真实行数</strong>27</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>谁启动pytest collect-only，重复nodeid在何处阻断？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制collect-only启动与重复nodeid门禁选段1" aria-describedby="source-copy-status-D15-S3-1" aria-controls="source-code-D15-S3-1" data-source-target="source-code-D15-S3-1" data-source-status="source-copy-status-D15-S3-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D15-S3-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D15-S3-1" tabindex="0" aria-label="collect-only启动与重复nodeid门禁，源码第155至181行，选段1"><code class="language-python" data-source-card="D15-S3" data-segment-index="1">def collect_test_case_items(
+    test_path: str | Path,
+    pytest_args: Sequence[str] = (),
+) -&gt; CollectionResult:
+    collector = _CaseCollector()
+    stdout = StringIO()
+    stderr = StringIO()
+    args = [
+        "--collect-only",
+        "-q",
+        "-o",
+        "addopts=",
+        *pytest_args,
+        str(test_path),
+    ]
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        exit_code = int(pytest.main(args, plugins=[collector]))
+
+    if collector.duplicate_nodeids:
+        duplicates = ", ".join(sorted(collector.duplicate_nodeids))
+        raise RuntimeError(f"pytest collection produced duplicate nodeids: {duplicates}")
+    return CollectionResult(
+        raw_pytest_exit_code=exit_code,
+        cases=tuple(collector.items),
+        stdout=stdout.getvalue(),
+        stderr=stderr.getvalue(),
+    )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D15-S3" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该入口启动collect-only，并在返回CollectionResult前阻断重复nodeid。机制：组合--collect-only、-q、清空addopts、阶段参数和路径调用pytest.main，收集退出码与items；发现重复即抛RuntimeError。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>构造collect-only参数并运行pytest插件，检查collector重复集合，再返回退出码、cases和输出。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>执行一次pytest权威收集，不运行正常测试阶段。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>收集入口通过pytest.main获取原始退出码和Collector事实，并拒绝重复nodeid。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>collect-only结果不证明测试已执行，也不创建并串行池。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_master_service_parallel_serial.py::test_collect_test_case_items_reads_function_class_and_file_markers</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--support" id="source-card-D15-S4" data-default-open="false" data-source-lines="43">
+<summary class="source-card__summary">
+<span class="source-importance">支撑</span>
+<span><strong>未知参数共享与阶段参数分流</strong><small>run_orchestration/pytest_execution.py · 43行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D15-S4">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_run_with_numprocesses_runs_parallel_pool_before_serial_pool</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_run_with_numprocesses_runs_parallel_pool_before_serial_pool</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/pytest_execution.py::partition_pytest_args</code></span>
+<span><strong>真实行数</strong>43</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>选择参数、执行参数和未知插件参数分别进入哪些阶段？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制未知参数共享与阶段参数分流选段1" aria-describedby="source-copy-status-D15-S4-1" aria-controls="source-code-D15-S4-1" data-source-target="source-code-D15-S4-1" data-source-status="source-copy-status-D15-S4-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D15-S4-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D15-S4-1" tabindex="0" aria-label="未知参数共享与阶段参数分流，源码第104至116行，选段1"><code class="language-python" data-source-card="D15-S4" data-segment-index="1">def partition_pytest_args(pytest_args: Sequence[str]) -&gt; PytestArgumentPlan:
+    collection_args: list[str] = []
+    execution_args: list[str] = []
+    selection_args: list[str] = []
+    collect_only = False
+    args = list(pytest_args)
+    index = 0
+    while index &lt; len(args):
+        arg = args[index]
+        if arg in COLLECT_ONLY_ARGS:
+            collect_only = True
+            index += 1
+            continue</code></pre>
+</div>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制未知参数共享与阶段参数分流选段2" aria-describedby="source-copy-status-D15-S4-2" aria-controls="source-code-D15-S4-2" data-source-target="source-code-D15-S4-2" data-source-status="source-copy-status-D15-S4-2">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D15-S4-2" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D15-S4-2" tabindex="0" aria-label="未知参数共享与阶段参数分流，源码第117至124行，选段2"><code class="language-python" data-source-card="D15-S4" data-segment-index="2">        if arg in _SELECTION_OPTIONS_WITH_VALUE:
+            if index + 1 &gt;= len(args):
+                raise ValueError(f"pytest selection option requires a value: {arg}")
+            pair = [arg, args[index + 1]]
+            collection_args.extend(pair)
+            selection_args.extend(pair)
+            index += 2
+            continue</code></pre>
+</div>
+<p class="source-omission">省略说明：省略--option=value形式的选择参数分支；下一代码块保留执行参数与未知插件参数。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制未知参数共享与阶段参数分流选段3" aria-describedby="source-copy-status-D15-S4-3" aria-controls="source-code-D15-S4-3" data-source-target="source-code-D15-S4-3" data-source-status="source-copy-status-D15-S4-3">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D15-S4-3" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D15-S4-3" tabindex="0" aria-label="未知参数共享与阶段参数分流，源码第130至145行，选段3"><code class="language-python" data-source-card="D15-S4" data-segment-index="3">        if arg in _EXECUTION_OPTIONS_WITH_VALUE:
+            if index + 1 &gt;= len(args):
+                raise ValueError(f"pytest execution option requires a value: {arg}")
+            execution_args.extend([arg, args[index + 1]])
+            index += 2
+            continue
+        if arg.startswith(_EXECUTION_OPTION_PREFIXES) or arg in _EXECUTION_ONLY_FLAGS:
+            execution_args.append(arg)
+            index += 1
+            continue
+
+        # Unknown/plugin arguments are shared to preserve their established
+        # behavior without attempting to reimplement pytest's full parser.
+        collection_args.append(arg)
+        execution_args.append(arg)
+        index += 1</code></pre>
+</div>
+<p class="source-omission">省略说明：省略循环后的空行；下一代码块保留不可变计划返回。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制未知参数共享与阶段参数分流选段4" aria-describedby="source-copy-status-D15-S4-4" aria-controls="source-code-D15-S4-4" data-source-target="source-code-D15-S4-4" data-source-status="source-copy-status-D15-S4-4">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D15-S4-4" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D15-S4-4" tabindex="0" aria-label="未知参数共享与阶段参数分流，源码第147至152行，选段4"><code class="language-python" data-source-card="D15-S4" data-segment-index="4">    return PytestArgumentPlan(
+        collection_args=tuple(collection_args),
+        execution_args=tuple(execution_args),
+        selection_args=tuple(selection_args),
+        collect_only=collect_only,
+    )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D15-S4" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：选择参数进入收集与selection，执行参数只进execution，未知插件参数同时共享给收集和执行。机制：函数线性扫描已知选项及其值，collect-only单独记布尔值，无法识别的项不自行解释而同时加入两组阶段参数。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>扫描pytest参数，按已知类别分流；未知/插件参数同时放入collection与execution。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>生成PytestArgumentPlan，不执行pytest。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>参数分相发生在Runner内部，未知插件参数被共享而非由框架完整解析。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>共享未知参数不保证插件在收集与执行阶段都接受相同语义。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--required" id="source-card-D15-S5" data-default-open="false" data-source-lines="24">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>权威集合拆成互斥并串行池</strong><small>run_orchestration/scheduling.py · 24行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D15-S5">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_split_test_cases_separates_serial_pool</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_split_test_cases_separates_serial_pool</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/scheduling.py::split_test_cases</code></span>
+<span><strong>真实行数</strong>24</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>重复、交集与并集守恒分别在哪里检查？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制权威集合拆成互斥并串行池选段1" aria-describedby="source-copy-status-D15-S5-1" aria-controls="source-code-D15-S5-1" data-source-target="source-code-D15-S5-1" data-source-status="source-copy-status-D15-S5-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D15-S5-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D15-S5-1" tabindex="0" aria-label="权威集合拆成互斥并串行池，源码第8至31行，选段1"><code class="language-python" data-source-card="D15-S5" data-segment-index="1">def split_test_cases(
+    cases: Sequence[CollectedTestCase],
+    serial_marker: str = DEFAULT_SERIAL_MARKER,
+) -&gt; tuple[tuple[str, ...], tuple[str, ...]]:
+    parallel_cases: list[str] = []
+    serial_cases: list[str] = []
+    seen: set[str] = set()
+
+    for case in cases:
+        if case.nodeid in seen:
+            raise ValueError(f"duplicate nodeid in execution plan: {case.nodeid}")
+        seen.add(case.nodeid)
+        if serial_marker in case.markers:
+            serial_cases.append(case.nodeid)
+        else:
+            parallel_cases.append(case.nodeid)
+
+    parallel = tuple(parallel_cases)
+    serial = tuple(serial_cases)
+    if set(parallel) &amp; set(serial):
+        raise ValueError("parallel and serial execution pools overlap")
+    if set(parallel) | set(serial) != seen:
+        raise ValueError("execution pool union differs from the authoritative plan")
+    return parallel, serial</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D15-S5" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：split_test_cases把权威集合纯粹拆成互斥且并集守恒的并行池与串行池。机制：遍历时先拒绝重复nodeid，再按serial marker分类；最后检查两池无交集且并集等于seen。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>按serial marker分类并拒绝重复nodeid，随后验证两池互斥且并集等于权威集合。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>只返回两个nodeid tuple，不改变CollectedTestCase。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>分池是权威收集事实上的纯计划变换。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>分池成功不代表两个池已经执行。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_master_service_parallel_serial.py::test_split_test_cases_separates_serial_pool</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--support" id="source-card-D15-S6" data-default-open="false" data-source-lines="12">
+<summary class="source-card__summary">
+<span class="source-importance">支撑</span>
+<span><strong>并行参数追加xdist配置</strong><small>run_orchestration/pytest_execution.py · 12行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D15-S6">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_run_with_numprocesses_runs_parallel_pool_before_serial_pool</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_run_with_numprocesses_runs_parallel_pool_before_serial_pool</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/pytest_execution.py::build_parallel_args</code></span>
+<span><strong>真实行数</strong>12</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>输入pytest_args已有-n时，函数是否先去重？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制并行参数追加xdist配置选段1" aria-describedby="source-copy-status-D15-S6-1" aria-controls="source-code-D15-S6-1" data-source-target="source-code-D15-S6-1" data-source-status="source-copy-status-D15-S6-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D15-S6-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D15-S6-1" tabindex="0" aria-label="并行参数追加xdist配置，源码第215至226行，选段1"><code class="language-python" data-source-card="D15-S6" data-segment-index="1">def build_parallel_args(
+    pytest_args: Sequence[str],
+    *,
+    numprocesses: str,
+    dist: str | None,
+    junit_suffix: str,
+) -&gt; list[str]:
+    args = replace_junitxml_suffix(list(pytest_args), junit_suffix)
+    args.extend(["-n", numprocesses])
+    if dist:
+        args.extend(["--dist", dist])
+    return args</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D15-S6" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：并行参数构建会直接追加xdist配置，不会先去除输入中已有的-n。机制：先替换JUnit文件后缀，再追加-n和numprocesses；dist非空时继续追加--dist，因此可能形成重复并行选项。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>替换JUnit后缀，直接追加-n与可选--dist。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>创建并行池参数列表。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>并行参数由Runner追加xdist选项。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>函数不去除输入中已有-n；公开参数组合可能形成重复并行配置。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--support" id="source-card-D15-S7" data-default-open="false" data-source-lines="6">
+<summary class="source-card__summary">
+<span class="source-importance">支撑</span>
+<span><strong>串行参数先移除xdist选项</strong><small>run_orchestration/pytest_execution.py · 6行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D15-S7">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_run_with_numprocesses_runs_parallel_pool_before_serial_pool</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_run_with_numprocesses_runs_parallel_pool_before_serial_pool</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/pytest_execution.py::build_serial_args</code></span>
+<span><strong>真实行数</strong>6</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>串行池参数如何委托xdist清理并替换JUnit后缀？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制串行参数先移除xdist选项选段1" aria-describedby="source-copy-status-D15-S7-1" aria-controls="source-code-D15-S7-1" data-source-target="source-code-D15-S7-1" data-source-status="source-copy-status-D15-S7-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D15-S7-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D15-S7-1" tabindex="0" aria-label="串行参数先移除xdist选项，源码第245至250行，选段1"><code class="language-python" data-source-card="D15-S7" data-segment-index="1">def build_serial_args(
+    pytest_args: Sequence[str], *, junit_suffix: str
+) -&gt; list[str]:
+    return replace_junitxml_suffix(
+        remove_xdist_args(list(pytest_args)), junit_suffix
+    )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D15-S7" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：串行池先清除已识别的xdist参数，再替换JUnit输出后缀。机制：build_serial_args把pytest参数交给remove_xdist_args，所得列表再传入replace_junitxml_suffix；具体识别范围不在本函数。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>调用remove_xdist_args，再替换串行池JUnit后缀。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>创建串行池参数列表。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>串行池主动移除已识别的xdist参数。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>本函数不展示remove_xdist_args能识别哪些参数形式。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--support" id="source-card-D15-S8" data-default-open="false" data-source-lines="14">
+<summary class="source-card__summary">
+<span class="source-importance">支撑</span>
+<span><strong>xdist清理只覆盖已列参数形式</strong><small>run_orchestration/pytest_execution.py · 14行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D15-S8">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_run_with_numprocesses_runs_parallel_pool_before_serial_pool</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_run_with_numprocesses_runs_parallel_pool_before_serial_pool</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/pytest_execution.py::remove_xdist_args</code></span>
+<span><strong>真实行数</strong>14</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>哪些-n、--numprocesses和--dist形式会被跳过？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制xdist清理只覆盖已列参数形式选段1" aria-describedby="source-copy-status-D15-S8-1" aria-controls="source-code-D15-S8-1" data-source-target="source-code-D15-S8-1" data-source-status="source-copy-status-D15-S8-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D15-S8-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D15-S8-1" tabindex="0" aria-label="xdist清理只覆盖已列参数形式，源码第253至266行，选段1"><code class="language-python" data-source-card="D15-S8" data-segment-index="1">def remove_xdist_args(args: list[str]) -&gt; list[str]:
+    cleaned: list[str] = []
+    index = 0
+    while index &lt; len(args):
+        arg = args[index]
+        if arg in {"-n", "--numprocesses", "--dist"}:
+            index += 2
+            continue
+        if arg.startswith("--numprocesses=") or arg.startswith("--dist="):
+            index += 1
+            continue
+        cleaned.append(arg)
+        index += 1
+    return cleaned</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D15-S8" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：清理仅覆盖白名单形式，不会自动识别所有xdist别名。机制：独立的-n、--numprocesses、--dist会连同后一值跳过，--numprocesses=与--dist=形式单独跳过，其余参数保留。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>线性扫描参数，识别带值或等号形式的xdist选项，其余参数保留。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>返回去除已知xdist参数的新列表。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>串行池清理拥有明确的参数白名单边界。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>未列入识别规则的新xdist参数或插件别名不会自动被移除。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--evidence" id="source-card-D15-T1" data-default-open="false" data-source-lines="14">
+<summary class="source-card__summary">
+<span class="source-importance">测试证据</span>
+<span><strong>证据：Collector读取函数、类与文件Marker</strong><small>tests/test_master_service_parallel_serial.py · 14行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D15-T1">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_collect_test_case_items_reads_function_class_and_file_markers</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_collect_test_case_items_reads_function_class_and_file_markers</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>tests/test_master_service_parallel_serial.py::test_collect_test_case_items_reads_function_class_and_file_markers</code></span>
+<span><strong>真实行数</strong>14</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>函数、类、文件级marker如何同时出现在CollectedTestCase中？</p>
+<p class="source-omission">省略说明：省略临时测试文件路径与join外壳；保留文件、类、函数三级marker布置。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制证据：Collector读取函数、类与文件Marker选段1" aria-describedby="source-copy-status-D15-T1-1" aria-controls="source-code-D15-T1-1" data-source-target="source-code-D15-T1-1" data-source-status="source-copy-status-D15-T1-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D15-T1-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D15-T1-1" tabindex="0" aria-label="证据：Collector读取函数、类与文件Marker，源码第70至75行，选段1"><code class="language-python" data-source-card="D15-T1" data-segment-index="1">                "pytestmark = pytest.mark.file_marker",
+                "",
+                "@pytest.mark.class_marker",
+                "class TestMarkedClass:",
+                "    @pytest.mark.serial",
+                "    def test_serial_case(self):",</code></pre>
+</div>
+<p class="source-omission">省略说明：省略临时测试函数体和第二个仅含文件marker的函数定义；下一代码块保留收集调用与marker断言。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制证据：Collector读取函数、类与文件Marker选段2" aria-describedby="source-copy-status-D15-T1-2" aria-controls="source-code-D15-T1-2" data-source-target="source-code-D15-T1-2" data-source-status="source-copy-status-D15-T1-2">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D15-T1-2" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D15-T1-2" tabindex="0" aria-label="证据：Collector读取函数、类与文件Marker，源码第85至92行，选段2"><code class="language-python" data-source-card="D15-T1" data-segment-index="2">    cases = collect_test_case_items(test_file)
+    markers_by_name = {case.nodeid.split("::")[-1]: case.markers for case in cases}
+
+    assert "serial" in markers_by_name["test_serial_case"]
+    assert "class_marker" in markers_by_name["test_serial_case"]
+    assert "file_marker" in markers_by_name["test_serial_case"]
+    assert "file_marker" in markers_by_name["test_file_marker_only"]
+    assert "serial" not in markers_by_name["test_file_marker_only"]</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D15-T1" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该测试证明Collector能在收集结果中看到函数、类和文件三级marker的继承组合。机制：临时文件布置三级标记后collect-only，断言串行方法同时含三者，而仅文件级用例含file_marker但不含serial。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>收集临时测试文件，按nodeid尾部建立marker映射并检查继承结果。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>运行一次临时文件collect-only。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>现有测试覆盖函数、类和文件marker读取。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不覆盖重复nodeid、collect-only不执行测试或跨盘临时目录稳定性。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_master_service_parallel_serial.py::test_collect_test_case_items_reads_function_class_and_file_markers</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--evidence" id="source-card-D15-T2" data-default-open="false" data-source-lines="11">
+<summary class="source-card__summary">
+<span class="source-importance">测试证据</span>
+<span><strong>证据：基础serial marker分池</strong><small>tests/test_master_service_parallel_serial.py · 11行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D15-T2">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_split_test_cases_separates_serial_pool</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_split_test_cases_separates_serial_pool</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>tests/test_master_service_parallel_serial.py::test_split_test_cases_separates_serial_pool</code></span>
+<span><strong>真实行数</strong>11</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>三个固定Case如何被拆成两个parallel和一个serial？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制证据：基础serial marker分池选段1" aria-describedby="source-copy-status-D15-T2-1" aria-controls="source-code-D15-T2-1" data-source-target="source-code-D15-T2-1" data-source-status="source-copy-status-D15-T2-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D15-T2-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D15-T2-1" tabindex="0" aria-label="证据：基础serial marker分池，源码第95至105行，选段1"><code class="language-python" data-source-card="D15-T2" data-segment-index="1">def test_split_test_cases_separates_serial_pool():
+    cases = [
+        CollectedTestCase("test_a.py::test_parallel", frozenset()),
+        CollectedTestCase("test_b.py::test_serial", frozenset({"serial"})),
+        CollectedTestCase("test_c.py::test_parallel", frozenset({"smoke"})),
+    ]
+
+    parallel_cases, serial_cases = split_test_cases(cases)
+
+    assert parallel_cases == ["test_a.py::test_parallel", "test_c.py::test_parallel"]
+    assert serial_cases == ["test_b.py::test_serial"]</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D15-T2" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该测试只覆盖兼容包装层的基础正常分池：两个并行nodeid和一个serial nodeid。机制：构造三个固定Case后断言返回的两个list；未验证内层tuple、重复检测、集合守恒或参数构建。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>构造三个CollectedTestCase，调用master_service兼容包装层的split_test_cases并断言两个list池。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>只验证纯分池结果。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>现有测试覆盖兼容包装层委托内部分池后的正常marker分类与list转换。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>它不直接断言run_orchestration.scheduling返回的tuple类型，也不覆盖重复nodeid、集合守恒失败或参数构建边界。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_master_service_parallel_serial.py::test_split_test_cases_separates_serial_pool</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li><code>master_service.py::split_test_cases</code></li>
+</ul></div>
+</div>
+</details>
+</div>
+</section>
+<!-- SOURCE_CARDS:DAY15:END -->
+
+      <section id="lesson-flow-summary" data-section>
+        <p class="kicker">Flow summary · Authoritative plan</p><h2>课后流转总图：一次收集、身份冻结、纯分池、明确终点</h2>
+        <figure class="lesson-flow-map">
+          <figcaption class="flow-map-caption">左侧追函数调用，右侧追nodeid/marker计划、集合不变量和collect-only证据边界。</figcaption>
+          <div class="flow-map-legend"><span class="flow-legend-chip function">函数与职责</span><span class="flow-legend-chip data">计划与集合</span><span class="flow-legend-chip branch">拒绝/短路/执行</span></div>
+          <div class="flow-map-inputs"><div class="flow-input"><strong>参数计划</strong><span>target + collection_args</span></div><div class="flow-input"><strong>调度配置</strong><span>serial_marker + -n 2</span></div><div class="flow-input"><strong>控制位</strong><span>collect_only=True</span></div></div>
+          <div class="flow-map-entry" aria-hidden="true">↓</div>
+          <div class="flow-map-spine">
+            <article class="flow-stage"><div class="flow-stage__index">1</div><div class="flow-stage__function"><h3><code>runner.run()</code></h3><p>编译参数计划并调用唯一<code>collect_test_case_items()</code>。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>单一收集请求</h3><p>同一test_path和选择参数只交给pytest一次；异常直接映射退出码。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">2</div><div class="flow-stage__function"><h3><code>collect_test_case_items()</code></h3><p>固定collect-only安全参数，调用<code>pytest.main()</code>并接收plugin事实。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>CollectionResult</h3><p>保存原始exit、cases、stdout和stderr；重复nodeid会阻止结果返回。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">3</div><div class="flow-stage__function"><h3><code>pytest_collection_finish()</code></h3><p>遍历最终<code>session.items</code>，读取nodeid和完整marker集合。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>权威身份被冻结</h3><p>每项成为不可变<code>CollectedTestCase</code>；类级、文件级marker均已合并。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">4</div><div class="flow-stage__function"><h3><code>split_test_cases()</code></h3><p>按serial marker二选一归池，并验证重复、交集与并集。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>Parallel / Serial</h3><div class="flow-branch"><div class="flow-branch__path"><strong>合法</strong>两池互斥，且并集等于权威集合。</div><div class="flow-branch__path"><strong>非法</strong>重复、重叠或遗漏立即抛错，不启动执行。</div></div></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">5</div><div class="flow-stage__function"><h3>Runner终点选择</h3><p>打印计划与两池数量，根据collect-only或正式运行进入不同终点。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>证据或执行</h3><div class="flow-branch"><div class="flow-branch__path"><strong>collect-only</strong>返回0，只证明计划，不创建执行产物。</div><div class="flow-branch__path"><strong>正式运行</strong>不传-n则全量串行；传-n则并发池优先、串行池收尾。</div></div></div></article>
+          </div>
+          <div class="flow-fact-footer"><strong>集合守恒</strong><p>每个权威nodeid恰好进入一个池；调度只改变执行位置和顺序，不改变被选择成员身份。</p></div>
+        </figure>
       </section>
 
       <section id="quiz" data-section>

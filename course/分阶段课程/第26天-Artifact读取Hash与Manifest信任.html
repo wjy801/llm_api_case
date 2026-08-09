@@ -1,17 +1,184 @@
 <!doctype html><html lang='zh-CN'>
-<head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>第26天｜Artifact读取Hash与Manifest信任</title><link rel='stylesheet' href='六周课程页.css'></head>
+<head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>第26天｜Artifact读取Hash与Manifest信任</title><link rel='stylesheet' href="六周课程页.css"></head>
 <body data-day='26'><aside class='side' id='side'><div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第26天 · Artifact读取与信任</h2><p>第6周 / Bytes、Hash、Manifest与消费者</p></div><nav class='nav'>
-<a href='#question'><span class='num'>01</span><span>信任问题</span></a><a href='#bytes'><span class='num'>02</span><span>读取bytes</span></a><a href='#parse'><span class='num'>03</span><span>解析结构</span></a><a href='#hash'><span class='num'>04</span><span>原始字节Hash</span></a><a href='#manifest'><span class='num'>05</span><span>Manifest绑定</span></a><a href='#signature'><span class='num'>06</span><span>Hash与签名</span></a><a href='#consumers'><span class='num'>07</span><span>领域消费者</span></a><a href='#errors'><span class='num'>08</span><span>错误与测试</span></a><a href='#practice'><span class='num'>09</span><span>离线实践</span></a><a href='#output'><span class='num'>10</span><span>Day29输入</span></a><a href='#design'><span class='num'>11</span><span>设计边界</span></a><a href='#quiz'><span class='num'>12</span><span>知识自测</span></a><a href='#gate'><span class='num'>13</span><span>退出门禁</span></a>
+<a href='#code-first-walkthrough'><span class='num'>CODE</span><span>代码先行</span></a><a href='#question'><span class='num'>01</span><span>信任问题</span></a><a href='#bytes'><span class='num'>02</span><span>读取bytes</span></a><a href='#parse'><span class='num'>03</span><span>解析结构</span></a><a href='#hash'><span class='num'>04</span><span>原始字节Hash</span></a><a href='#manifest'><span class='num'>05</span><span>Manifest绑定</span></a><a href='#signature'><span class='num'>06</span><span>Hash与签名</span></a><a href='#consumers'><span class='num'>07</span><span>领域消费者</span></a><a href='#errors'><span class='num'>08</span><span>错误与测试</span></a><a href='#practice'><span class='num'>09</span><span>离线实践</span></a><a href='#output'><span class='num'>10</span><span>Day29输入</span></a><a href='#design'><span class='num'>11</span><span>设计边界</span></a><a href='#lesson-flow-summary'><span class='num'>FLOW</span><span>流转总图</span></a><a href='#quiz'><span class='num'>12</span><span>知识自测</span></a><a href='#gate'><span class='num'>13</span><span>退出门禁</span></a>
 </nav><div class='meter'><div class='meter-row'><span>门禁进度</span><span id='gate-text'>0/5</span></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div></aside>
 <main class='main'><div class='topbar'><div><button class='menu' id='menu'>本课目录</button> 接口测试框架源码架构与证据链六周课程 · 第26天 · 建议学习 2～2.5 小时</div><div class='toolbar'><a class='button' href='../接口测试框架六周学习课程.html'>课程大纲</a><button class='button' id='reset'>重置本课记录</button></div></div><article class='lesson'>
-<header class='hero'><p class='eyebrow'>WEEK 6 · DAY 26</p><h1>Artifact读取、Hash与Manifest信任</h1><p class='hero-lead'>从磁盘原始bytes开始，依次经过结构解析、SHA-256比较、Manifest身份与版本绑定，最后由Metrics、Flaky、Reporting按各自合同决定领域可信度。</p><div class='pills'><span class='pill'>bytes → parse</span><span class='pill'>Raw SHA-256</span><span class='pill'>Manifest</span><span class='pill'>Domain trust</span></div><div class='outcome'><strong>当日产出：</strong>供Day29直接复用的Artifact信任边界卡，明确每层证明什么、不能证明什么及失败后的领域动作。</div></header>
-<section id='question' data-section><p class='kicker'>01 · First principles</p><h2>可信不是一个布尔值，而是逐层增加约束</h2><p class='lead'>文件存在只证明路径可见；解析成功只证明结构可读；Hash匹配证明字节未偏离期望；Manifest把身份、版本、状态和输出绑定；最终仍由领域消费者判断这些证据是否足以支持计算或报告。</p><div class='flow'><span>bytes</span><i>→</i><span>parse</span><i>→</i><span>Hash</span><i>→</i><span>Manifest</span><i>→</i><span>领域消费者可信</span></div><div class='callout warn'><strong>TOC约束：</strong>最窄约束是来源真实性。任何一层失败，后续只能停止、降级或报告NO_DATA，不能跳过验证继续得出业务结论。</div></section>
+<header class='hero'><p class='eyebrow'>WEEK 6 · DAY 26</p><h1>Artifact读取、Hash与Manifest信任</h1><p class='hero-lead'>Day21已经建立提交状态、完整性状态与消费者准入基础。本日比较Metrics、Flaky和Reporting如何分别执行Manifest准入链与目标产物消费链，并识别Hash与发布者真实性之间仍缺少的证据。</p><div class='pills'><span class='pill'>Manifest minimal parse</span><span class='pill'>Target bytes → Hash</span><span class='pill'>Consumer policy</span><span class='pill'>Authenticity boundary</span></div><div class='outcome'><strong>当日产出：</strong>供Day29直接复用的双链信任边界卡、跨消费者准入矩阵，以及Hash/签名/可信渠道证明范围表。</div></header>
+<section id="code-first-walkthrough" data-section><p class="section-kicker">CODE · 代码先行精讲</p><h2>先证明Hash对应磁盘原始字节，再比较三个消费者的准入策略</h2><p class="section-lead">信任链有两条：Manifest自身必须先通过身份、版本、状态和完整性准入；目标Artifact再按原始bytes核对Manifest声明的Hash。只有两条链都成立，领域解析器才有资格读取内容。</p>
+<div class="guided-start"><div class="guided-start__header"><h3>本节唯一主线：一个CRLF JSON文件的字节级校验</h3><p><strong>用例文件：</strong><code>tests/test_artifact_io.py</code>；<strong>测试函数：</strong><code>test_file_sha256_and_comparison_use_original_bytes</code>；<strong>pytest nodeid：</strong><code>tests/test_artifact_io.py::test_file_sha256_and_comparison_use_original_bytes</code>。</p></div><div class="guided-command"><strong>先运行这个真实测试</strong><code>python -m pytest -q tests/test_artifact_io.py::test_file_sha256_and_comparison_use_original_bytes</code></div><div class="guided-rule"><strong>阅读规则</strong>Hash回答“当前字节是否等于声明字节”，不回答“谁发布了Manifest”；先分清完整性和真实性。</div><div class="guided-chain" aria-label="代码阅读顺序"><span>字节测试</span><b>→</b><span>file_sha256</span><b>→</b><span>compare_file_sha256</span><b>→</b><span>Manifest准入</span><b>→</b><span>Metrics/Flaky/Pipeline消费者</span></div></div>
+
+<article class="guided-step"><div class="guided-step__title"><span class="guided-step__number">1</span><div><h3>测试冻结“原始字节”而不是重序列化JSON</h3><p>同一个JSON对象使用不同换行或空白时，领域值可相同，但磁盘字节Hash不同。</p></div></div><div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">tests/test_artifact_io.py::test_file_sha256_and_comparison_use_original_bytes · 完整测试函数</span><pre><code>def test_file_sha256_and_comparison_use_original_bytes(tmp_path):
+    artifact = tmp_path / "artifact.json"
+    content = b'{"value": 1}\r\n'
+    artifact.write_bytes(content)
+    expected = hashlib.sha256(content).hexdigest()
+
+    assert file_sha256(artifact) == expected
+    assert compare_file_sha256(artifact, expected).matches is True
+    assert compare_file_sha256(artifact, "0" * 64).matches is False
+    assert compare_file_sha256(artifact, None).matches is False</code></pre></div><div class="guided-explanation"><h4>验证事实</h4><div class="guided-point"><strong>输入事实</strong><p>文件用<code>write_bytes()</code>写入包含CRLF的确切字节，expected直接对这组bytes求SHA-256。</p></div><div class="guided-point"><strong>验证</strong><p>正确Hash匹配；错误Hash和缺失Hash都不匹配，消费者不能把<code>None</code>当成“无需验证”。</p></div><div class="guided-point success"><strong>状态变化</strong><p>测试不修改Artifact内容，只生成比较结果。</p></div><div class="guided-point warning"><strong>失败边界</strong><p>先解析再重新dump会改变字节表达，无法证明磁盘文件与Manifest声明一致。</p></div></div></div></article>
+
+<article class="guided-step"><div class="guided-step__title"><span class="guided-step__number">2</span><div><h3>通用I/O层只报告机械事实，不替消费者做领域决策</h3><p><code>read_json_object()</code>验证顶层形状，<code>read_jsonl_values()</code>保留行号，Hash函数只处理bytes。</p></div></div><div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">util/artifact_io.py::read_json_object / read_jsonl_values / file_sha256 / compare_file_sha256 · 非连续选段：四个完整函数</span><pre><code>def read_json_object(path: str | Path) -&gt; dict[str, Any]:
+    source = Path(path)
+    value = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ArtifactFormatError(f"JSON object required: {source}")
+    return value
+
+def read_jsonl_values(path: str | Path) -&gt; Iterator[JsonLine]:
+    source = Path(path)
+    with source.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise ArtifactJsonLineError(line_number, error) from error
+            yield JsonLine(line_number, value)
+
+def file_sha256(path: str | Path) -&gt; str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+def compare_file_sha256(
+    path: str | Path,
+    expected: object,
+) -&gt; HashComparison:
+    normalized = expected if isinstance(expected, str) and expected else None
+    return HashComparison(expected=normalized, actual=file_sha256(path))</code></pre></div><div class="guided-explanation"><h4>通用层边界</h4><div class="guided-point"><strong>输入验证</strong><p>JSON对象与JSONL行只做语法/形状检查；错误行号被保留给上层错误信息。</p></div><div class="guided-point"><strong>产物</strong><p><code>HashComparison</code>保存expected和actual，领域消费者决定不匹配时是抛错、降级还是警告。</p></div><div class="guided-point success"><strong>所有权</strong><p>util层拥有机械读取与字节完整性，不拥有run_id、status或Manifest version语义。</p></div><div class="guided-point warning"><strong>失败边界</strong><p>文件不可读、JSON非法或顶层不是对象时抛机械异常；上层必须保留原因而非伪造空对象。</p></div></div></div></article>
+<article class="guided-step"><div class="guided-step__title"><span class="guided-step__number">3</span><div><h3>Metrics与Flaky都先准入Manifest，但失败策略不同</h3><p>Metrics加载P0/Semantic链；Flaky只消费P0 Case链。两者都要求run、版本、完成状态与Hash一致。</p></div></div><div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">quality/metrics/sources.py::load_sources · 连续选段</span><pre><code>run = read_model(run_path, RunRecord, "run_record_invalid")
+if run.run_id != run_id:
+    raise_source_error(
+        "run_id_mismatch", "run.json belongs to a different run", run.run_id
+    )
+
+p0_manifest = read_json_object(p0_manifest_path, "p0_manifest_invalid")
+require_manifest(
+    p0_manifest,
+    run_id=run_id,
+    status="complete",
+    versions={
+        "manifest_version": P0_MANIFEST_VERSION,
+        "schema_version": SCHEMA_VERSION,
+    },
+    code_prefix="p0",
+)
+p0_integrity_status = str(p0_manifest.get("integrity_status") or "unknown")
+if p0_integrity_status == IntegrityStatus.FAILED.value:
+    raise_source_error(
+        "p0_integrity_failed", "P0 merged facts failed integrity validation"
+    )
+p0_request_hash = validated_source_output_hash(
+    request_metrics_path,
+    (p0_manifest.get("output_hashes") or {}).get("request-metrics"),
+)</code></pre><span class="guided-source__location">quality/flaky_importer.py::_validate_run_and_manifest / _validate_output_hashes · 非连续选段：两个连续函数片段</span><pre><code>if run_record.run_id != requested_run_id:
+    raise FlakyImportError("run_id_mismatch", "run.json run_id differs from request")
+if run_record.status is not RunStatus.FINISHED:
+    raise FlakyImportError(
+        "run_not_finished",
+        f"run status {run_record.status.value!r} is not importable",
+    )
+
+mismatches = exact_field_mismatches(
+    manifest,
+    {
+        "run_id": requested_run_id,
+        "manifest_version": MANIFEST_VERSION,
+        "schema_version": SCHEMA_VERSION,
+        "status": "complete",
+    },
+)
+
+output_hashes = manifest.get("output_hashes")
+if not isinstance(output_hashes, dict):
+    raise FlakyImportError("manifest_hashes_missing", "manifest output_hashes is missing")
+mapping = {
+    "case-results": "case_results",
+    "failures": "failures",
+    "integrity-issues": "integrity_issues",
+}
+for manifest_name, source_name in mapping.items():
+    expected = output_hashes.get(manifest_name)
+    if not isinstance(expected, str) or not expected.strip():
+        raise FlakyImportError(
+            "manifest_hashes_missing",
+            f"manifest hash is missing for {manifest_name}",
+        )
+    if expected != source_hashes[source_name]:
+        raise FlakyImportError(
+            "artifact_hash_mismatch",
+            f"P0 artifact hash mismatch for {manifest_name}",
+        )</code></pre></div><div class="guided-explanation"><h4>领域准入</h4><div class="guided-point"><strong>Metrics输入</strong><p>P0 request facts与Semantic关系事实都必须可信，任一链断裂则抛<code>MetricsSourceError</code>。</p></div><div class="guided-point"><strong>Flaky输入</strong><p>只需要P0 Case/Failure/Integrity链；run必须FINISHED，Manifest必须complete。</p></div><div class="guided-point success"><strong>状态变化</strong><p>验证成功只产生领域模型或PreparedImport，仍不修改上游Artifact。</p></div><div class="guided-point warning"><strong>失败边界</strong><p>消费者可以有不同错误码和准入策略，但都不能在Hash失败后继续领域解析。</p></div></div></div></article>
+
+<article class="guided-step"><div class="guided-step__title"><span class="guided-step__number">4</span><div><h3>Pipeline Reporting把不可信来源降为警告和缺失视图</h3><p>Reporting不是事实生产者：它验证Quality Manifest与目标Hash，把失败转换成warning和空的分区视图。</p></div></div><div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">pipeline_reporting/quality_sources.py::_load_quality_facts / _artifact_hash_matches · 非连续选段：Manifest准入与目标Hash函数</span><pre><code>run_id = _text(run_payload.get("run_id"))
+if _append_exact_field_warning(
+    {"schema_version": run_payload.get("schema_version")},
+    {"schema_version": SCHEMA_VERSION},
+    {"schema_version": "质量运行记录 Schema 不受支持"},
+    warnings,
+):
+    return run_id, manifest_payload, False
+if not run_id:
+    warnings.append("质量运行记录与事实清单 run_id 不一致")
+    return run_id, manifest_payload, False
+if _append_exact_field_warning(
+    {
+        "run_id": _text(manifest_payload.get("run_id")),
+        "manifest_version": manifest_payload.get("manifest_version"),
+        "schema_version": manifest_payload.get("schema_version"),
+        "status": manifest_payload.get("status"),
+    },
+    {
+        "run_id": run_id,
+        "manifest_version": QUALITY_MANIFEST_VERSION,
+        "schema_version": SCHEMA_VERSION,
+        "status": "complete",
+    },
+    {
+        "run_id": "质量运行记录与事实清单 run_id 不一致",
+        "manifest_version": "质量事实清单版本不受支持",
+        "schema_version": "质量事实清单 Schema 不受支持",
+        "status": "质量事实清单尚未完整提交",
+    },
+    warnings,
+):
+    return run_id, manifest_payload, False
+
+def _artifact_hash_matches(
+    path: Path,
+    expected_hash: Any,
+    warnings: list[str],
+    label: str,
+) -&gt; bool:
+    if not path.is_file():
+        warnings.append(f"{label}文件缺失")
+        return False
+    expected = _text(expected_hash)
+    if expected is None:
+        warnings.append(f"{label}缺少可信哈希")
+        return False
+    try:
+        actual = compare_file_sha256(path, expected).actual
+    except OSError as error:
+        warnings.append(f"{label}不可读：{type(error).__name__}")
+        return False
+    if actual != expected:
+        warnings.append(f"{label}哈希与清单不一致")
+        return False
+    return True</code></pre></div><div class="guided-explanation"><h4>报告消费边界</h4><div class="guided-point"><strong>验证</strong><p>Reporting仍按run、Manifest版本、Schema、complete状态和Hash顺序准入。</p></div><div class="guided-point"><strong>状态变化</strong><p>失败被追加到warnings，相应Quality/Metrics/Flaky分区返回不可用；Jenkins原始结果不被改写。</p></div><div class="guided-point success"><strong>产物所有权</strong><p>Reporting只拥有PipelineReport及Markdown/JSON/Email视图，不拥有源Manifest和源Artifact。</p></div><div class="guided-point warning"><strong>真实性边界</strong><p>Hash只能证明目标字节与Manifest一致；若Manifest来自不可信渠道，仍需签名、公钥或可信发布链。</p></div></div></div></article>
+</section>
+<section id='question' data-section><p class='kicker'>01 · First principles</p><h2>Manifest与目标产物必须沿两条不同链验证</h2><p class='lead'>消费者为了知道目标文件的期望Hash，必须先对Manifest做最小JSON解析；但目标产物不能先做Schema或领域解析再补Hash验证，否则未验证内容已经进入解析器。</p><h3>Manifest准入链</h3><div class='flow'><span>Manifest bytes</span><i>→</i><span>最小JSON解析</span><i>→</i><span>身份/版本/status/integrity策略</span><i>→</i><span>签名或可信分发渠道边界</span></div><h3>目标产物消费链</h3><div class='flow'><span>目标产物bytes</span><i>→</i><span>与已接受Manifest核对Hash</span><i>→</i><span>Schema解析</span><i>→</i><span>领域关系验证</span></div><div class='callout warn'><strong>TOC约束：</strong>最窄约束是Manifest本身的真实性。当前仓库实现身份、版本、状态与Hash完整性校验，但没有完整的发布者数字签名体系；因此不能把Hash匹配宣传成来源真实性证明。</div></section>
 <section id='bytes' data-section><p class='kicker'>02 · Bytes</p><h2>先读取磁盘事实，再谈对象语义</h2><div class='grid2'><div class='card'><h3>通用入口</h3><p><code>util/artifact_io.py</code>集中处理JSON/JSONL读取、文件Hash和字段精确比较。</p></div><div class='card'><h3>原始事实</h3><p>路径、存在性、读取错误和原始bytes属于机械层，不携带Metrics、Flaky或Reporting结论。</p></div><div class='card'><h3>消费者</h3><p><code>quality/metrics/sources.py</code>、<code>quality/flaky_importer.py</code>、<code>pipeline_reporting/quality_sources.py</code>各自收紧合同。</p></div><div class='card'><h3>边界</h3><p>通用工具不能因为文件名像Manifest，就假定其run_id、版本或提交状态可信。</p></div></div></section>
-<section id='parse' data-section><p class='kicker'>03 · Parse</p><h2>解析只证明结构成立，不证明内容可用</h2><div class='table-wrap'><table><tbody><tr><td><code>read_json_object</code></td><td>要求顶层为object，否则抛<code>ArtifactFormatError</code>。</td></tr><tr><td><code>read_jsonl_values</code></td><td>逐行解析、跳过空行并保留行号；坏行抛<code>ArtifactJsonLineError</code>。</td></tr><tr><td><code>exact_field_mismatches</code></td><td>报告字段值差异，但不解释差异是否允许。</td></tr></tbody></table></div><p>parse层输出可供验证的结构，下一层仍需基于原始bytes计算Hash，不能对解析后的对象重新序列化后冒充原文件。</p></section>
+<section id='parse' data-section><p class='kicker'>03 · Parse</p><h2>只允许先最小解析Manifest，目标产物应先验Hash再做领域解析</h2><div class='table-wrap'><table><thead><tr><th>对象</th><th>允许的第一步</th><th>下一步</th></tr></thead><tbody><tr><td>Manifest</td><td><code>read_json_object</code>做最小结构解析，取得身份、版本、status、integrity与output_hashes</td><td>执行消费者准入及外部真实性边界判断</td></tr><tr><td>目标JSON/JSONL</td><td>以原始bytes计算Hash并与已接受Manifest比较</td><td>Hash通过后才调用JSON/JSONL与Pydantic领域解析</td></tr><tr><td>字段比较</td><td><code>exact_field_mismatches</code>只报告值差异</td><td>由领域消费者决定拒绝、降级或NO_DATA</td></tr></tbody></table></div><p><code>ArtifactJsonLineError</code>仍负责解析阶段的行号证据，但该阶段必须位于目标产物Hash准入之后。不能对解析对象重新序列化后冒充原文件Hash。</p></section>
 <section id='hash' data-section><p class='kicker'>04 · Hash</p><h2>SHA-256比较的是磁盘原始bytes</h2><p><code>file_sha256</code>以二进制分块读取；CRLF、空格、键顺序或编码变化都会改变Hash，即使解析后的JSON对象看起来等价。<code>compare_file_sha256</code>只返回expected、actual与matches。</p><div class='callout'><strong>证明范围：</strong>Hash匹配能证明当前bytes与期望bytes一致，不能单独证明期望值由可信发布者产生。</div></section>
-<section id='manifest' data-section><p class='kicker'>05 · Manifest</p><h2>Manifest把Hash放进可核对的运行合同</h2><div class='grid2'><div class='card'><h3>身份</h3><p>run_id必须与请求、run.json及下游Manifest一致。</p></div><div class='card'><h3>版本</h3><p>manifest/schema/merge或aggregation版本必须被消费者支持。</p></div><div class='card'><h3>提交状态</h3><p>status或write_status必须表明输出已完整提交。</p></div><div class='card'><h3>来源绑定</h3><p>output_hashes与上游Manifest Hash把消费者固定到同一份字节事实。</p></div></div></section>
-<section id='signature' data-section><p class='kicker'>06 · Hash versus signature</p><h2>Hash校验完整性，数字签名补充发布者真实性</h2><div class='table-wrap'><table><thead><tr><th>机制</th><th>能证明</th><th>不能证明</th></tr></thead><tbody><tr><td>Hash</td><td>bytes是否与已知期望值一致</td><td>期望Hash由谁发布、是否被一并替换</td></tr><tr><td>数字签名</td><td>持有私钥者对Manifest/Hash签名，公钥验证其来源与完整性</td><td>签名者是否有业务权限、内容是否满足领域合同</td></tr></tbody></table></div><p>当前课程链使用Hash与Manifest建立仓库内同轮证据，不等同于外部分发的防篡改发布。跨组织或不可信存储场景还需要密钥托管、证书/公钥信任、轮换、吊销和时间戳策略。</p></section>
-<section id='consumers' data-section><p class='kicker'>07 · Domain consumers</p><h2>领域消费者决定验证失败后的业务语义</h2><div class='table-wrap'><table><thead><tr><th>消费者</th><th>可信条件与失败动作</th></tr></thead><tbody><tr><td>Metrics</td><td>验证P0/Semantic身份、版本、状态、Hash和成员关系；失败转为<code>MetricsSourceError</code>并阻止聚合。</td></tr><tr><td>Flaky</td><td>验证run、Manifest和Case产物；失败转为带代码的<code>FlakyImportError</code>，不写入历史。</td></tr><tr><td>Reporting</td><td>验证Quality来源；不可用时记录warning并表达NO_DATA，不读取历史文件补值。</td></tr></tbody></table></div></section>
+<section id='manifest' data-section><p class='kicker'>05 · Manifest</p><h2>Manifest先通过自身准入，才有资格提供目标Hash</h2><div class='grid2'><div class='card'><h3>身份与版本</h3><p>run_id及manifest/schema/merge或aggregation版本必须与请求和消费者支持范围一致。</p></div><div class='card'><h3>提交状态</h3><p><code>status=complete</code>或<code>write_status=complete</code>只表示写入事务完成，不等于integrity通过。</p></div><div class='card'><h3>完整性策略</h3><p>complete可正常进入后续检查；degraded是否允许由消费者决定；failed阻断消费。</p></div><div class='card'><h3>来源与Hash绑定</h3><p>通过准入的output_hashes和上游Manifest Hash把消费者固定到同一份bytes，但不自动证明Manifest发布者身份。</p></div></div></section>
+<section id='signature' data-section><p class='kicker'>06 · Hash versus signature</p><h2>Hash校验内容一致性，签名或可信渠道才补发布者真实性</h2><div class='table-wrap'><table><thead><tr><th>机制</th><th>能证明</th><th>不能证明</th></tr></thead><tbody><tr><td>Hash</td><td>目标bytes是否与Manifest声明一致</td><td>Manifest由谁发布、Manifest与Hash是否被一并替换</td></tr><tr><td>数字签名</td><td>持有私钥者签署的Manifest/Hash未被篡改，并可由受信公钥验证来源</td><td>签名者是否拥有业务授权、内容是否满足领域合同</td></tr><tr><td>可信分发渠道</td><td>在明确定义的权限与传输边界内接受Manifest</td><td>跨越该边界后的不可抵赖性</td></tr></tbody></table></div><p>当前仓库没有完整的发布者数字签名、密钥轮换和吊销体系，只实现仓库内同轮身份、状态与Hash证据。课程必须把这一点作为信任上限，而不是把
+<section id='consumers' data-section><p class='kicker'>07 · Domain consumers</p><h2>相同Manifest基础证据，由不同消费者执行不同准入策略</h2><div class='table-wrap'><table><thead><tr><th>消费者</th><th>准入条件与失败动作</th></tr></thead><tbody><tr><td>Semantic</td><td>当前只检查P0 run_id、status=complete和request-metrics Hash；不检查P0版本或integrity_status，因此只能证明有限来源绑定。</td></tr><tr><td>Metrics</td><td>验证P0/Semantic身份、版本、status、integrity、目标Hash和成员关系；FAILED阻断，其他状态按Metrics合同处理，失败转为<code>MetricsSourceError</code>。</td></tr><tr><td>Flaky</td><td>验证run、Manifest、integrity、Case/Failure/Issue Hash与来源一致性；FAILED阻断，DEGRADED可形成降级导入状态，硬失败不写入历史。</td></tr><tr><td>Reporting</td><td>验证Quality来源身份、状态和Hash；不可用时记录warning并表达NO_DATA，不读取历史文件补值。</td></tr></tbody></table></div><p>
 <section id='errors' data-section><p class='kicker'>08 · Errors and evidence</p><h2>机械错误保留细节，领域错误给出处置</h2><div class='table-wrap'><table><tbody><tr><td><code>tests/test_artifact_io.py</code></td><td>对象、JSONL、行号、raw bytes Hash与字段比较。</td></tr><tr><td><code>test_metrics_sources.py</code></td><td>P0/Semantic Manifest、Hash、来源证据与Metrics错误。</td></tr><tr><td><code>test_flaky_importer.py</code></td><td>Flaky信任合同、冲突拒绝与错误代码。</td></tr><tr><td><code>test_pipeline_reporting.py</code></td><td>Reporting warning、来源降级和NO_DATA。</td></tr></tbody></table></div><p>错误翻译必须保留原始路径、行号、expected/actual等机械证据，同时增加消费者能执行的领域动作。</p></section>
 <section id='practice' data-section><p class='kicker'>09 · Offline practice</p><h2>运行只读夹具与信任测试</h2><div class='command'><button class='copy'>复制</button><pre><code>.\.venv\Scripts\python.exe -m pytest `
   tests/test_artifact_io.py `
@@ -19,8 +186,16 @@
   tests/quality/test_metrics_source_contracts.py `
   tests/quality/test_flaky_importer.py `
   tests/quality/test_pipeline_reporting.py -q</code></pre></div><p>命令只读取仓库测试夹具并使用pytest临时目录，不清理真实reports，也不修改任何持久数据库。</p></section>
-<section id='output' data-section><p class='kicker'>10 · Day29 input</p><h2>提交Day29可直接复用的Artifact信任边界卡</h2><div class='notes'><label>Day29信任边界卡<textarea data-note='day29-trust-boundary' placeholder='按bytes → parse → Hash → Manifest → 消费者列出证明、失败与处置'></textarea></label><label>Hash/签名边界<textarea data-note='hash-signature' placeholder='写清完整性、真实性、授权与领域正确性的边界'></textarea></label><label>消费者矩阵<textarea data-note='domain-consumers' placeholder='Metrics、Flaky、Reporting的验证合同与失败动作'></textarea></label><label>测试证据<textarea data-note='evidence' placeholder='命令、测试结果、夹具范围和未触碰的真实产物'></textarea></label></div><div class='callout good'><strong>交接到Day29：</strong>追踪任一机器产物时，先用本卡标出它在哪一层获得信任，以及后续层仍需补什么证据。</div></section>
-<section id='design' data-section><p class='kicker'>11 · Design choice</p><h2>设计选择与适用边界</h2><div class='table-wrap'><table><tbody><tr><th>现方案</th><td>对原始bytes计算Hash，由Manifest绑定run、版本、提交状态和上下游来源，再让各领域消费者解释验证结果。</td></tr><tr><th>替代方案</th><td>对规范化JSON对象计算Hash，或把文件可解析直接当作可信；更高保障方案是签名Manifest。</td></tr><tr><th>选择理由</th><td>原始bytes Hash可精确对应磁盘产物，Manifest保持合同可审计，领域翻译避免通用IO耦合业务；当前仓库内链路无需引入密钥系统。</td></tr><tr><th>不适用条件</th><td>产物经过不可信渠道、跨组织发布或要求不可抵赖时，Hash与未签名Manifest不足，必须采用数字签名、可信时间与密钥生命周期管理。</td></tr></tbody></table></div></section>
-<section id='quiz' data-section><p class='kicker'>12 · Knowledge check</p><h2>知识自测</h2><div class='quiz' data-answer='b'><strong>1. file_sha256计算什么？</strong><label><input type='radio' name='q1' value='a'>排序后的JSON</label><label><input type='radio' name='q1' value='b'>磁盘原始bytes</label><label><input type='radio' name='q1' value='c'>字段名集合</label></div><div class='quiz' data-answer='c'><strong>2. JSON可读是否等于领域可信？</strong><label><input type='radio' name='q2' value='a'>永远等于</label><label><input type='radio' name='q2' value='b'>只对Metrics等于</label><label><input type='radio' name='q2' value='c'>不等于，还需Manifest与身份合同</label></div><div class='quiz' data-answer='a'><strong>3. JSONL坏行由什么错误标出行号？</strong><label><input type='radio' name='q3' value='a'>ArtifactJsonLineError</label><label><input type='radio' name='q3' value='b'>FlakyState</label><label><input type='radio' name='q3' value='c'>StageStatus</label></div><div class='quiz' data-answer='c'><strong>4. Hash与数字签名的关键区别是什么？</strong><label><input type='radio' name='q4' value='a'>Hash天然证明发布者身份</label><label><input type='radio' name='q4' value='b'>数字签名只检查JSON格式</label><label><input type='radio' name='q4' value='c'>Hash比对内容，签名还验证持私钥发布者</label></div><div class='quiz' data-answer='c'><strong>5. Reporting面对不可用Quality来源应怎样？</strong><label><input type='radio' name='q5' value='a'>伪造0</label><label><input type='radio' name='q5' value='b'>读取历史文件</label><label><input type='radio' name='q5' value='c'>记录warning并表达NO_DATA</label></div><button class='primary' id='submit-quiz'>提交答案</button><div class='verdict' id='quiz-summary'>建议达到4/5再进入门禁。</div></section>
-<section id='gate' data-section><p class='kicker'>13 · Exit gate</p><h2>本课门禁</h2><div class='gate-list'><label class='gate'><input type='checkbox' data-gate='bytes-parse'><span>能区分bytes读取、JSON/JSONL解析与领域验证。</span></label><label class='gate'><input type='checkbox' data-gate='hash'><span>能说明raw bytes Hash能证明和不能证明什么。</span></label><label class='gate'><input type='checkbox' data-gate='manifest'><span>已画出Hash进入Manifest并绑定run、版本和状态的链。</span></label><label class='gate'><input type='checkbox' data-gate='signature'><span>能区分Hash、数字签名、授权与领域正确性。</span></label><label class='gate'><input type='checkbox' data-gate='day29-card'><span>已完成Day29使用的Artifact信任边界卡并核对只读测试。</span></label></div><div class='notes'><label>成果位置<textarea data-note='gate-output-location' placeholder='记录Day29信任边界卡和测试输出的路径'></textarea></label><label>口头记录<textarea data-note='gate-oral-record' placeholder='沿bytes→parse→Hash→Manifest→消费者复述可信链'></textarea></label></div><div class='callout good'><strong>验收句：</strong>我能从原始bytes开始说明每层证据的证明范围，并判断何时Hash足够、何时必须引入数字签名。</div><div class='footer'><div class='footer-links'><a class='button' href='第25天-不稳定用例状态与治理.html'>← 上一课</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a><a class='button' href='../接口测试框架六周学习课程.html#section-4'>术语表</a><a class='button' href='第27天-流水线报告事实与多视图.html'>下一课 →</a></div></div></section>
-</article></main><script src='六周课程页.js'></script></body></html>
+<section id='output' data-section><p class='kicker'>10 · Day29 input</p><h2>提交Day29可直接复用的Artifact双链边界卡</h2><div class='notes'><label>Manifest准入链<textarea data-note='day29-trust-boundary' placeholder='Manifest bytes → 最小解析 → 身份/版本/status/integrity → 签名或可信渠道边界'></textarea></label><label>目标产物消费链<textarea data-note='hash-signature' placeholder='目标bytes → Manifest Hash核对 → Schema解析 → 领域验证'></textarea></label><label>消费者矩阵<textarea data-note='domain-consumers' placeholder='Metrics、Flaky、Reporting对complete/degraded/failed和Hash失败的动作'></textarea></label><label>测试证据<textarea data-note='evidence' placeholder='命令、测试结果、夹具范围和当前未实现的数字签名边界'></textarea></label></div><div class='callout good'><strong>交接到Day29：</strong>追踪任一机器产物时，先确认Manifest如何获得准入资格，再确认目标bytes何时核对Hash，最后标出Schema、领域合同与真实性仍需什么证据。</div></section>
+<section id='design' data-section><p class='kicker'>11 · Design choice</p><h2>设计选择与适用边界</h2><div class='table-wrap'><table><tbody><tr><th>现方案</th><td>最小解析Manifest并验证身份、版本、提交与完整性策略；目标产物先按原始bytes核对Hash，再做Schema和领域解析。</td></tr><tr><th>替代方案</th><td>先解析目标文件后再Hash，或把文件可解析直接当作可信；更高保障方案是签名Manifest并建立公钥信任链。</td></tr><tr><th>选择理由</th><td>双链避免未验证目标内容提前进入领域解析器，原始bytes Hash精确对应磁盘事实，消费者策略保留complete/degraded/failed差异。</td></tr><tr><th>不适用条件</th><td>产物经过不可信渠道、跨组织发布或要求不可抵赖时，当前Hash与未签名Manifest不足，必须采用数字签名、可信时间与密钥生命周期管理。</td></tr></tbody></table></div></section>
+<section id="lesson-flow-summary" data-section><p class="section-kicker">FLOW · 课后流转总图</p><h2>Manifest准入链与目标Artifact消费链</h2><figure class="lesson-flow-map"><div class="flow-stage-list">
+<article class="flow-stage"><div class="flow-stage__index">1</div><div class="flow-stage__function"><h3>Producer原子写Artifact</h3><p>P0、Semantic、Metrics或Flaky生产者先完成目标文件，再计算磁盘原始bytes的SHA-256。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>目标字节事实</h3><p>JSON格式、空白和换行均属于Hash输入；重序列化对象不能替代原文件。</p></div></article>
+<article class="flow-stage"><div class="flow-stage__index">2</div><div class="flow-stage__function"><h3>Producer提交Manifest</h3><p>Manifest记录run_id、版本、状态、integrity、output_hashes和计数。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>信任声明</h3><p>Manifest只有在complete且身份/版本可接受时才有资格为目标Artifact提供expected Hash。</p></div></article>
+<article class="flow-stage"><div class="flow-stage__index">3</div><div class="flow-stage__function"><h3>通用I/O函数</h3><p><code>read_json_object()</code>最小解析Manifest；<code>file_sha256()</code>和<code>compare_file_sha256()</code>核对目标。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>机械证据</h3><p>得到对象形状、JSONL行号、expected/actual Hash；尚未形成领域结论。</p></div></article>
+<article class="flow-stage"><div class="flow-stage__index">4</div><div class="flow-stage__function"><h3>Metrics消费者</h3><p><code>load_sources()</code>验证P0与Semantic Manifest/Hash后构造<code>MetricsSources</code>。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>Metrics准入</h3><p>错误直接阻断聚合，并由Metrics失败Manifest记录失败边界。</p></div></article>
+<article class="flow-stage"><div class="flow-stage__index">5</div><div class="flow-stage__function"><h3>Flaky消费者</h3><p><code>prepare_flaky_import()</code>验证P0 Case Artifact后才生成候选和source digest。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>Flaky准入</h3><p>错误发生在SQLite事务前；可信候选才进入历史与状态治理。</p></div></article>
+<article class="flow-stage"><div class="flow-stage__index">6</div><div class="flow-stage__function"><h3>Pipeline消费者</h3><p><code>quality_sources</code>验证Quality/Metrics/Flaky来源并构造warnings与可用分区。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>视图与真实性边界</h3><p>不可信分区降级而不伪造；Hash证明内容一致，签名或可信渠道才证明发布者。</p></div></article>
+</div><div class="flow-fact-footer"><strong>最终所有权</strong><p>Producer拥有目标Artifact与Manifest；util层拥有机械读取；Metrics、Flaky、Pipeline各自拥有领域准入策略；任何消费者都不能把未签名Hash夸大为发布者真实性。</p></div></figure></section>
+<section id='quiz' data-section><p class='kicker'>12 · Knowledge check</p><h2>知识自测</h2><div class='quiz' data-answer='b'><strong>1. 目标JSON产物的正确消费顺序是什么？</strong><label><input type='radio' name='q1' value='a'>领域解析 → Hash → Manifest</label><label><input type='radio' name='q1' value='b'>读取bytes → 与已接受Manifest核对Hash → Schema/领域解析</label><label><input type='radio' name='q1' value='c'>只要可解析即可消费</label></div><div class='quiz' data-answer='c'><strong>2. 为什么Manifest允许先做最小解析？</strong><label><input type='radio' name='q2' value='a'>解析后就自动可信</label><label><input type='radio' name='q2' value='b'>为了先执行业务指标计算</label><label><input type='radio' name='q2' value='c'>消费者需要取得身份、版本、状态和目标Hash，随后仍要完成准入判断</label></div><div class='quiz' data-answer='a'><strong>3. <code>status=complete</code>准确证明什么？</strong><label><input type='radio' name='q3' value='a'>写入事务完成，不保证integrity或真实性</label><label><input type='radio' name='q3' value='b'>所有消费者都可使用</label><label><input type='radio' name='q3' value='c'>发布者身份可信</label></div><div class='quiz' data-answer='c'><strong>4. Hash与数字签名的关键区别是什么？</strong><label><input type='radio' name='q4' value='a'>Hash天然证明发布者身份</label><label><input type='radio' name='q4' value='b'>数字签名只检查JSON格式</label><label><input type='radio' name='q4' value='c'>Hash比对内容，签名还可验证受信私钥持有者</label></div><div class='quiz' data-answer='c'><strong>5. 当前仓库的真实性边界是什么？</strong><label><input type='radio' name='q5' value='a'>已经有完整数字签名体系</label><label><input type='radio' name='q5' value='b'>Hash可以防止Manifest与目标同时被替换</label><label><input type='radio' name='q5' value='c'>主要证明同轮身份、状态与内容一致性，发布者真实性仍依赖外部可信边界</label></div><button class='primary' id='submit-quiz'>提交答案</button><div class='verdict' id='quiz-summary'>建议达到4/5再进入门禁。</div></section>
+<section id='gate' data-section><p class='kicker'>13 · Exit gate</p><h2>本课门禁</h2><div class='gate-list'><label class='gate'><input type='checkbox' data-gate='bytes-parse'><span>已分别画出Manifest最小解析链和目标产物先Hash后解析链。</span></label><label class='gate'><input type='checkbox' data-gate='hash'><span>能说明raw bytes Hash能证明内容一致性但不能证明发布者身份。</span></label><label class='gate'><input type='checkbox' data-gate='manifest'><span>能区分status、integrity、output_hashes和消费者准入结论。</span></label><label class='gate'><input type='checkbox' data-gate='signature'><span>能说明当前仓库没有完整数字签名体系，以及何时必须补签名或可信渠道。</span></label><label class='gate'><input type='checkbox' data-gate='day29-card'><span>已完成Day29使用的双链边界卡和跨消费者矩阵。</span></label></div><div class='notes'><label>成果位置<textarea data-note='gate-output-location' placeholder='记录Day29双链边界卡和测试输出的路径'></textarea></label><label>口头记录<textarea data-note='gate-oral-record' placeholder='分别复述Manifest准入链、目标产物消费链与真实性边界'></textarea></label></div><div class='callout good'><strong>验收句：</strong>我能先最小解析并准入Manifest，再对目标bytes核对Hash后进行Schema与领域解析，并明确Hash、签名、授权和领域正确性各自的证明上限。</div><div class='footer'><div class='footer-links'><a class='button' href='第25天-不稳定用例状态与治理.html'>← 上一课</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a><a class='button' href='../接口测试框架六周学习课程.html#section-4'>术语表</a><a class='button' href='第27天-流水线报告事实与多视图.html'>下一课 →</a></div></div></section>
+</article></main><script src="六周课程页.js"></script></body></html>

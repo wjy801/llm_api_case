@@ -1,10 +1,140 @@
 <!doctype html><html lang='zh-CN'>
-<head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>第28天｜持续集成编排与发布边界</title><link rel='stylesheet' href='六周课程页.css'></head>
+<head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>第28天｜持续集成编排与发布边界</title><link rel='stylesheet' href="六周课程页.css"></head>
 <body data-day='28'><aside class='side' id='side'><div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第28天 · Jenkins编排</h2><p>第6周 / Stages、Artifacts与Notify</p></div><nav class='nav'>
-<a href='#question'><span class='num'>01</span><span>问题与边界</span></a><a href='#entry'><span class='num'>02</span><span>源码入口</span></a><a href='#stages'><span class='num'>03</span><span>阶段编排</span></a><a href='#params'><span class='num'>04</span><span>参数与安全</span></a><a href='#status'><span class='num'>05</span><span>阶段状态</span></a><a href='#publish'><span class='num'>06</span><span>发布产物</span></a><a href='#boundary'><span class='num'>07</span><span>职责边界</span></a><a href='#evidence'><span class='num'>08</span><span>静态证据</span></a><a href='#practice'><span class='num'>09</span><span>离线实践</span></a><a href='#output'><span class='num'>10</span><span>当日产出</span></a><a href='#design'><span class='num'>11</span><span>设计边界</span></a><a href='#quiz'><span class='num'>12</span><span>知识自测</span></a><a href='#gate'><span class='num'>13</span><span>退出门禁</span></a>
+<a href='#code-first-walkthrough'><span class='num'>CODE</span><span>代码先行</span></a><a href='#question'><span class='num'>01</span><span>问题与边界</span></a><a href='#entry'><span class='num'>02</span><span>源码入口</span></a><a href='#stages'><span class='num'>03</span><span>阶段编排</span></a><a href='#params'><span class='num'>04</span><span>参数与安全</span></a><a href='#status'><span class='num'>05</span><span>阶段状态</span></a><a href='#publish'><span class='num'>06</span><span>发布产物</span></a><a href='#boundary'><span class='num'>07</span><span>职责边界</span></a><a href='#evidence'><span class='num'>08</span><span>静态证据</span></a><a href='#practice'><span class='num'>09</span><span>离线实践</span></a><a href='#output'><span class='num'>10</span><span>当日产出</span></a><a href='#design'><span class='num'>11</span><span>设计边界</span></a><a href='#lesson-flow-summary'><span class='num'>FLOW</span><span>流转总图</span></a><a href='#quiz'><span class='num'>12</span><span>知识自测</span></a><a href='#gate'><span class='num'>13</span><span>退出门禁</span></a>
 </nav><div class='meter'><div class='meter-row'><span>门禁进度</span><span id='gate-text'>0/5</span></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div></aside>
 <main class='main'><div class='topbar'><div><button class='menu' id='menu'>本课目录</button> 接口测试框架源码架构与证据链六周课程 · 第28天 · 建议学习 2～2.5 小时</div><div class='toolbar'><a class='button' href='../接口测试框架六周学习课程.html'>课程大纲</a><button class='button' id='reset'>重置本课记录</button></div></div><article class='lesson'>
 <header class='hero'><p class='eyebrow'>WEEK 6 · DAY 28</p><h1>持续集成编排与发布边界</h1><p class='hero-lead'>Jenkins负责选择阶段、准备环境、记录阶段状态、发布JUnit/Allure/reports并通知；测试结论与质量语义仍由Python实现拥有。</p><div class='pills'><span class='pill'>Parameters</span><span class='pill'>Stages</span><span class='pill'>Archive</span><span class='pill'>Notify</span></div><div class='outcome'><strong>当日产出：</strong>阶段编排图、Python/Jenkins职责矩阵，以及供Day29复用的发布边界与设计取舍。</div></header>
+<section id="code-first-walkthrough" data-section><p class="section-kicker">CODE · 代码先行精讲</p><h2>先用静态合同锁住Jenkins边界，再读参数、阶段和post函数</h2><p class="section-lead">本课不运行Jenkins。通过真实pytest静态合同检查Jenkinsfile：危险动作默认关闭，阶段状态由CLI记录，Python生成统一Report，Jenkins只归档、发布和通知。</p>
+<div class="guided-start"><div class="guided-start__header"><h3>本节唯一主线：摘要生成必须早于归档并具备兜底</h3><p><strong>用例文件：</strong><code>tests/quality/test_quality_jenkinsfile.py</code>；<strong>测试函数：</strong><code>test_pipeline_summary_is_parameterized_generated_before_archive_and_has_fallback</code>；<strong>pytest nodeid：</strong><code>tests/quality/test_quality_jenkinsfile.py::test_pipeline_summary_is_parameterized_generated_before_archive_and_has_fallback</code>。</p></div><div class="guided-command"><strong>先运行这个真实Quality测试</strong><code>python -m pytest -q tests/quality/test_quality_jenkinsfile.py::test_pipeline_summary_is_parameterized_generated_before_archive_and_has_fallback</code></div><div class="guided-rule"><strong>阅读规则</strong>Groovy负责“何时调用”和“发布什么”，Python负责“事实意味着什么”；看到Jenkins解析JUnit或重算质量结论，应立即视为职责漂移。</div><div class="guided-chain" aria-label="代码阅读顺序"><span>静态合同测试</span><b>→</b><span>parameters/stages</span><b>→</b><span>initialize/update stage</span><b>→</b><span>generatePipelineSummary</span><b>→</b><span>post archive/notify</span></div></div>
+
+<article class="guided-step"><div class="guided-step__title"><span class="guided-step__number">1</span><div><h3>静态测试冻结调用顺序与“不改构建结果”边界</h3><p>合同要求参数化开关、阶段状态、生成顺序、fallback存在，并禁止摘要函数写<code>currentBuild.result</code>。</p></div></div><div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">tests/quality/test_quality_jenkinsfile.py::test_pipeline_summary_is_parameterized_generated_before_archive_and_has_fallback · 完整测试函数</span><pre><code>def test_pipeline_summary_is_parameterized_generated_before_archive_and_has_fallback():
+    content = JENKINSFILE.read_text(encoding="utf-8")
+    generator = content[
+        content.index("void generatePipelineSummary()") : content.index("void writeFallbackPipelineSummary()")
+    ]
+
+    assert "booleanParam(name: 'GENERATE_PIPELINE_SUMMARY', defaultValue: true" in content
+    assert "GENERATE_PIPELINE_SUMMARY=true" in content
+    assert "\\$env:GENERATE_PIPELINE_SUMMARY = '${params.GENERATE_PIPELINE_SUMMARY}'" in content
+    assert '"QUALITY_ENABLE=${params.RUN_REAL_SMOKE}"' in content
+    assert "initializePipelineStageStatus()" in content
+    assert "updatePipelineStageStatus('framework_tests', 'PASSED')" in content
+    assert "updatePipelineStageStatus('smoke_collect', 'PASSED')" in content
+    assert "updatePipelineStageStatus('real_smoke', 'PASSED')" in content
+    assert "void generatePipelineSummary()" in content
+    assert "void writeFallbackPipelineSummary()" in content
+    assert "Pipeline summary generation is disabled by GENERATE_PIPELINE_SUMMARY." in content
+    assert generator.index("if (!pipelineSummaryEnabled())") &lt; generator.index("try {")
+    assert generator.index("return") &lt; generator.index("writeFallbackPipelineSummary")
+    assert "currentBuild.result =" not in generator
+    assert "currentBuild.currentResult =" not in generator
+    assert content.index("generatePipelineSummary()") &lt; content.index("allure includeProperties:")
+    assert content.index("generatePipelineSummary()") &lt; content.index("archiveArtifacts artifacts:")
+    assert content.index("generatePipelineSummary()") &lt; content.index("notifyByEmail('FAILED')")</code></pre></div><div class="guided-explanation"><h4>合同含义</h4><div class="guided-point"><strong>输入事实</strong><p>测试直接读取冻结Jenkinsfile文本，不需要Jenkins实例。</p></div><div class="guided-point"><strong>验证</strong><p>summary开关、stage更新、fallback与post顺序都成为可回归合同。</p></div><div class="guided-point success"><strong>状态边界</strong><p>摘要函数不得反向改变构建结果，Reporting是观察者而不是裁决者。</p></div><div class="guided-point warning"><strong>失败边界</strong><p>文本合同不能证明实际Job插件和凭据可用，但能阻止边界代码被无意删除或改序。</p></div></div></div></article>
+
+<article class="guided-step"><div class="guided-step__title"><span class="guided-step__number">2</span><div><h3>参数决定是否执行，阶段只调用稳定入口</h3><p>真实Smoke默认关闭；执行时Jenkins设置Quality开关并调用<code>run_master.py</code>，不解析业务响应。</p></div></div><div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">Jenkinsfile::parameters / Real Smoke stage · 非连续选段：参数声明与阶段执行主体</span><pre><code>parameters {
+    booleanParam(name: 'RUN_FRAMEWORK_TESTS', defaultValue: true, description: '执行 tests 目录下的离线框架测试。')
+    booleanParam(name: 'RUN_COLLECT_ONLY', defaultValue: true, description: '仅收集 Smoke 用例并统计分池，不调用真实接口。')
+    booleanParam(name: 'RUN_REAL_SMOKE', defaultValue: false, description: '执行真实 Smoke；会产生外部调用和费用，默认关闭。')
+    booleanParam(name: 'GENERATE_PIPELINE_SUMMARY', defaultValue: true, description: '为本轮构建生成 reports/pipeline-summary.md 执行摘要。')
+    booleanParam(name: 'ALWAYS_SEND_REPORT_EMAIL', defaultValue: false, description: '成功构建也发送报告邮件；失败或不稳定构建始终发送。')
+    choice(name: 'USE_CHINA_ENVIRONMENT', choices: ['TRUE', 'FALSE'], description: 'TRUE 使用中国环境，FALSE 使用海外环境。')
+    string(name: 'SMOKE_TARGET', defaultValue: 'module/smoke', description: '真实 Smoke 的目标目录、文件或 pytest nodeid。', trim: true)
+    choice(name: 'TEST_PARALLEL_WORKERS', choices: ['off', 'auto', '2', '4', '8'], description: 'off 关闭并发；auto/2/4/8 启用 pytest-xdist 并设置 worker 数量。')
+}
+
+stage('Real Smoke') {
+    when { expression { return params.RUN_REAL_SMOKE } }
+    steps {
+        script {
+            updatePipelineStageStatus('real_smoke', 'NO_DATA')
+        }
+        ciPowerShell('''
+        $target = $env:SMOKE_TARGET
+        $env:QUALITY_ENABLE = '1'
+        $env:QUALITY_SEMANTIC_ENABLE = '1'
+        $env:QUALITY_METRICS_ENABLE = '1'
+        $env:QUALITY_FLAKY_HISTORY_ENABLE = '0'
+        $env:QUALITY_FLAKY_STATE_ENABLE = '0'
+        $env:QUALITY_OUTPUT_DIR = 'reports/quality'
+        ./.venv/Scripts/python.exe run_master.py $target @parallelArgs --junitxml=reports/smoke-tests.xml
+        ''')
+    }
+}</code></pre></div><div class="guided-explanation"><h4>动作所有权</h4><div class="guided-point"><strong>输入验证</strong><p>危险真实调用必须由<code>RUN_REAL_SMOKE=true</code>显式开启；target和并发只是传给稳定Runner入口。</p></div><div class="guided-point"><strong>状态变化</strong><p>阶段开始先记NO_DATA，结束由post按真实结果更新PASSED/FAILED。</p></div><div class="guided-point success"><strong>Artifact所有权</strong><p>Runner/pytest写execution-result、JUnit、Allure和Quality目录；Jenkins只准备路径与环境。</p></div><div class="guided-point warning"><strong>边界</strong><p>Groovy不读取接口payload、不计算Metrics、不改变Flaky状态。</p></div></div></div></article>
+<article class="guided-step"><div class="guided-step__title"><span class="guided-step__number">3</span><div><h3>阶段状态函数只调用Reporting CLI并失败开放</h3><p>初始化记录哪些阶段被选择；更新函数记录阶段事实。两者不判断测试数量和质量阈值。</p></div></div><div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">Jenkinsfile::initializePipelineStageStatus / updatePipelineStageStatus · 两个完整函数</span><pre><code>void initializePipelineStageStatus() {
+    if (!pipelineSummaryEnabled()) {
+        echo 'Pipeline summary generation is disabled; stage status initialization skipped.'
+        return
+    }
+    try {
+        ciPowerShell("""
+        ./.venv/Scripts/python.exe -m pipeline_reporting initialize-stages `
+          --framework-tests ${params.RUN_FRAMEWORK_TESTS} `
+          --smoke-collect ${params.RUN_COLLECT_ONLY} `
+          --real-smoke ${params.RUN_REAL_SMOKE}
+        """)
+    } catch (error) {
+        echo "Pipeline stage status initialization failed open: ${error.getMessage()}"
+    }
+}
+
+void updatePipelineStageStatus(String stageName, String status) {
+    if (!pipelineSummaryEnabled()) {
+        return
+    }
+    try {
+        ciPowerShell("""
+        ./.venv/Scripts/python.exe -m pipeline_reporting set-stage `
+          --name '${stageName}' `
+          --status '${status}'
+        """)
+    } catch (error) {
+        echo "Pipeline stage status update failed open: ${stageName}=${status}: ${error.getMessage()}"
+    }
+}</code></pre></div><div class="guided-explanation"><h4>阶段事实</h4><div class="guided-point"><strong>输入</strong><p>布尔参数决定初始NOT_RUN/NO_DATA语义；stageName/status来自当前阶段post。</p></div><div class="guided-point"><strong>状态变化</strong><p>Python CLI拥有<code>pipeline-stage-status.json</code>格式与原子写入，Groovy只传值。</p></div><div class="guided-point success"><strong>失败开放</strong><p>状态记录失败只写日志，不覆盖测试原始退出码或构建结果。</p></div><div class="guided-point warning"><strong>失败边界</strong><p>报告可能缺少阶段文件并产生warning，但不能因此把实际失败改成成功。</p></div></div></div></article>
+
+<article class="guided-step"><div class="guided-step__title"><span class="guided-step__number">4</span><div><h3>post先生成统一Report，再发布Artifact和通知</h3><p><code>generatePipelineSummary()</code>调用Python一次生成四种视图；失败时只写不含推测数量的fallback。</p></div></div><div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">Jenkinsfile::generatePipelineSummary / post always · 非连续选段：完整生成函数与发布顺序</span><pre><code>void generatePipelineSummary() {
+    if (!pipelineSummaryEnabled()) {
+        echo 'Pipeline summary generation is disabled by GENERATE_PIPELINE_SUMMARY.'
+        return
+    }
+    try {
+        if (!fileExists('.venv/Scripts/python.exe') || !fileExists('pipeline_reporting/__main__.py')) {
+            throw new IllegalStateException('Python report generator is unavailable in the workspace.')
+        }
+        withEnv([
+            "PIPELINE_BUILD_RESULT=${currentBuild.currentResult ?: currentBuild.result ?: 'SUCCESS'}",
+            "PIPELINE_DURATION_MS=${currentBuild.duration ?: 0}",
+            "QUALITY_ENABLE=${params.RUN_REAL_SMOKE}",
+        ]) {
+            ciPowerShell('''
+            ./.venv/Scripts/python.exe -m pipeline_reporting generate `
+              --workspace . `
+              --output reports/pipeline-summary.md `
+              --machine-output reports/pipeline-summary.json `
+              --email-subject-output reports/pipeline-email-subject.txt `
+              --email-html-output reports/pipeline-email.html `
+              --dotenv .env
+            ''')
+        }
+        if (!fileExists('reports/pipeline-summary.md')) {
+            throw new IllegalStateException('Pipeline summary generator completed without output.')
+        }
+    } catch (error) {
+        echo "Pipeline summary generation failed open: ${error.getMessage()}"
+        writeFallbackPipelineSummary()
+    }
+}
+
+always {
+    script {
+        generatePipelineSummary()
+    }
+    allure includeProperties: false, jdk: '', results: [[path: 'allure-results']]
+    archiveArtifacts artifacts: 'allure-results/**, reports/**', allowEmptyArchive: true
+}</code></pre></div><div class="guided-explanation"><h4>发布与失败边界</h4><div class="guided-point"><strong>输入事实</strong><p>当前构建结果、耗时和是否执行真实Smoke作为Reporting context；源Artifact已由前序阶段写出。</p></div><div class="guided-point"><strong>产物</strong><p>Python一次生成Markdown、JSON、邮件主题和HTML；Jenkins随后发布Allure并归档reports。</p></div><div class="guided-point success"><strong>顺序</strong><p>先生成再归档、再通知，确保邮件和归档引用同一轮Report。</p></div><div class="guided-point warning"><strong>兜底</strong><p>fallback不推测用例数，也不修改build result；它只证明详细报告生成失败。</p></div></div></div></article>
+</section>
 <section id='question' data-section><p class='kicker'>01 · Question</p><h2>CI的本质是编排，不是复制业务判断</h2><p class='lead'>如果Groovy再次解析JUnit、Quality并计算结论，Python与Jenkins会形成两套规则。项目让Jenkins只维护阶段执行事实，并调用<code>pipeline_reporting</code>生成统一结论。</p><div class='callout warn'><strong>边界：</strong>只静态阅读Jenkinsfile与迁移模板，不触发真实Job、真实Smoke、付费接口或持久Flaky状态。</div></section>
 <section id='entry' data-section><p class='kicker'>02 · Source entry</p><h2>主流水线与迁移合同</h2><div class='grid2'><div class='card'><h3>当前实现</h3><p>根目录<code>Jenkinsfile</code>包含参数、阶段、post与辅助函数。</p></div><div class='card'><h3>迁移模板</h3><p><code>JENKINS_MIGRATION_TEMPLATE.md</code>说明接入新Job时必须保持的边界。</p></div><div class='card'><h3>报告入口</h3><p><code>python -m pipeline_reporting</code>初始化、更新阶段并生成视图。</p></div><div class='card'><h3>执行入口</h3><p><code>run_master.py</code>拥有收集、分池、JUnit、Allure与Quality生命周期。</p></div></div></section>
 <section id='stages' data-section><p class='kicker'>03 · Stages</p><h2>阶段顺序体现依赖约束</h2><div class='flow'><span>Checkout</span><i>→</i><span>Check Runtime Env</span><i>→</i><span>Prepare Python Env</span><i>→</i><span>Framework Unit Tests</span><i>→</i><span>Collect Smoke Cases</span><i>→</i><span>Real Smoke</span><i>→</i><span>post发布</span></div><p>Prepare阶段清理并重建<code>reports/</code>，随后初始化pipeline-stage-status；可选测试阶段由参数控制。</p></section>
@@ -19,6 +149,14 @@
   tests/quality/test_pipeline_reporting_dependency_boundaries.py -q</code></pre></div><p>禁止从课程命令触发Jenkins构建；如需观察Smoke，只运行仓库既有collect-only入口。</p></section>
 <section id='output' data-section><p class='kicker'>10 · Day29 input</p><h2>提交Day29复用的发布边界与设计取舍</h2><div class='notes'><label>阶段编排图<textarea data-note='stages' placeholder='参数 → 准备 → 测试/质量 → Reporting → post'></textarea></label><label>职责矩阵<textarea data-note='ownership' placeholder='Python拥有语义；Jenkins拥有编排、归档、通知'></textarea></label><label>Day29发布边界<textarea data-note='day29-release-boundary' placeholder='哪些产物可发布、由谁批准、发布不等于业务可信的条件'></textarea></label><label>Day29设计取舍<textarea data-note='day29-design-tradeoffs' placeholder='至少列出CI编排与领域判断分离带来的收益、代价和不适用条件'></textarea></label></div><div class='callout good'><strong>交接到Day29：</strong>追踪离线场景到CI层时，用发布边界说明哪些动作只是分发证据，哪些判断仍必须回到Python领域合同。</div></section>
 <section id='design' data-section><p class='kicker'>11 · Design choice</p><h2>设计选择与适用边界</h2><div class='table-wrap'><table><tbody><tr><th>现方案</th><td>Jenkins只负责编排阶段、环境、归档和通知，Python拥有测试状态、质量语义与报告结论。</td></tr><tr><th>替代方案</th><td>在Jenkinsfile/Groovy中重复实现测试结果解析、质量阈值和业务状态判断。</td></tr><tr><th>选择理由</th><td>领域规则保留在可单测、可本地复现的Python代码中，CI平台只处理执行动作，减少平台锁定和双份规则漂移。</td></tr><tr><th>不适用条件</th><td>组织没有Python运行环境或发布必须经过独立审批/签名服务时，应调用版本化领域服务与发布控制面，而不是把规则临时塞回Groovy。</td></tr></tbody></table></div></section>
+<section id="lesson-flow-summary" data-section><p class="section-kicker">FLOW · 课后流转总图</p><h2>Jenkins动作、Python事实、Artifact发布与通知边界</h2><figure class="lesson-flow-map"><div class="flow-stage-list">
+<article class="flow-stage"><div class="flow-stage__index">1</div><div class="flow-stage__function"><h3>parameters / when</h3><p>Jenkins参数选择framework tests、collect-only、real smoke、summary和并发。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>执行计划</h3><p>危险真实调用默认关闭；未选择阶段是NOT_RUN，不等于0 tests。</p></div></article>
+<article class="flow-stage"><div class="flow-stage__index">2</div><div class="flow-stage__function"><h3>initialize/update stage CLI</h3><p>Groovy调用<code>pipeline_reporting initialize-stages/set-stage</code>记录选择与真实阶段终点。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>Stage Artifact</h3><p><code>pipeline-stage-status.json</code>由Python定义格式；记录失败不改变原测试退出码。</p></div></article>
+<article class="flow-stage"><div class="flow-stage__index">3</div><div class="flow-stage__function"><h3>run_master.py / pytest</h3><p>Runner执行nodeid或目标，pytest产生JUnit/Allure，Quality流水线产生P0、Semantic、Metrics和可选Flaky。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>事实与Manifest</h3><p>execution-result、JUnit、Quality Artifact/Manifest/Hash属于Python与pytest，不属于Groovy。</p></div></article>
+<article class="flow-stage"><div class="flow-stage__index">4</div><div class="flow-stage__function"><h3><code>generatePipelineSummary()</code></h3><p>Jenkins传入构建context并调用Reporting generate一次。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>PipelineReport多视图</h3><p>Reporting合并Runner、JUnit、Metrics、Flaky与stage事实，生成Markdown/JSON/Email。</p></div></article>
+<article class="flow-stage"><div class="flow-stage__index">5</div><div class="flow-stage__function"><h3>post always</h3><p>先生成摘要，再发布Allure并归档<code>allure-results/**</code>与<code>reports/**</code>。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>可下载Artifact</h3><p>归档保留各生产者原始产物和统一Pipeline视图，便于同轮核对。</p></div></article>
+<article class="flow-stage"><div class="flow-stage__index">6</div><div class="flow-stage__function"><h3>notifyByEmail / fallback</h3><p>通知读取Python生成的主题与HTML；不可用时发送明确fallback。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>发布边界</h3><p>Jenkins负责发送与归档，不重新解析JUnit、不重算Metrics/Flaky、不改变Pipeline结论。</p></div></article>
+</div><div class="flow-fact-footer"><strong>最终所有权</strong><p>Jenkins拥有阶段编排、环境、发布和通知；Runner/pytest/Quality拥有事实与Manifest；Reporting拥有统一PipelineReport和视图。</p></div></figure></section>
 <section id='quiz' data-section><p class='kicker'>12 · Knowledge check</p><h2>知识自测</h2><div class='quiz' data-answer='b'><strong>1. 谁计算PipelineConclusion？</strong><label><input type='radio' name='q1' value='a'>Groovy邮件函数</label><label><input type='radio' name='q1' value='b'>Python pipeline_reporting</label><label><input type='radio' name='q1' value='c'>Allure插件</label></div><div class='quiz' data-answer='c'><strong>2. RUN_REAL_SMOKE默认值？</strong><label><input type='radio' name='q2' value='a'>true</label><label><input type='radio' name='q2' value='b'>auto</label><label><input type='radio' name='q2' value='c'>false</label></div><div class='quiz' data-answer='a'><strong>3. 阶段开始先写NO_DATA的意义？</strong><label><input type='radio' name='q3' value='a'>中断时不会伪装成成功</label><label><input type='radio' name='q3' value='b'>加快pytest</label><label><input type='radio' name='q3' value='c'>启用Flaky</label></div><div class='quiz' data-answer='b'><strong>4. Jenkins应负责什么？</strong><label><input type='radio' name='q4' value='a'>重写Metrics</label><label><input type='radio' name='q4' value='b'>阶段、归档、插件发布和通知</label><label><input type='radio' name='q4' value='c'>生成Case身份</label></div><div class='quiz' data-answer='c'><strong>5. 本课允许执行什么Smoke？</strong><label><input type='radio' name='q5' value='a'>真实付费Smoke</label><label><input type='radio' name='q5' value='b'>任意nodeid</label><label><input type='radio' name='q5' value='c'>仅collect-only</label></div><button class='primary' id='submit-quiz'>提交答案</button><div class='verdict' id='quiz-summary'>建议达到4/5再进入门禁。</div></section>
 <section id='gate' data-section><p class='kicker'>13 · Exit gate</p><h2>本课门禁</h2><div class='gate-list'><label class='gate'><input type='checkbox' data-gate='stages'><span>已画出Jenkins阶段编排。</span></label><label class='gate'><input type='checkbox' data-gate='params'><span>能解释安全默认参数。</span></label><label class='gate'><input type='checkbox' data-gate='status'><span>能说明阶段状态更新链。</span></label><label class='gate'><input type='checkbox' data-gate='boundary'><span>能区分Python与Jenkins所有权。</span></label><label class='gate'><input type='checkbox' data-gate='safe'><span>未触发真实Job、Smoke或持久Flaky写入。</span></label></div><div class='notes'><label>成果位置<textarea data-note='gate-output-location' placeholder='记录Day29发布边界、设计取舍或静态测试结果的路径'></textarea></label><label>口头记录<textarea data-note='gate-oral-record' placeholder='说明CI编排为什么不能拥有质量领域判断'></textarea></label></div><div class='callout good'><strong>验收句：</strong>我能解释Jenkins怎样编排和发布，同时保证测试、Quality与Reporting语义仍由Python实现唯一拥有。</div><div class='footer'><div class='footer-links'><a class='button' href='第27天-流水线报告事实与多视图.html'>← 上一课</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a><a class='button' href='../接口测试框架六周学习课程.html#section-4'>术语表</a><a class='button' href='第29天-离线场景跨层实现追踪.html'>下一课 →</a></div></div></section>
-</article></main><script src='六周课程页.js'></script></body></html>
+</article></main><script src="六周课程页.js"></script></body></html>

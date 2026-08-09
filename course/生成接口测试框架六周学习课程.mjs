@@ -67,6 +67,16 @@ function validateLessonContract(markdown) {
     "## Day 18：运行时观察接口",
     "## Day 19：可选质量能力与执行阶段",
     "## Day 26：Artifact读取Hash与Manifest信任",
+    "取消请求不等于线程已经结束",
+    "expected_type校验",
+    "只表示写入事务完成",
+    "Manifest bytes → 最小解析",
+    "目标bytes → Hash核对",
+    "哪些动作同时改两列",
+    "现有`tests/test_capture_downloads.py`只有4项测试",
+    "不能称为“完整性可信P0”",
+    "脚本自动检查范围",
+    "人工答辩范围",
   ];
   for (const marker of requiredMarkers) {
     if (!markdown.includes(marker)) {
@@ -153,6 +163,43 @@ function validateLessonPages() {
   const day24 = fs.readFileSync(path.join(courseDir, lessonDirectoryName, lessonFileNames.get(24)), 'utf8');
   if (!day24.includes('不依赖Semantic或Metrics')) {
     throw new Error('Day 24 must state that Flaky import does not depend on Semantic or Metrics');
+  }
+
+  const correctionContracts = new Map([
+    [8, ['cancel_event', 'done_event', 'join()', '不能宣称teardown同步等待', '四项现有测试只证明四个局部合同', '未被这四项测试证明']],
+    [12, ['transform负责转换，expected_type只负责校验', '提取/缺失与默认处理 → transform转换 → expected_type类型校验 → 写入TestContext']],
+    [21, ['status=complete', 'degraded按消费者策略条件消费，failed阻断消费']],
+    [22, ['run_id、status=complete和request-metrics原始bytes Hash', '不校验P0版本，也不拒绝integrity_status=failed']],
+    [25, ['人工动作对两列的影响必须逐项核对', 'confirm_flaky', 'mark_not_flaky', 'start_recovery']],
+    [26, ['Manifest准入链', '目标产物消费链', '没有完整的发布者数字签名体系']],
+    [30, ['脚本自动检查与人工答辩必须分栏', '脚本未自动检查', 'planned nodeids', 'Markdown/JSON逐字段一致性']],
+  ]);
+  for (const [day, markers] of correctionContracts) {
+    const fileName = lessonFileNames.get(day);
+    const html = fs.readFileSync(path.join(courseDir, lessonDirectoryName, fileName), 'utf8');
+    for (const marker of markers) {
+      if (!html.includes(marker)) {
+        throw new Error(`Day ${day} is missing corrected knowledge marker: ${marker}`);
+      }
+    }
+  }
+
+  const forbiddenSemantics = new Map([
+    [8, ['teardown停止并附加', '为了取消、等待、记录错误并确认资源已收口', '大小预检、流式累计、取消、唯一命名、Response关闭、replace时机和异常清理']],
+    [12, ['类型转换 → 自定义transform']],
+    [21, ['complete P0 Manifest及可信集合']],
+    [22, ['同一可信P0', '满足Semantic消费者准入条件', '分别验证P0身份、版本、status、integrity策略和request-metrics Hash']],
+    [25, ['自动规则只更新detected_state', 'detected_state与current_state为何不能互相覆盖']],
+    [26, ['bytes → parse → Hash → Manifest']],
+  ]);
+  for (const [day, phrases] of forbiddenSemantics) {
+    const fileName = lessonFileNames.get(day);
+    const html = fs.readFileSync(path.join(courseDir, lessonDirectoryName, fileName), 'utf8');
+    for (const phrase of phrases) {
+      if (html.includes(phrase)) {
+        throw new Error(`Day ${day} still contains obsolete knowledge model: ${phrase}`);
+      }
+    }
   }
 }
 

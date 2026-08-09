@@ -1,10 +1,165 @@
 <!doctype html>
 <html lang='zh-CN'>
-<head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta name='description' content='接口测试框架源码架构与证据链六周课程第11天：SSE流式响应与资源生命周期'><title>第11天｜流式响应与资源生命周期</title><link rel='stylesheet' href='六周课程页.css'></head>
+<head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta name='description' content='接口测试框架源码架构与证据链六周课程第11天：SSE流式响应与资源生命周期'><title>第11天｜流式响应与资源生命周期</title><link rel='stylesheet' href="六周课程页.css"></head>
 <body data-day='11'>
-<aside class='side' id='side'><div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第11天 · 长响应生命周期</h2><p>第3周 / 流式、上下文、并发与收集</p></div><nav class='nav'><a href='#question'><span class='num'>01</span><span>问题与边界</span></a><a href='#entry'><span class='num'>02</span><span>源码入口</span></a><a href='#open'><span class='num'>03</span><span>建立流式响应</span></a><a href='#consume'><span class='num'>04</span><span>逐行消费</span></a><a href='#outcome'><span class='num'>05</span><span>终态语义</span></a><a href='#owner'><span class='num'>06</span><span>关闭责任</span></a><a href='#boundary'><span class='num'>07</span><span>诊断边界</span></a><a href='#evidence'><span class='num'>08</span><span>测试证据</span></a><a href='#design'><span class='num'>D</span><span>设计选择与边界</span></a><a href='#practice'><span class='num'>09</span><span>离线实践</span></a><a href='#output'><span class='num'>10</span><span>当日产出</span></a><a href='#quiz'><span class='num'>11</span><span>知识自测</span></a><a href='#gate'><span class='num'>12</span><span>退出门禁</span></a></nav><div class='meter'><div class='meter-row'><span>门禁进度</span><span id='gate-text'>0/5</span></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div></aside>
+<aside class='side' id='side'><div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第11天 · 长响应生命周期</h2><p>第3周 / 流式、上下文、并发与收集</p></div><nav class='nav'><a href='#code-first-walkthrough'><span class='num'>C</span><span>代码先行</span></a><a href='#question'><span class='num'>01</span><span>问题与边界</span></a><a href='#entry'><span class='num'>02</span><span>源码入口</span></a><a href='#open'><span class='num'>03</span><span>建立流式响应</span></a><a href='#consume'><span class='num'>04</span><span>逐行消费</span></a><a href='#outcome'><span class='num'>05</span><span>终态语义</span></a><a href='#owner'><span class='num'>06</span><span>关闭责任</span></a><a href='#boundary'><span class='num'>07</span><span>诊断边界</span></a><a href='#evidence'><span class='num'>08</span><span>测试证据</span></a><a href='#design'><span class='num'>D</span><span>设计选择与边界</span></a><a href='#practice'><span class='num'>09</span><span>离线实践</span></a><a href='#output'><span class='num'>10</span><span>当日产出</span></a><a href="#source-code"><span class='num'>S</span><span>关键源码</span></a><a href='#lesson-flow-summary'><span class='num'>F</span><span>课后流转总图</span></a><a href='#quiz'><span class='num'>11</span><span>知识自测</span></a><a href='#gate'><span class='num'>12</span><span>退出门禁</span></a></nav><div class='meter'><div class='meter-row'><span>门禁进度</span><span id='gate-text'>0/5</span></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div></aside>
 <main class='main'><div class='topbar'><div><button class='menu' id='menu'>本课目录</button> 第11天 · 建议学习 1.5～2.5 小时</div><div class='toolbar'><a class='button' href='../接口测试框架六周学习课程.html'>课程大纲</a><a class='button' href='../接口测试框架六周学习课程.html#section-4'>术语表</a><button class='button' id='reset'>重置本课记录</button></div></div><article class='lesson'>
-<header class='hero'><p class='eyebrow'>WEEK 3 · DAY 11</p><h1>SSE流式响应与资源生命周期</h1><p class='hero-lead'>响应头成功只代表长连接已经建立；业务还需要逐行消费、识别终止事实并在所有路径关闭Response。</p><div class='pills'><span class='pill'>stream=True</span><span class='pill'>iter_sse_lines</span><span class='pill'>[DONE]</span><span class='pill'>finally close</span></div><div class='outcome'><strong>当日产出：</strong>一张“建立 → 消费 → 终态 → 关闭”的生命周期图和终态矩阵。</div></header>
+<header class='hero'><p class='eyebrow'>WEEK 3 · DAY 11</p><h1>SSE流式响应与资源生命周期</h1><p class='hero-lead'>响应头成功只代表长连接已经建立；业务还需要逐行消费、识别终止事实并证明Response关闭；当前interrupt实现仍存在Header前置失败绕过finally的窗口。</p><div class='pills'><span class='pill'>stream=True</span><span class='pill'>iter_sse_lines</span><span class='pill'>[DONE]</span><span class='pill'>finally close</span></div><div class='outcome'><strong>当日产出：</strong>一张“建立 → 消费 → 终态 → 关闭”的生命周期图和终态矩阵。</div></header>
+<section id="code-first-walkthrough" data-section>
+  <p class="kicker">Code-first walkthrough</p><h2>从中途断流测试追到异常传播与Response关闭</h2>
+  <p class="lead">第一性原理看，流式正确性不是“拿到200”或“读到一行”，而是同一份Response在所有路径上都满足三条守恒约束：真实bytes只被业务链消费一次，原始异常不被改写，资源所有权最终落到明确的<code>close()</code>。</p>
+  <div class="guided-start">
+    <div class="guided-start__header"><h3>本节真实入口：中途断流故障测试</h3><p>先看测试要求“同一个异常对象继续抛出且Response已关闭”，再逆向进入SSE请求准入、逐行解码、事件解析与collect聚合。</p></div>
+    <div class="guided-command"><strong>先运行这个测试入口</strong><code>python -m pytest -q tests/test_stream_fault_simulation.py::test_collect_stream_chat_completion_chunks_reraises_mid_stream_error_and_closes_response</code></div>
+    <div class="guided-rule"><strong>TOC阅读规则</strong>当前瓶颈不是SSE名词，而是异常路径上的资源所有权不清。只沿一条约束链追踪：<code>Response → SSE header准入 → bytes/line → data event → chunks → 原异常 + close</code>。</div>
+    <div class="guided-chain"><span>故障测试</span><b>→</b><span>SSE请求准入</span><b>→</b><span>iter_sse_lines</span><b>→</b><span>事件解析与collect</span><b>→</b><span>异常传播与关闭</span></div>
+  </div>
+
+  <article class="guided-step">
+    <div class="guided-step__title"><span class="guided-step__number">1</span><div><h3>测试先冻结终点：异常对象不能变，Response必须关闭</h3><p><code>error_after=1</code>让伪响应先产出一个合法data行，再在下一次推进迭代时抛出指定的<code>ChunkedEncodingError</code>。</p></div></div>
+    <div class="guided-code-grid">
+      <div class="guided-source"><span class="guided-source__location">tests/test_stream_fault_simulation.py::test_collect_stream_chat_completion_chunks_reraises_mid_stream_error_and_closes_response · 连续源码第71至87行</span><pre><code>def test_collect_stream_chat_completion_chunks_reraises_mid_stream_error_and_closes_response():
+    error = requests.exceptions.ChunkedEncodingError("stream interrupted")
+    response = FakeStreamResponse(
+        lines=[
+            b'data: {"id":"chatcmpl-001","choices":[]}',
+            b"data: [DONE]",
+        ],
+        headers={"x-oneapi-request-id": "request-001"},
+        error_after=1,
+        error=error,
+    )
+
+    with pytest.raises(requests.exceptions.ChunkedEncodingError) as exc_info:
+        SmokeTask().collect_stream_chat_completion_chunks(response)  # type: ignore[arg-type]
+
+    assert exc_info.value is error
+    assert response.closed is True</code></pre></div>
+      <div class="guided-explanation"><h4>入口合同</h4><div class="guided-point"><strong>输入从哪里来</strong><p>伪Response持有两段bytes和一个预先创建的异常对象。</p></div><div class="guided-point"><strong>当前消费什么</strong><p>测试只调用公开collect入口，不直接操作底层迭代器。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>异常进入<code>pytest.raises</code>，关闭事实进入<code>response.closed</code>。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>collect必须同时完成异常传播和资源关闭。</p></div><div class="guided-point warning"><strong>不可偷换</strong><p>捕获到同类型新异常不够；<code>is error</code>要求原对象原样穿透。</p></div></div>
+    </div>
+  </article>
+
+  <article class="guided-step">
+    <div class="guided-step__title"><span class="guided-step__number">2</span><div><h3>Response由SSE请求准入契约创建，但Header成功不是业务完成</h3><p>请求显式声明接受<code>text/event-stream</code>，开启<code>stream=True</code>并关闭普通body日志，然后把尚未消费的Response交给调用方。</p></div></div>
+    <div class="guided-code-grid">
+      <div class="guided-source"><span class="guided-source__location">module/smoke/request.py::SmokeRequest.create_stream_chat_completion · 连续源码第27至36行</span><pre><code>def create_stream_chat_completion(self, payload: dict[str, Any]) -&gt; requests.Response:
+    return self.post(
+        self.chat_completions_path,
+        json=payload,
+        headers={"Accept": "text/event-stream"},
+        stream=True,
+        _attach_log=False,
+        _quality_operation_name="chat_completion_stream",
+        _quality_traffic_role="workload",
+    )</code></pre></div>
+      <div class="guided-explanation"><h4>准入边界</h4><div class="guided-point"><strong>输入从哪里来</strong><p>业务payload与SSE Accept Header一起进入请求层。</p></div><div class="guided-point"><strong>当前消费什么</strong><p><code>stream=True</code>要求Requests先返回Response句柄，而不是预先缓冲完整body。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>未消费Response返回Task，资源所有权随对象一起移交。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>创建方不读取也不关闭；后续消费者必须关闭同一Response。</p></div><div class="guided-point warning"><strong>真实边界</strong><p>当前代码发送Accept Header，但没有校验响应<code>Content-Type</code>；真正的事件准入在collect对<code>data:</code>前缀的断言。</p></div></div>
+    </div>
+  </article>
+
+  <article class="guided-step">
+    <div class="guided-step__title"><span class="guided-step__number">3</span><div><h3><code>iter_sse_lines()</code>把网络bytes解码成行，并保留读取异常</h3><p>这一层只做消费原语：跳过空chunk、UTF-8 replacement解码、观察实际行、识别<code>[DONE]</code>并把每一行yield给业务解析层。</p></div></div>
+    <div class="guided-code-grid">
+      <div class="guided-source"><span class="guided-source__location">common/streaming.py::iter_sse_lines · 连续源码第15至48行</span><pre><code>def iter_sse_lines(response: requests.Response) -&gt; Iterator[str]:
+    """Iterate decoded SSE lines while emitting fail-open lifecycle facts."""
+    stream_lease = get_stream_lease(response)
+    completed = False
+    exhausted = False
+    try:
+        for raw_line in response.iter_lines(decode_unicode=False):
+            if not raw_line:
+                continue
+            line = (
+                raw_line.decode("utf-8", errors="replace")
+                if isinstance(raw_line, bytes)
+                else str(raw_line)
+            )
+            observe_stream_line(stream_lease, line)
+            if line.strip() == "data: [DONE]":
+                completed = True
+            yield line
+        exhausted = True
+    except GeneratorExit:
+        raise
+    except (KeyboardInterrupt, SystemExit):
+        finish_stream(stream_lease, RuntimeStreamOutcome.INTERRUPTED)
+        raise
+    except BaseException:
+        finish_stream(stream_lease, RuntimeStreamOutcome.ERROR)
+        raise
+    finally:
+        if completed:
+            finish_stream(stream_lease, RuntimeStreamOutcome.COMPLETE)
+        elif exhausted:
+            finish_stream(stream_lease, RuntimeStreamOutcome.INTERRUPTED)
+        else:
+            finish_stream(stream_lease, RuntimeStreamOutcome.INTERRUPTED)</code></pre></div>
+      <div class="guided-explanation"><h4>bytes到line</h4><div class="guided-point"><strong>输入从哪里来</strong><p><code>response.iter_lines(decode_unicode=False)</code>交出原始bytes或字符串chunk。</p></div><div class="guided-point"><strong>当前消费什么</strong><p>空chunk被跳过；非空bytes被解码为SSE文本行。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>line先进入只观察事实的runtime hook，再yield给collect。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>本函数只收口流终态，不调用<code>response.close()</code>。</p></div><div class="guided-point success"><strong>异常分支</strong><p>读取异常先标记ERROR，再用裸<code>raise</code>继续抛出原异常。</p></div></div>
+    </div>
+  </article>
+
+  <article class="guided-step">
+    <div class="guided-step__title"><span class="guided-step__number">4</span><div><h3>collect把SSE行解析成事件数据，再聚合JSON chunks</h3><p><code>data:</code>是当前实现的事件准入门；<code>[DONE]</code>结束消费，其余data内容必须能反序列化为JSON对象。</p></div></div>
+    <div class="guided-code-grid">
+      <div class="guided-source"><span class="guided-source__location">module/smoke/task.py::SmokeTask.collect_stream_chat_completion_chunks · 连续源码第53至74行</span><pre><code>def collect_stream_chat_completion_chunks(self, response: requests.Response) -&gt; StreamChatCompletionChunks:
+    raw_data_lines: list[str] = []
+    chunks: list[dict[str, Any]] = []
+
+    try:
+        for line in self.iter_stream_lines(response):
+            if not line:
+                continue
+            self.print_stream_raw_line(line)
+            assert line.startswith("data:"), f"Stream chunk should start with 'data:', actual: {line!r}"
+            raw_data_lines.append(line)
+
+            data = line.removeprefix("data:").strip()
+            if data == "[DONE]":
+                break
+
+            try:
+                chunk = json.loads(data)
+            except ValueError as exc:
+                raise AssertionError(f"Stream data chunk is not valid JSON: {data}") from exc
+
+            chunks.append(chunk)</code></pre></div>
+      <div class="guided-explanation"><h4>line到event/chunk</h4><div class="guided-point"><strong>输入从哪里来</strong><p>输入是<code>iter_sse_lines()</code>产出的已解码文本行。</p></div><div class="guided-point"><strong>当前消费什么</strong><p>先验证data事件前缀，再剥离字段名与空白，区分终止事件和JSON数据事件。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>原始事件行进入<code>raw_data_lines</code>，解析后的业务chunk进入<code>chunks</code>。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>collect拥有聚合状态，也拥有包围整个消费循环的Response关闭责任。</p></div><div class="guided-point warning"><strong>词义区分</strong><p>网络bytes/chunk、SSE data event、JSON chunk是三层对象，不能混成一个“流块”。</p></div></div>
+    </div>
+  </article>
+
+  <article class="guided-step">
+    <div class="guided-step__title"><span class="guided-step__number">5</span><div><h3><code>finally</code>先关闭Response；成功才继续验证聚合终态</h3><p>中途读取异常没有被collect捕获，因此先执行<code>response.close()</code>，随后原异常继续上抛；只有无异常退出时才执行<code>[DONE]</code>和chunks断言。</p></div></div>
+    <div class="guided-code-grid">
+      <div class="guided-source"><span class="guided-source__location">module/smoke/task.py::SmokeTask.collect_stream_chat_completion_chunks · 连续源码第57至83行</span><pre><code>try:
+    for line in self.iter_stream_lines(response):
+        if not line:
+            continue
+        self.print_stream_raw_line(line)
+        assert line.startswith("data:"), f"Stream chunk should start with 'data:', actual: {line!r}"
+        raw_data_lines.append(line)
+
+        data = line.removeprefix("data:").strip()
+        if data == "[DONE]":
+            break
+
+        try:
+            chunk = json.loads(data)
+        except ValueError as exc:
+            raise AssertionError(f"Stream data chunk is not valid JSON: {data}") from exc
+
+        chunks.append(chunk)
+finally:
+    response.close()
+
+assert raw_data_lines, "Stream response did not produce any data lines."
+assert raw_data_lines[-1] == "data: [DONE]", (
+    f"Stream response should end with 'data: [DONE]', actual: {raw_data_lines[-1]!r}"
+)
+assert chunks, "Stream response did not produce any JSON chunks before [DONE]."
+return StreamChatCompletionChunks(raw_data_lines=raw_data_lines, chunks=chunks)</code></pre></div>
+      <div class="guided-explanation"><h4>最终收口</h4><div class="guided-point"><strong>输入从哪里来</strong><p>输入可能是完整事件序列，也可能是迭代中途抛出的底层读取异常。</p></div><div class="guided-point"><strong>当前消费什么</strong><p><code>finally</code>不判断成功失败，只消费当前Response的关闭责任。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>成功路径返回两个聚合列表；错误路径把原异常交还测试。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>collect是Response资源所有者；runtime hook只记录终态，不能替代close。</p></div><div class="guided-point success"><strong>终态分支</strong><p>完整流要求最后一行是<code>[DONE]</code>且至少一个JSON chunk；中途断流则关闭后直接结束于ERROR。</p></div></div>
+    </div>
+  </article>
+</section>
 <section id='question' data-section><p class='kicker'>01 · Question</p><h2>Header成功为什么不等于流式调用完成</h2><p class='lead'>普通响应返回时主体通常已经可读；SSE返回的是仍待消费的Response句柄。若此时直接记录成功或让日志预读body，就会丢失真实消费事实。</p><div class='callout warn'><strong>学习边界：</strong>只学习仓库现有SSE实现，不新增协议、不连接真实模型接口；Quality语义留到第19～20天。</div></section>
 <section id='entry' data-section><p class='kicker'>02 · Source entry</p><h2>三个入口组成流式主线</h2><div class='grid3'><div class='card'><h3>请求</h3><p><code>common/base_request.py</code>以<code>stream=True</code>交出Response。</p></div><div class='card'><h3>消费</h3><p><code>common/streaming.py</code>提供<code>iter_sse_lines</code>。</p></div><div class='card'><h3>证据</h3><p><code>tests/test_stream_fault_simulation.py</code>覆盖完成、中断、错误和关闭。</p></div></div></section>
 <section id='open' data-section><p class='kicker'>03 · Open</p><h2>请求阶段只取得响应头和流句柄</h2><div class='flow'><span>POST stream=True</span><i>→</i><span>获得Response</span><i>→</i><span>绑定消费生命周期</span><i>→</i><span>暂不读取body</span></div><p class='lead'><code>_attach_log=False</code>避免普通日志访问<code>response.text/content</code>而提前消费流。2xx只证明可以开始读取，不证明存在<code>[DONE]</code>。</p></section>
@@ -15,12 +170,383 @@
         if line == &quot;data: [DONE]&quot;:
             break
 finally:
-    response.close()</code></pre><p class='lead'>正常完成、断言失败、主动中断和读取错误都必须经过同一关闭路径。关闭责任属于持有并消费Response的Task或用例。</p></section>
+    response.close()</code></pre><p class='lead'>进入try后的正常完成、断言失败、主动中断和读取错误会经过同一关闭路径；但interrupt在try前提取request ID，Header缺失时可能绕过finally。关闭责任仍属于持有并消费Response的Task或用例。</p></section>
 <section id='boundary' data-section><p class='kicker'>07 · Boundary</p><h2>观察不能为了记录而再次消费业务流</h2><p class='lead'>诊断逻辑只能接收业务实际读到的行，不能预读、重放或替换原迭代器。观察失败也不能覆盖原始chunk、读取异常或消费者终止事实。</p><div class='callout good'><strong>边界：</strong>业务消费者决定解析和断言，流式原语提供迭代，资源所有者负责关闭，观察层只记录已经发生的事实。</div></section>
-<section id='evidence' data-section><p class='kicker'>08 · Evidence</p><h2>已有测试保护五类生命周期事实</h2><div class='table-wrap'><table><thead><tr><th>入口</th><th>保护内容</th></tr></thead><tbody><tr><td><code>tests/test_stream_fault_simulation.py</code></td><td>[DONE]完成、缺失终止、中断、读取异常和Response关闭。</td></tr><tr><td><code>common/streaming.py</code></td><td>逐行原语不承担业务JSON断言和资源关闭。</td></tr><tr><td><code>tests/quality/test_semantic_streaming.py</code></td><td>后续课程观察终态如何进入语义事实，本课不展开聚合。</td></tr></tbody></table></div></section>
+<section id='evidence' data-section><p class='kicker'>08 · Evidence</p><h2>已有测试保护主要生命周期事实</h2><div class='table-wrap'><table><thead><tr><th>入口</th><th>保护内容</th></tr></thead><tbody><tr><td><code>tests/test_stream_fault_simulation.py</code></td><td>[DONE]完成、缺失终止、中断、读取异常和已覆盖路径的Response关闭；未覆盖interrupt的Header缺失窗口。</td></tr><tr><td><code>common/streaming.py</code></td><td>逐行原语不承担业务JSON断言和资源关闭。</td></tr><tr><td><code>tests/quality/test_semantic_streaming.py</code></td><td>后续课程观察终态如何进入语义事实，本课不展开聚合。</td></tr></tbody></table></div></section>
 <section id='design' data-section><p class='kicker'>Design decision</p><h2>设计选择与适用边界</h2><div class='table-wrap'><table><thead><tr><th>现方案</th><th>替代方案</th><th>选择理由</th><th>不适用条件</th></tr></thead><tbody><tr><td>请求层返回未消费的流式Response，消费方逐行读取并在<code>finally</code>关闭同一对象。</td><td>请求层一次性缓冲全部body后返回列表，或由日志/观察器代替业务方消费。</td><td>保留背压和到达顺序，能分别证明Header建立、消费终态与资源关闭，观察也不会偷走业务数据。</td><td>响应体确定很小且无需流式语义时可直接缓冲；调用方无法承担关闭责任时应改用内部封装的上下文管理器。</td></tr></tbody></table></div></section>
 <section id='practice' data-section><p class='kicker'>09 · Offline practice</p><h2>运行FakeStreamResponse合同测试</h2><div class='command'><button class='copy'>复制</button><pre><code>.\.venv\Scripts\python.exe -m pytest tests/test_stream_fault_simulation.py -q</code></pre></div><p class='lead'>命令不访问真实接口。记录每个场景对应的消费事实、终态和关闭证据。</p></section>
 <section id='output' data-section><p class='kicker'>10 · Output</p><h2>完成生命周期图与终态矩阵</h2><div class='notes'><label>建立连接<textarea data-note='open' placeholder='响应头阶段得到什么、没有证明什么'></textarea></label><label>消费原语<textarea data-note='consume' placeholder='iter_sse_lines负责和不负责什么'></textarea></label><label>终态矩阵<textarea data-note='outcome' placeholder='complete/interrupted/error/not_consumed'></textarea></label><label>关闭证据<textarea data-note='close' placeholder='本轮命令、结果和finally close证据'></textarea></label></div></section>
+<!-- SOURCE_CARDS:DAY11:START -->
+<section id="source-code" class="source-section" data-section aria-labelledby="source-code-title">
+<div class="source-section__header">
+<p class="source-section__kicker">Source Reading · Static Snapshot</p>
+<h2 id="source-code-title">关键源码</h2>
+<p>以下源码由当前工作区直接提取，经教学裁剪、真实行数统计和统一HTML转义后静态写入。本页共122行源码，浏览页面时不会读取仓库文件。</p>
+</div>
+<div class="source-card-list">
+<details class="source-card source-card--required" id="source-card-D11-S1" data-default-open="false" data-source-lines="34">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>SSE迭代器只收口Runtime终态</strong><small>common/streaming.py · 34行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D11-S1">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_stream_fault_simulation.py</code></span>
+<span><strong>测试函数</strong><code>test_collect_stream_chat_completion_chunks_reraises_mid_stream_error_and_closes_response</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_stream_fault_simulation.py::test_collect_stream_chat_completion_chunks_reraises_mid_stream_error_and_closes_response</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>common/streaming.py::iter_sse_lines</code></span>
+<span><strong>真实行数</strong>34</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>[DONE]、迭代耗尽、异常和停止消费如何映射Runtime stream outcome，Response由谁关闭？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制SSE迭代器只收口Runtime终态选段1" aria-describedby="source-copy-status-D11-S1-1" aria-controls="source-code-D11-S1-1" data-source-target="source-code-D11-S1-1" data-source-status="source-copy-status-D11-S1-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D11-S1-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D11-S1-1" tabindex="0" aria-label="SSE迭代器只收口Runtime终态，源码第15至48行，选段1"><code class="language-python" data-source-card="D11-S1" data-segment-index="1">def iter_sse_lines(response: requests.Response) -&gt; Iterator[str]:
+    """Iterate decoded SSE lines while emitting fail-open lifecycle facts."""
+    stream_lease = get_stream_lease(response)
+    completed = False
+    exhausted = False
+    try:
+        for raw_line in response.iter_lines(decode_unicode=False):
+            if not raw_line:
+                continue
+            line = (
+                raw_line.decode("utf-8", errors="replace")
+                if isinstance(raw_line, bytes)
+                else str(raw_line)
+            )
+            observe_stream_line(stream_lease, line)
+            if line.strip() == "data: [DONE]":
+                completed = True
+            yield line
+        exhausted = True
+    except GeneratorExit:
+        raise
+    except (KeyboardInterrupt, SystemExit):
+        finish_stream(stream_lease, RuntimeStreamOutcome.INTERRUPTED)
+        raise
+    except BaseException:
+        finish_stream(stream_lease, RuntimeStreamOutcome.ERROR)
+        raise
+    finally:
+        if completed:
+            finish_stream(stream_lease, RuntimeStreamOutcome.COMPLETE)
+        elif exhausted:
+            finish_stream(stream_lease, RuntimeStreamOutcome.INTERRUPTED)
+        else:
+            finish_stream(stream_lease, RuntimeStreamOutcome.INTERRUPTED)</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D11-S1" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该迭代器只收口Runtime流终态，不负责关闭Response。机制：见到[DONE]记COMPLETE；无完成标志的耗尽或停止消费记INTERRUPTED，键盘或系统中断先记INTERRUPTED，其他异常先记ERROR并继续抛出。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>取得stream lease，逐行观察并识别[DONE]；异常或finally调用finish_stream收口Runtime终态。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>更新Runtime stream outcome；函数内没有调用response.close()。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>iter_sse_lines只收口Runtime stream outcome并传播异常，不拥有Response关闭责任。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>finish_stream不等于关闭HTTP Response；读取到[DONE]也不能证明连接已关闭。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_stream_fault_simulation.py::test_collect_stream_chat_completion_chunks_reraises_mid_stream_error_and_closes_response</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--required" id="source-card-D11-S2" data-default-open="false" data-source-lines="31">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>collect在finally关闭Response</strong><small>module/smoke/task.py · 31行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D11-S2">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_stream_fault_simulation.py</code></span>
+<span><strong>测试函数</strong><code>test_collect_stream_chat_completion_chunks_reraises_mid_stream_error_and_closes_response</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_stream_fault_simulation.py::test_collect_stream_chat_completion_chunks_reraises_mid_stream_error_and_closes_response</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>module/smoke/task.py::SmokeTask.collect_stream_chat_completion_chunks</code></span>
+<span><strong>真实行数</strong>31</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>解析成功、断言失败、JSON错误和底层流异常为何都必须经过同一个关闭点？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制collect在finally关闭Response选段1" aria-describedby="source-copy-status-D11-S2-1" aria-controls="source-code-D11-S2-1" data-source-target="source-code-D11-S2-1" data-source-status="source-copy-status-D11-S2-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D11-S2-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D11-S2-1" tabindex="0" aria-label="collect在finally关闭Response，源码第53至83行，选段1"><code class="language-python" data-source-card="D11-S2" data-segment-index="1">    def collect_stream_chat_completion_chunks(self, response: requests.Response) -&gt; StreamChatCompletionChunks:
+        raw_data_lines: list[str] = []
+        chunks: list[dict[str, Any]] = []
+
+        try:
+            for line in self.iter_stream_lines(response):
+                if not line:
+                    continue
+                self.print_stream_raw_line(line)
+                assert line.startswith("data:"), f"Stream chunk should start with 'data:', actual: {line!r}"
+                raw_data_lines.append(line)
+
+                data = line.removeprefix("data:").strip()
+                if data == "[DONE]":
+                    break
+
+                try:
+                    chunk = json.loads(data)
+                except ValueError as exc:
+                    raise AssertionError(f"Stream data chunk is not valid JSON: {data}") from exc
+
+                chunks.append(chunk)
+        finally:
+            response.close()
+
+        assert raw_data_lines, "Stream response did not produce any data lines."
+        assert raw_data_lines[-1] == "data: [DONE]", (
+            f"Stream response should end with 'data: [DONE]', actual: {raw_data_lines[-1]!r}"
+        )
+        assert chunks, "Stream response did not produce any JSON chunks before [DONE]."
+        return StreamChatCompletionChunks(raw_data_lines=raw_data_lines, chunks=chunks)</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D11-S2" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：collect拥有传入Response的关闭责任，正常与异常路径都会关闭。机制：解析、行格式断言和JSON转换都包在try中，finally统一调用close；其后的完整性断言失败时连接也已关闭。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>消费data行并解析chunk，遇到[DONE]退出；无论正常或异常都在finally调用response.close()。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>累积原始data行与JSON chunk，并确定性关闭传入的Response。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>collect方法把Response所有权收口在finally，底层异常会继续向上传播。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>它不改变iter_sse_lines本身不关闭Response的边界。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_stream_fault_simulation.py::test_collect_stream_chat_completion_chunks_reraises_mid_stream_error_and_closes_response</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<section class="source-card source-card--support source-card--expanded" id="source-card-D11-S3" data-default-open="true" data-source-lines="20">
+<div class="source-card__heading">
+<span class="source-importance">支撑</span>
+<div><h3>interrupt的Header提取位于try之前</h3><p>module/smoke/task.py · 20行</p></div>
+</div>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D11-S3">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_stream_fault_simulation.py</code></span>
+<span><strong>测试函数</strong><code>test_interrupt_stream_chat_completion_reads_request_id_and_closes_response</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_stream_fault_simulation.py::test_interrupt_stream_chat_completion_reads_request_id_and_closes_response</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>module/smoke/task.py::SmokeTask.interrupt_stream_chat_completion</code></span>
+<span><strong>真实行数</strong>20</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>为什么合法Header路径会关闭Response，而Header缺失却可能在进入try前绕过finally？</p>
+<p class="source-omission">省略说明：省略方法签名；首段从进入try之前的request_id提取开始。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制interrupt的Header提取位于try之前选段1" aria-describedby="source-copy-status-D11-S3-1" aria-controls="source-code-D11-S3-1" data-source-target="source-code-D11-S3-1" data-source-status="source-copy-status-D11-S3-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D11-S3-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D11-S3-1" tabindex="0" aria-label="interrupt的Header提取位于try之前，源码第91至100行，选段1"><code class="language-python" data-source-card="D11-S3" data-segment-index="1">        request_id = self.get_request_id_from_response(response)
+        started_at = time.monotonic()
+
+        try:
+            for line in self.iter_stream_lines(response):
+                elapsed_seconds = time.monotonic() - started_at
+                if elapsed_seconds &gt;= max_duration_seconds:
+                    print(f"stream elapsed seconds: {round(elapsed_seconds, 3)}")
+                    print(f"stream interrupted after {max_duration_seconds}s")
+                    break</code></pre>
+</div>
+<p class="source-omission">省略说明：省略普通行过滤与打印；下一代码块保留[DONE]、finally关闭和返回。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制interrupt的Header提取位于try之前选段2" aria-describedby="source-copy-status-D11-S3-2" aria-controls="source-code-D11-S3-2" data-source-target="source-code-D11-S3-2" data-source-status="source-copy-status-D11-S3-2">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D11-S3-2" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D11-S3-2" tabindex="0" aria-label="interrupt的Header提取位于try之前，源码第108至117行，选段2"><code class="language-python" data-source-card="D11-S3" data-segment-index="2">                data = line.removeprefix("data:").strip()
+                if data == "[DONE]":
+                    break
+        finally:
+            response.close()
+
+        print(f"stream request_id: {request_id}")
+        return StreamChatCompletionResult(
+            request_id=request_id,
+        )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D11-S3" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：合法Header进入try后必经finally关闭，但Header缺失可能泄漏Response。机制：request_id在try之前提取，提取断言若先抛错就不会进入finally；只有随后消费或中断路径由finally执行close。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>先提取request_id，再进入try消费或中断，finally关闭Response后返回request_id。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>try内路径最终关闭Response；Header缺失时提取函数先抛出AssertionError。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>request_id提取发生在try之前，因此Header缺失可能绕过response.close()。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>现有实现没有为try之前的Header提取失败提供关闭兜底。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_stream_fault_simulation.py::test_interrupt_stream_chat_completion_reads_request_id_and_closes_response</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</section>
+<details class="source-card source-card--evidence" id="source-card-D11-T1" data-default-open="false" data-source-lines="17">
+<summary class="source-card__summary">
+<span class="source-importance">测试证据</span>
+<span><strong>证据：中途异常传播且关闭Response</strong><small>tests/test_stream_fault_simulation.py · 17行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D11-T1">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_stream_fault_simulation.py</code></span>
+<span><strong>测试函数</strong><code>test_collect_stream_chat_completion_chunks_reraises_mid_stream_error_and_closes_response</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_stream_fault_simulation.py::test_collect_stream_chat_completion_chunks_reraises_mid_stream_error_and_closes_response</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>tests/test_stream_fault_simulation.py::test_collect_stream_chat_completion_chunks_reraises_mid_stream_error_and_closes_response</code></span>
+<span><strong>真实行数</strong>17</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>底层在第一条data后抛错时，异常身份与关闭事实如何同时保留？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制证据：中途异常传播且关闭Response选段1" aria-describedby="source-copy-status-D11-T1-1" aria-controls="source-code-D11-T1-1" data-source-target="source-code-D11-T1-1" data-source-status="source-copy-status-D11-T1-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D11-T1-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D11-T1-1" tabindex="0" aria-label="证据：中途异常传播且关闭Response，源码第71至87行，选段1"><code class="language-python" data-source-card="D11-T1" data-segment-index="1">def test_collect_stream_chat_completion_chunks_reraises_mid_stream_error_and_closes_response():
+    error = requests.exceptions.ChunkedEncodingError("stream interrupted")
+    response = FakeStreamResponse(
+        lines=[
+            b'data: {"id":"chatcmpl-001","choices":[]}',
+            b"data: [DONE]",
+        ],
+        headers={"x-oneapi-request-id": "request-001"},
+        error_after=1,
+        error=error,
+    )
+
+    with pytest.raises(requests.exceptions.ChunkedEncodingError) as exc_info:
+        SmokeTask().collect_stream_chat_completion_chunks(response)  # type: ignore[arg-type]
+
+    assert exc_info.value is error
+    assert response.closed is True</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D11-T1" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该测试只证明collect的中途流异常会保持原异常身份并关闭Response。机制：FakeStreamResponse在首条data后抛指定ChunkedEncodingError，测试同时断言捕获对象就是原对象且closed为真。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>构造中途抛错的FakeStreamResponse，断言原异常继续传播且response.closed为真。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>模拟中途异常并观察collect的finally关闭结果。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>现有测试证明collect的中途异常路径会重抛原异常并关闭Response。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不覆盖完整成功路径，也不覆盖interrupt的Header缺失路径。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_stream_fault_simulation.py::test_collect_stream_chat_completion_chunks_reraises_mid_stream_error_and_closes_response</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--evidence" id="source-card-D11-T2" data-default-open="false" data-source-lines="20">
+<summary class="source-card__summary">
+<span class="source-importance">测试证据</span>
+<span><strong>证据：合法Header中断路径关闭Response</strong><small>tests/test_stream_fault_simulation.py · 20行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D11-T2">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_stream_fault_simulation.py</code></span>
+<span><strong>测试函数</strong><code>test_interrupt_stream_chat_completion_reads_request_id_and_closes_response</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_stream_fault_simulation.py::test_interrupt_stream_chat_completion_reads_request_id_and_closes_response</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>tests/test_stream_fault_simulation.py::test_interrupt_stream_chat_completion_reads_request_id_and_closes_response</code></span>
+<span><strong>真实行数</strong>20</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>时间预算触发中断时，合法Header与Response关闭由哪些断言证明？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制证据：合法Header中断路径关闭Response选段1" aria-describedby="source-copy-status-D11-T2-1" aria-controls="source-code-D11-T2-1" data-source-target="source-code-D11-T2-1" data-source-status="source-copy-status-D11-T2-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D11-T2-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D11-T2-1" tabindex="0" aria-label="证据：合法Header中断路径关闭Response，源码第90至109行，选段1"><code class="language-python" data-source-card="D11-T2" data-segment-index="1">def test_interrupt_stream_chat_completion_reads_request_id_and_closes_response(monkeypatch):
+    times = iter([0.0, 0.0, 20.0])
+    monkeypatch.setattr("module.smoke.task.time.monotonic", lambda: next(times))
+    response = FakeStreamResponse(
+        lines=[
+            b'data: {"id":"chatcmpl-001","choices":[]}',
+            b'data: {"id":"chatcmpl-001","choices":[]}',
+            b"data: [DONE]",
+        ],
+        headers={"x-oneapi-request-id": "request-001"},
+    )
+
+    result = SmokeTask().interrupt_stream_chat_completion(  # type: ignore[arg-type]
+        response,
+        max_duration_seconds=15,
+        print_raw_lines=False,
+    )
+
+    assert result.request_id == "request-001"
+    assert response.closed is True</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D11-T2" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该测试证明合法request_id Header下，超时中断能返回ID并关闭Response。机制：伪造单调时钟越过15秒触发break，最终仅断言result.request_id正确和response.closed为真，不覆盖缺失Header。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>提供合法request_id Header并推进时钟越过15秒，断言request_id和closed。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>模拟合法Header下的主动中断路径并关闭Response。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>现有测试只证明合法Header进入try后的中断路径能返回request_id并关闭Response。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>测试没有删除Header，不能证明try之前提取失败时仍会执行close。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_stream_fault_simulation.py::test_interrupt_stream_chat_completion_reads_request_id_and_closes_response</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+</div>
+</section>
+<!-- SOURCE_CARDS:DAY11:END -->
+<section id="lesson-flow-summary" data-section>
+  <p class="kicker">Flow summary · Bytes, events and ownership</p><h2>课后流转总图：数据转换与资源责任必须同时到达终态</h2>
+  <figure class="lesson-flow-map">
+    <figcaption class="flow-map-caption">左侧追函数与职责，右侧追bytes、chunk、event、聚合状态、资源所有权和最终终态；任何错误都可以改变终态，但不能绕过Response关闭。</figcaption>
+    <div class="flow-map-legend"><span class="flow-legend-chip function">函数与职责</span><span class="flow-legend-chip data">数据、状态与资源</span><span class="flow-legend-chip branch">成功/错误分支</span></div>
+    <div class="flow-map-inputs"><div class="flow-input"><strong>故障输入</strong><span>bytes序列 + 指定ChunkedEncodingError</span></div><div class="flow-input"><strong>SSE准入</strong><span>Accept: text/event-stream + stream=True</span></div><div class="flow-input"><strong>所有权输入</strong><span>未消费Response交给collect</span></div></div>
+    <div class="flow-map-entry" aria-hidden="true">↓</div>
+    <div class="flow-map-spine">
+      <article class="flow-stage"><div class="flow-stage__index">1</div><div class="flow-stage__function"><h3>故障测试入口</h3><p>调用<code>collect_stream_chat_completion_chunks()</code>，要求原异常对象继续传播并检查<code>response.closed</code>。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>终点合同被冻结</h3><p>第一段bytes可被消费；下一次迭代抛指定错误；资源终态必须是closed。</p></div></article>
+      <article class="flow-stage"><div class="flow-stage__index">2</div><div class="flow-stage__function"><h3>SSE请求准入与Response移交</h3><p><code>create_stream_chat_completion()</code>发送Accept Header，启用<code>stream=True</code>并禁止普通body日志。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>未消费Response成为资源</h3><p>Header只声明期望的协议；当前实现不校验响应Content-Type，Response所有权移交给后续消费者。</p></div></article>
+      <article class="flow-stage"><div class="flow-stage__index">3</div><div class="flow-stage__function"><h3><code>iter_sse_lines()</code></h3><p>逐个读取网络chunk，跳过空值，把bytes解码成文本行，并观察<code>[DONE]</code>或读取错误。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>bytes变成事件候选行</h3><div class="flow-branch"><div class="flow-branch__path"><strong>正常</strong>文本line被yield给collect。</div><div class="flow-branch__path"><strong>异常</strong>流终态记为ERROR，原异常继续抛出。</div></div></div></article>
+      <article class="flow-stage"><div class="flow-stage__index">4</div><div class="flow-stage__function"><h3>事件解析与collect聚合</h3><p>验证<code>data:</code>前缀，识别<code>[DONE]</code>，对其余event data执行<code>json.loads()</code>并追加列表。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>event变成业务chunk</h3><p>原始事件进入<code>raw_data_lines</code>，JSON对象进入<code>chunks</code>；网络chunk、SSE event和JSON chunk保持分层。</p></div></article>
+      <article class="flow-stage"><div class="flow-stage__index">5</div><div class="flow-stage__function"><h3><code>finally: response.close()</code></h3><p>无论完成、断言失败、JSON错误还是中途读取错误，都先消费Response关闭责任。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>资源与终态同时收口</h3><div class="flow-branch"><div class="flow-branch__path"><strong>COMPLETE</strong>最后事件是<code>[DONE]</code>且chunks非空，返回聚合结果。</div><div class="flow-branch__path"><strong>ERROR</strong>Response已关闭，原始读取异常不改写地返回调用方。</div></div></div></article>
+    </div>
+    <div class="flow-fact-footer"><strong>守恒事实</strong><p>bytes只能沿业务消费链前进一次；event解析不能吞掉底层错误；runtime终态不能代替资源释放；持有并消费Response的collect必须在所有离开路径关闭同一对象。</p></div>
+  </figure>
+</section>
 <section id='quiz' data-section><p class='kicker'>11 · Knowledge check</p><h2>知识自测</h2><div class='quiz' data-answer='b'><strong>1. 2xx流式Response说明什么？</strong><label><input type='radio' name='q1' value='a'>业务已完成</label><label><input type='radio' name='q1' value='b'>可以开始消费</label><label><input type='radio' name='q1' value='c'>一定有[DONE]</label></div><div class='quiz' data-answer='c'><strong>2. 为什么关闭普通响应附件？</strong><label><input type='radio' name='q2' value='a'>避免pytest</label><label><input type='radio' name='q2' value='b'>避免Retry</label><label><input type='radio' name='q2' value='c'>防止日志预读body</label></div><div class='quiz' data-answer='a'><strong>3. 自然耗尽但无[DONE]是什么？</strong><label><input type='radio' name='q3' value='a'>interrupted</label><label><input type='radio' name='q3' value='b'>complete</label><label><input type='radio' name='q3' value='c'>success</label></div><div class='quiz' data-answer='b'><strong>4. 谁关闭Response？</strong><label><input type='radio' name='q4' value='a'>观察器</label><label><input type='radio' name='q4' value='b'>消费方finally</label><label><input type='radio' name='q4' value='c'>进程退出</label></div><div class='quiz' data-answer='c'><strong>5. iter_sse_lines是否验证业务JSON？</strong><label><input type='radio' name='q5' value='a'>验证全部</label><label><input type='radio' name='q5' value='b'>只验证ID</label><label><input type='radio' name='q5' value='c'>不验证</label></div><button class='primary' id='submit-quiz'>提交答案</button><div class='verdict' id='quiz-summary'>建议达到4/5再进入门禁。</div></section>
 <section id='gate' data-section><p class='kicker'>12 · Exit gate</p><h2>本课门禁</h2><div class='gate-list'><label class='gate'><input type='checkbox' data-gate='map'><span>已完成流式生命周期图。</span></label><label class='gate'><input type='checkbox' data-gate='outcome'><span>能区分四类消费终态。</span></label><label class='gate'><input type='checkbox' data-gate='primitive'><span>能说明逐行原语的职责边界。</span></label><label class='gate'><input type='checkbox' data-gate='owner'><span>能指出Response关闭所有者。</span></label><label class='gate'><input type='checkbox' data-gate='evidence'><span>已记录本轮离线测试结果。</span></label></div><div class='notes'><label>门禁成果位置 / 口头记录<textarea data-note='gate-record' placeholder='填写生命周期图或测试记录的位置；口头验收时记录日期、对象与复述要点'></textarea></label></div><div class='callout good'><strong>验收句：</strong>我能解释SSE为何在Header成功后仍未完成，并能用消费终态与finally close证明完整生命周期。</div><div class='footer'><div class='footer-links'><a class='button' href='第10天-轮询状态机与总截止时间.html'>← 上一课</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a><a class='button' href='第12天-测试上下文提取与资源清理.html'>下一课 →</a></div></div></section>
-</article></main><script src='六周课程页.js'></script></body></html>
+</article></main><script src="六周课程页.js"></script></body></html>
