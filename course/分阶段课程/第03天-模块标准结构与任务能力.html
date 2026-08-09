@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="接口测试框架源码架构与证据链六周课程第3天：模块标准结构与任务能力">
   <title>第03天｜模块标准结构与任务能力</title>
+  <link rel="stylesheet" href="六周课程页.css">
   <style>
     :root {
       color-scheme: light;
@@ -328,6 +329,7 @@
       </div>
       <nav class="nav-list" id="nav-list">
         <a href="#learning-goals"><span class="nav-number">01</span><span>目标与能力桥接</span></a>
+        <a href="#code-first-walkthrough"><span class="nav-number">C</span><span>代码先行精讲</span></a>
         <a href="#module-anatomy"><span class="nav-number">02</span><span>六文件模块骨架</span></a>
         <a href="#stable-identity"><span class="nav-number">03</span><span>真实类与稳定导出</span></a>
         <a href="#task-architecture"><span class="nav-number">04</span><span>Task门面与能力对象</span></a>
@@ -336,6 +338,8 @@
         <a href="#design-workshop"><span class="nav-number">07</span><span>模块设计工作台</span></a>
         <a href="#change-mapping"><span class="nav-number">08</span><span>变化位置映射</span></a>
         <a href="#design-boundary"><span class="nav-number">D</span><span>设计选择与边界</span></a>
+        <a href="#source-code"><span class="nav-number">S</span><span>关键源码</span></a>
+        <a href="#lesson-flow-summary"><span class="nav-number">F</span><span>课后流转总图</span></a>
         <a href="#knowledge-check"><span class="nav-number">09</span><span>知识自测</span></a>
         <a href="#exit-gate"><span class="nav-number">10</span><span>本课门禁</span></a>
       </nav>
@@ -390,6 +394,104 @@
             <div class="flow-node">第5天<br>建立测试分层</div>
           </div>
           <div class="callout blue"><strong>本课范围护栏</strong>会提到Allure步骤、Polling和账单结算，但只用于识别“能力归谁”。fixture、setup/teardown、断言细节与Allure附件边界留到第4课。</div>
+        </section>
+
+        <section id="code-first-walkthrough" data-section>
+          <p class="section-kicker">代码先行 · 门面与能力对象</p>
+          <h2>从一个组合动作看清BaseTask为什么不自己实现全部业务</h2>
+          <p class="section-lead">本课不先背“门面模式”或“Capability”。先运行一个纯单元测试，看创建、提取任务ID和轮询三个动作怎样被组合；再给每个对象命名。</p>
+          <div class="guided-start">
+            <div class="guided-start__header"><h3>本节主线：create → extract task_id → poll</h3><p>测试使用Fake Request记录调用，因此不会发真实HTTP。它验证的是Task门面与Capability之间的组合责任。</p></div>
+            <div class="guided-command"><strong>先运行这个用例</strong><code>python -m pytest -q tests/test_base_task.py::TestBaseTask::test_create_and_poll_media_generation_combines_create_and_poll</code></div>
+            <div class="guided-rule"><strong>定位信息</strong>用例文件：<code>tests/test_base_task.py</code>；类方法：<code>TestBaseTask.test_create_and_poll_media_generation_combines_create_and_poll</code>；pytest nodeid与命令完全一致。</div>
+            <div class="guided-chain" aria-label="第3天代码阅读顺序"><span>单元测试</span><b>→</b><span>BaseTask门面</span><b>→</b><span>构造Capability</span><b>→</b><span>create调用</span><b>→</b><span>提取task_id</span><b>→</b><span>poll调用</span></div>
+          </div>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">1</span><div><h3>测试用记录列表证明组合顺序</h3><p>Fake Request把POST与poll调用保存下来，避免把网络行为混进Task职责验证。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">tests/test_base_task.py::TestBaseTask::test_create_and_poll_media_generation_combines_create_and_poll</span><pre><code>def test_create_and_poll_media_generation_combines_create_and_poll(self):
+        task = BaseTask()
+        request_client = FakeGenerationRequest()
+        payload = {"model": "wan2.7-image"}
+
+        response = task.create_and_poll_media_generation(request_client, payload, poll_timeout=300)
+
+        assert response.json() == {"result": {"urls": ["https://example.com/image.png"]}}
+        assert request_client.post_calls == [{"path": "/v1/media/generations", "kwargs": {"json": payload}}]
+        assert request_client.poll_calls[0]["path"] == "/v1/media/tasks/task-001"
+        assert request_client.poll_calls[0]["poll_timeout"] == 300</code></pre></div><div class="guided-explanation"><h4>测试真正证明什么</h4><div class="guided-point"><strong>输入</strong><p>payload和<code>poll_timeout=300</code>进入组合动作。</p></div><div class="guided-point success"><strong>副作用记录</strong><p>先出现创建POST，再出现携带同一task_id的轮询路径。</p></div><div class="guided-point warning"><strong>边界</strong><p>Fake Request不证明HTTP传输正确，只证明门面把参数交给了正确的下游动作。</p></div></div></div>
+          </article>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">2</span><div><h3>BaseTask门面保留稳定调用名</h3><p>门面不重复流程，而是把模块可覆盖的方法注入Capability。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">common/base_task.py::BaseTask.create_and_poll_media_generation</span><pre><code>def create_and_poll_media_generation(
+        self,
+        request_client: BaseRequest,
+        payload: dict[str, Any],
+        *,
+        poll_interval: float = 2,
+        poll_timeout: float | None = None,
+        polling_policy: PollingPolicy = DEFAULT_MEDIA_POLLING_POLICY,
+        retry_policy: RetryPolicy | None = None,
+    ) -&gt; requests.Response:
+        return self._media_capability().create_and_poll_media_generation(
+            request_client,
+            payload,
+            poll_interval=poll_interval,
+            poll_timeout=poll_timeout,
+            polling_policy=polling_policy,
+            retry_policy=retry_policy,
+            create=self.create_media_generation,
+            extract_task_id=self.extract_task_id,
+            poll=self.poll_media_generation_result,
+        )</code></pre></div><div class="guided-explanation"><h4>门面做了两件事</h4><div class="guided-point"><strong>稳定入口</strong><p>调用方继续使用<code>BaseTask.create_and_poll_media_generation()</code>，不需要知道Capability文件位置。</p></div><div class="guided-point"><strong>参数透传</strong><p>轮询间隔、总超时和两类策略完整交给能力对象。</p></div><div class="guided-point success"><strong>保留扩展点</strong><p>注入<code>self.create_media_generation</code>等绑定方法，使子类覆盖仍能生效。</p></div></div></div>
+          </article>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">3</span><div><h3><code>_media_capability()</code>把模块配置变成能力对象</h3><p>路径和任务ID字段由门面类提供，流程实现由Capability持有。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">common/base_task.py::BaseTask._media_capability</span><pre><code>def _media_capability(self) -&gt; MediaGenerationCapability:
+        return MediaGenerationCapability(
+            image_generations_path=self.image_generations_path,
+            chat_completions_path=self.chat_completions_path,
+            media_generations_path=self.media_generations_path,
+            media_task_path_template=self.media_task_path_template,
+            task_id_field=self.task_id_field,
+            task_id_aliases=tuple(self.task_id_aliases),
+        )</code></pre></div><div class="guided-explanation"><h4>配置与行为在这里连接</h4><div class="guided-point"><strong>来自门面</strong><p>不同module可通过类属性提供自己的路径模板和任务ID字段。</p></div><div class="guided-point"><strong>进入能力对象</strong><p>Capability获得执行流程所需配置，但不依赖具体模块类。</p></div><div class="guided-point warning"><strong>对象生命周期</strong><p>当前实现每次调用都创建新的Capability；课程不把它描述成长期缓存实例。</p></div></div></div>
+          </article>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">4</span><div><h3>Capability拥有真正的组合流程</h3><p>它选择可注入调用点，并在一个异步任务Operation中完成三段业务。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">common/task_capabilities/media_generation.py::MediaGenerationCapability.create_and_poll_media_generation</span><pre><code>def create_and_poll_media_generation(
+        self,
+        request_client: BaseRequest,
+        payload: dict[str, Any],
+        *,
+        poll_interval: float = 2,
+        poll_timeout: float | None = None,
+        polling_policy: PollingPolicy = DEFAULT_MEDIA_POLLING_POLICY,
+        retry_policy: RetryPolicy | None = None,
+        create: Callable[[BaseRequest, dict[str, Any]], requests.Response] | None = None,
+        extract_task_id: Callable[[requests.Response], str] | None = None,
+        poll: Callable[..., requests.Response] | None = None,
+    ) -&gt; requests.Response:
+        create_call = create or self.create_media_generation
+        extract_call = extract_task_id or self.extract_task_id
+        poll_call = poll or self.poll_media_generation_result
+        with operation_scope(
+            RuntimeOperationKind.ASYNC_TASK,
+            name="media_generation",
+            role=RuntimeTrafficRole.WORKLOAD,
+            model_id=model_id_from_kwargs({"json": payload}),
+        ):
+            create_response = create_call(request_client, payload)
+            task_id = extract_call(create_response)
+            return poll_call(
+                request_client,
+                task_id,
+                poll_interval=poll_interval,
+                poll_timeout=poll_timeout,
+                polling_policy=polling_policy,
+                retry_policy=retry_policy,
+            )</code></pre></div><div class="guided-explanation"><h4>组合流程只有三个业务节点</h4><div class="guided-point"><strong>选择调用点</strong><p>有注入函数就使用注入函数，否则回退到Capability默认实现。</p></div><div class="guided-point success"><strong>状态流</strong><p>创建Response被转换成<code>task_id</code>，再成为轮询输入。</p></div><div class="guided-point"><strong>结果</strong><p>函数直接返回最终轮询Response；中间创建Response不作为最终返回值。</p></div></div></div>
+          </article>
+          <div class="guided-conclusion"><h3>概念从代码中长出来</h3><p>后面的“稳定身份、Task门面、能力对象和复用决策”是对这条链的复盘：门面保护调用方，Capability集中可复用流程，注入的绑定方法保留模块差异。</p></div>
         </section>
 
         <section id="module-anatomy" data-section>
@@ -616,7 +718,335 @@ __all__ = [
           </div>
         </section>
 
-        <section id="knowledge-check" data-section>
+<!-- SOURCE_CARDS:DAY3:START -->
+<section id="source-code" class="source-section" data-section aria-labelledby="source-code-title">
+<div class="source-section__header">
+<p class="source-section__kicker">Source Reading · Static Snapshot</p>
+<h2 id="source-code-title">关键源码</h2>
+<p>以下源码由当前工作区直接提取，经教学裁剪、真实行数统计和统一HTML转义后静态写入。本页共89行源码，浏览页面时不会读取仓库文件。</p>
+</div>
+<div class="source-card-list">
+<details class="source-card source-card--required" id="source-card-D03-S1" data-default-open="false" data-source-lines="16">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>模块公开出口保持稳定身份</strong><small>module/offline_framework_example/__init__.py · 16行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--lesson" data-source-example="D03-S1">
+<p class="source-example__label">本段讲解用例 · 本课贯穿场景</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_base_task.py</code></span>
+<span><strong>类方法</strong><code>TestBaseTask.test_create_and_poll_media_generation_combines_create_and_poll</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_base_task.py::TestBaseTask::test_create_and_poll_media_generation_combines_create_and_poll</code></span>
+</div>
+<p class="source-example__note">本卡讲实现合同；该用例用于回到课程场景，不代表对本卡的专项覆盖。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>module/offline_framework_example/__init__.py</code></span>
+<span><strong>真实行数</strong>16</span>
+<span><strong>定位方式</strong>file</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>模块对外承诺的是哪些稳定类名？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制模块公开出口保持稳定身份选段1" aria-describedby="source-copy-status-D03-S1-1" aria-controls="source-code-D03-S1-1" data-source-target="source-code-D03-S1-1" data-source-status="source-copy-status-D03-S1-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D03-S1-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D03-S1-1" tabindex="0" aria-label="模块公开出口保持稳定身份，源码第1至16行，选段1"><code class="language-python" data-source-card="D03-S1" data-segment-index="1">"""Deterministic offline examples for the API testing framework."""
+
+from __future__ import annotations
+
+from module.offline_framework_example.assertions import OfflineFrameworkAssertions
+from module.offline_framework_example.decorators import OfflineFrameworkDecorators
+from module.offline_framework_example.request import OfflineFrameworkRequest
+from module.offline_framework_example.task import OfflineFrameworkTask
+
+
+__all__ = [
+    "OfflineFrameworkAssertions",
+    "OfflineFrameworkDecorators",
+    "OfflineFrameworkRequest",
+    "OfflineFrameworkTask",
+]</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D03-S1" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>模块通过 __all__ 明确承诺四个稳定类名：OfflineFrameworkAssertions、OfflineFrameworkDecorators、OfflineFrameworkRequest、OfflineFrameworkTask。外部使用者无需依赖各实现文件的内部组织。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>导入四件套公开类，再通过__all__声明模块出口。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>仅建立导入与公开名称，不执行领域行为。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>模块身份可稳定暴露，而实现可以分布在不同文件。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>公开导出不等于所有行为都写在模块Task中。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>当前没有直接覆盖本卡合同的专项测试。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<section class="source-card source-card--required source-card--expanded" id="source-card-D03-S2" data-default-open="true" data-source-lines="9">
+<div class="source-card__heading">
+<span class="source-importance">必读</span>
+<div><h3>BaseTask构造领域Capability</h3><p>common/base_task.py · 9行</p></div>
+</div>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D03-S2">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_base_task.py</code></span>
+<span><strong>类方法</strong><code>TestBaseTask.test_create_and_poll_media_generation_combines_create_and_poll</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_base_task.py::TestBaseTask::test_create_and_poll_media_generation_combines_create_and_poll</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>common/base_task.py::BaseTask._media_capability</code></span>
+<span><strong>真实行数</strong>9</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>BaseTask向Capability传递了哪些稳定配置？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制BaseTask构造领域Capability选段1" aria-describedby="source-copy-status-D03-S2-1" aria-controls="source-code-D03-S2-1" data-source-target="source-code-D03-S2-1" data-source-status="source-copy-status-D03-S2-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D03-S2-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D03-S2-1" tabindex="0" aria-label="BaseTask构造领域Capability，源码第41至49行，选段1"><code class="language-python" data-source-card="D03-S2" data-segment-index="1">    def _media_capability(self) -&gt; MediaGenerationCapability:
+        return MediaGenerationCapability(
+            image_generations_path=self.image_generations_path,
+            chat_completions_path=self.chat_completions_path,
+            media_generations_path=self.media_generations_path,
+            media_task_path_template=self.media_task_path_template,
+            task_id_field=self.task_id_field,
+            task_id_aliases=tuple(self.task_id_aliases),
+        )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D03-S2" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>BaseTask 创建 Capability 时传入图片、对话、媒体创建路径和媒体任务轮询路径模板，同时传入 task_id 主字段，并将 task_id_aliases 转为 tuple 后交给 Capability。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>从BaseTask实例读取路径、字段和别名，构造MediaGenerationCapability。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>创建一个轻量Capability对象，不发送请求。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>BaseTask可以作为兼容门面，把领域配置交给能力对象。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不证明能力调用已经发生。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_base_task.py::TestBaseTask::test_create_and_poll_media_generation_combines_create_and_poll</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</section>
+<details class="source-card source-card--required" id="source-card-D03-S3" data-default-open="false" data-source-lines="21">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>BaseTask门面注入兼容调用点</strong><small>common/base_task.py · 21行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D03-S3">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_base_task.py</code></span>
+<span><strong>类方法</strong><code>TestBaseTask.test_create_and_poll_media_generation_combines_create_and_poll</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_base_task.py::TestBaseTask::test_create_and_poll_media_generation_combines_create_and_poll</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>common/base_task.py::BaseTask.create_and_poll_media_generation</code></span>
+<span><strong>真实行数</strong>21</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>为什么门面把create、extract和poll作为调用点传入Capability？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制BaseTask门面注入兼容调用点选段1" aria-describedby="source-copy-status-D03-S3-1" aria-controls="source-code-D03-S3-1" data-source-target="source-code-D03-S3-1" data-source-status="source-copy-status-D03-S3-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D03-S3-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D03-S3-1" tabindex="0" aria-label="BaseTask门面注入兼容调用点，源码第101至121行，选段1"><code class="language-python" data-source-card="D03-S3" data-segment-index="1">    def create_and_poll_media_generation(
+        self,
+        request_client: BaseRequest,
+        payload: dict[str, Any],
+        *,
+        poll_interval: float = 2,
+        poll_timeout: float | None = None,
+        polling_policy: PollingPolicy = DEFAULT_MEDIA_POLLING_POLICY,
+        retry_policy: RetryPolicy | None = None,
+    ) -&gt; requests.Response:
+        return self._media_capability().create_and_poll_media_generation(
+            request_client,
+            payload,
+            poll_interval=poll_interval,
+            poll_timeout=poll_timeout,
+            polling_policy=polling_policy,
+            retry_policy=retry_policy,
+            create=self.create_media_generation,
+            extract_task_id=self.extract_task_id,
+            poll=self.poll_media_generation_result,
+        )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D03-S3" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>门面把自身的 create_media_generation、extract_task_id、poll_media_generation_result 注入 Capability。Capability 负责编排，创建、提取和轮询仍通过 BaseTask 提供的调用点完成。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>创建Capability并转交请求参数，同时注入BaseTask现有三个兼容方法。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>实际副作用由Capability调用注入方法时产生。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>旧入口可以保持稳定，领域流程下沉而不复制实现。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不展开create、poll各自的请求与状态机细节。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_base_task.py::TestBaseTask::test_create_and_poll_media_generation_combines_create_and_poll</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--support" id="source-card-D03-S4" data-default-open="false" data-source-lines="32">
+<summary class="source-card__summary">
+<span class="source-importance">支撑</span>
+<span><strong>Capability拥有create-extract-poll流程</strong><small>common/task_capabilities/media_generation.py · 32行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D03-S4">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_base_task.py</code></span>
+<span><strong>类方法</strong><code>TestBaseTask.test_create_and_poll_media_generation_combines_create_and_poll</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_base_task.py::TestBaseTask::test_create_and_poll_media_generation_combines_create_and_poll</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>common/task_capabilities/media_generation.py::MediaGenerationCapability.create_and_poll_media_generation</code></span>
+<span><strong>真实行数</strong>32</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>真正的领域流程如何组合默认实现与注入实现？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Capability拥有create-extract-poll流程选段1" aria-describedby="source-copy-status-D03-S4-1" aria-controls="source-code-D03-S4-1" data-source-target="source-code-D03-S4-1" data-source-status="source-copy-status-D03-S4-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D03-S4-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D03-S4-1" tabindex="0" aria-label="Capability拥有create-extract-poll流程，源码第93至124行，选段1"><code class="language-python" data-source-card="D03-S4" data-segment-index="1">    def create_and_poll_media_generation(
+        self,
+        request_client: BaseRequest,
+        payload: dict[str, Any],
+        *,
+        poll_interval: float = 2,
+        poll_timeout: float | None = None,
+        polling_policy: PollingPolicy = DEFAULT_MEDIA_POLLING_POLICY,
+        retry_policy: RetryPolicy | None = None,
+        create: Callable[[BaseRequest, dict[str, Any]], requests.Response] | None = None,
+        extract_task_id: Callable[[requests.Response], str] | None = None,
+        poll: Callable[..., requests.Response] | None = None,
+    ) -&gt; requests.Response:
+        create_call = create or self.create_media_generation
+        extract_call = extract_task_id or self.extract_task_id
+        poll_call = poll or self.poll_media_generation_result
+        with operation_scope(
+            RuntimeOperationKind.ASYNC_TASK,
+            name="media_generation",
+            role=RuntimeTrafficRole.WORKLOAD,
+            model_id=model_id_from_kwargs({"json": payload}),
+        ):
+            create_response = create_call(request_client, payload)
+            task_id = extract_call(create_response)
+            return poll_call(
+                request_client,
+                task_id,
+                poll_interval=poll_interval,
+                poll_timeout=poll_timeout,
+                polling_policy=polling_policy,
+                retry_policy=retry_policy,
+            )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D03-S4" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>Capability 对 create、extract_task_id、poll 分别采用“传入实现优先，否则用自身默认方法”。随后在 ASYNC_TASK 操作域内依次创建任务、提取 task_id、轮询，并把间隔、超时、轮询策略和重试策略完整传给轮询调用。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>选择create/extract/poll调用点，进入ASYNC_TASK操作作用域，依次创建、提取task_id并轮询。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>创建运行时操作作用域并执行请求/轮询调用。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Capability拥有create-extract-poll组合流程；BaseTask仍拥有稳定入口、配置和调用点注入。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不展开操作作用域记录器、重试和轮询状态机内部。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_base_task.py::TestBaseTask::test_create_and_poll_media_generation_combines_create_and_poll</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--evidence" id="source-card-D03-T1" data-default-open="false" data-source-lines="11">
+<summary class="source-card__summary">
+<span class="source-importance">测试证据</span>
+<span><strong>门面组合行为的测试证据</strong><small>tests/test_base_task.py · 11行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--source" data-source-example="D03-T1">
+<p class="source-example__label">本段讲解用例 · 本卡测试源码</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_base_task.py</code></span>
+<span><strong>类方法</strong><code>TestBaseTask.test_create_and_poll_media_generation_combines_create_and_poll</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_base_task.py::TestBaseTask::test_create_and_poll_media_generation_combines_create_and_poll</code></span>
+</div>
+<p class="source-example__note">本卡展示的源码本身就是测试用例，定位直接指向当前测试函数或类方法。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>tests/test_base_task.py::TestBaseTask.test_create_and_poll_media_generation_combines_create_and_poll</code></span>
+<span><strong>真实行数</strong>11</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>测试观察了返回值、create调用和poll参数中的哪些事实？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制门面组合行为的测试证据选段1" aria-describedby="source-copy-status-D03-T1-1" aria-controls="source-code-D03-T1-1" data-source-target="source-code-D03-T1-1" data-source-status="source-copy-status-D03-T1-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D03-T1-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D03-T1-1" tabindex="0" aria-label="门面组合行为的测试证据，源码第165至175行，选段1"><code class="language-python" data-source-card="D03-T1" data-segment-index="1">    def test_create_and_poll_media_generation_combines_create_and_poll(self):
+        task = BaseTask()
+        request_client = FakeGenerationRequest()
+        payload = {"model": "wan2.7-image"}
+
+        response = task.create_and_poll_media_generation(request_client, payload, poll_timeout=300)
+
+        assert response.json() == {"result": {"urls": ["https://example.com/image.png"]}}
+        assert request_client.post_calls == [{"path": "/v1/media/generations", "kwargs": {"json": payload}}]
+        assert request_client.poll_calls[0]["path"] == "/v1/media/tasks/task-001"
+        assert request_client.poll_calls[0]["poll_timeout"] == 300</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D03-T1" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>测试确认组合方法返回最终结果，其中 JSON 含目标图片 URL；创建阶段只向 /v1/media/generations POST 一次并原样传入 payload；轮询使用 /v1/media/tasks/task-001，且显式 poll_timeout 为 300。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>Arrange假Request与payload，Act调用BaseTask门面，Assert返回、POST路径和poll_timeout。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>只操作FakeGenerationRequest记录，不发真实网络请求。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>门面确实组合创建与轮询并透传关键参数。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不证明真实HTTP、中间件或轮询失败分支。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li>本卡自身即为测试证据。</li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+</div>
+</section>
+<!-- SOURCE_CARDS:DAY3:END -->
+
+        <section id="lesson-flow-summary" data-section>
+          <p class="section-kicker">课后总结 · 调用、配置与状态流</p>
+          <h2>一个组合任务如何跨过门面与Capability</h2>
+          <div class="lesson-flow-map"><div class="flow-stage-list">
+            <article class="flow-stage"><div class="flow-stage__index">1</div><div class="flow-stage__function"><h3>测试调用BaseTask</h3><p>传入Fake Request、payload和poll timeout。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>场景输入</h3><p>业务数据与控制参数仍由测试拥有；Fake Request只记录下游调用。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">2</div><div class="flow-stage__function"><h3>BaseTask门面</h3><p>保持稳定方法名，并收集可覆盖的create/extract/poll绑定方法。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>扩展点集合</h3><p>模块差异以绑定方法和类属性形式进入公共能力流程。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">3</div><div class="flow-stage__function"><h3><code>_media_capability()</code></h3><p>用路径模板和任务ID字段创建能力对象。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>配置快照</h3><p>Capability得到执行所需配置，但不持有具体测试场景。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">4</div><div class="flow-stage__function"><h3>Capability组合流程</h3><p>依次调用create、extract task_id、poll。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>状态转换</h3><p>payload → 创建Response → task_id → 最终Response；poll参数原样传递。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">5</div><div class="flow-stage__function"><h3>测试读取记录</h3><p>检查POST路径、poll路径、超时和最终响应。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>证据边界</h3><p>证明组合与参数透传，不证明真实HTTP、Retry或Polling算法。</p></div></article>
+          </div><div class="flow-fact-footer"><strong>最小记忆单元</strong><p>门面解决“调用方依赖谁”，Capability解决“公共流程放哪里”，绑定方法解决“模块差异怎样继续生效”。</p></div></div>
+        </section>
+
+      <section id="knowledge-check" data-section>
           <p class="section-kicker">09 · 知识自测</p>
           <h2>确认你掌握的是扩展原则</h2>
           <p class="section-lead">建议达到4/5再进入门禁。答错时回到六文件责任位与复用决策阶梯，而不是记文件名。</p>

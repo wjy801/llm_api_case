@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="接口测试框架源码架构与证据链六周课程第9天：Retry策略、幂等资格、退避预算与显式恢复">
   <title>第09天｜请求重试策略</title>
+  <link rel="stylesheet" href="六周课程页.css">
   <style>
     :root{color-scheme:light;--ink:#172033;--muted:#5d6a7d;--line:#dce4ef;--paper:#fff;--canvas:#f4f6fa;--blue:#2457d6;--blue2:#183e9b;--blue-soft:#eaf1ff;--green:#16794a;--green-soft:#e7f8ef;--amber:#9a5b08;--amber-soft:#fff4d9;--red:#b4233e;--red-soft:#fff0f2;--violet:#6d43b5;--violet-soft:#f3edff;--nav:288px;--shadow:0 18px 52px rgba(34,49,80,.1)}
     *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:28px}body{margin:0;background:var(--canvas);color:var(--ink);font:16px/1.75 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}button,input,select,textarea{font:inherit}a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}code{border-radius:5px;padding:.12em .38em;background:#edf2f8;color:#a52150;font:.9em/1.5 "Cascadia Code",Consolas,monospace}pre{margin:0;overflow:auto;border-radius:12px;padding:20px;background:#111827;color:#e7edf7;line-height:1.65}pre code{padding:0;background:transparent;color:inherit}h2{margin:0 0 14px;font-size:clamp(27px,3.4vw,38px);line-height:1.25;letter-spacing:-.025em}h3{margin:24px 0 9px;line-height:1.35}p{margin:9px 0}ul,ol{padding-left:1.45em}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid var(--line);padding:12px 13px;text-align:left;vertical-align:top}th{background:#f6f8fc;color:#34435a}
@@ -27,17 +28,16 @@
   <aside class="side" id="side-nav">
     <div class="mark"><small>接口测试框架源码架构与证据链六周课程</small><h2>第09天 · 显式恢复</h2><p>第2周 / 请求内核与可靠性能力</p></div>
     <nav class="nav-list" id="nav-list" aria-label="本课目录">
-      <a href="#goals"><span class="num">01</span><span>问题与目标</span></a><a href="#model"><span class="num">02</span><span>四道重试闸门</span></a><a href="#policy"><span class="num">03</span><span>RetryPolicy合同</span></a><a href="#eligibility"><span class="num">04</span><span>方法与幂等资格</span></a><a href="#signals"><span class="num">05</span><span>故障分类与结果</span></a><a href="#delay"><span class="num">06</span><span>等待与预算</span></a><a href="#executor"><span class="num">07</span><span>执行器生命周期</span></a><a href="#evidence"><span class="num">08</span><span>记录与质量证据</span></a><a href="#practice"><span class="num">09</span><span>离线实践</span></a><a href="#decision"><span class="num">10</span><span>重试决策表</span></a><a href="#design"><span class="num">D</span><span>设计选择与边界</span></a><a href="#quiz"><span class="num">11</span><span>知识自测</span></a><a href="#gate"><span class="num">12</span><span>本课门禁</span></a>
+      <a href="#goals"><span class="num">01</span><span>问题与目标</span></a><a href="#code-first-walkthrough"><span class="num">02</span><span>用例入口与策略传递</span></a><a href="#model"><span class="num">03</span><span>公共入口与四道闸门</span></a><a href="#policy"><span class="num">04</span><span>RetryPolicy合同</span></a><a href="#eligibility"><span class="num">05</span><span>方法与幂等资格</span></a><a href="#signals"><span class="num">06</span><span>故障分类与结果</span></a><a href="#delay"><span class="num">07</span><span>等待与预算</span></a><a href="#executor"><span class="num">08</span><span>attempt事实写入</span></a><a href="#evidence"><span class="num">09</span><span>记录与质量证据</span></a><a href="#organized-answers"><span class="num">10</span><span>整理答案</span></a><a href="#decision"><span class="num">11</span><span>重试决策答案</span></a><a href="#design"><span class="num">D</span><span>设计选择与边界</span></a><a href="#lesson-flow-summary"><span class="num">12</span><span>课后流转总图</span></a><a href="#oral-recap"><span class="num">13</span><span>完整复述</span></a>
     </nav>
-    <div class="side-meter"><div class="meter-row"><span>门禁完成度</span><span id="gate-text">0/5</span></div><div class="meter-track"><div class="meter-value" id="gate-value"></div></div></div>
   </aside>
   <main class="main">
-    <div class="topbar"><div class="crumbs"><a href="../接口测试框架六周学习课程.html">课程大纲</a><span>/</span>第09天</div><div class="toolbar"><button class="menu" id="menu" type="button" aria-controls="side-nav">☰ 本课目录</button><a class="button" href="../接口测试框架六周学习课程.html#section-4">统一术语表</a><a class="button" href="../接口测试框架六周学习课程.html">返回课程大纲</a><button class="button" id="reset" type="button">重置本课记录</button></div></div>
+    <div class="topbar"><div class="crumbs"><a href="../接口测试框架六周学习课程.html">课程大纲</a><span>/</span>第09天</div><div class="toolbar"><button class="menu" id="menu" type="button" aria-controls="side-nav">☰ 本课目录</button><a class="button" href="../接口测试框架六周学习课程.html#section-4">统一术语表</a><a class="button" href="../接口测试框架六周学习课程.html">返回课程大纲</a></div></div>
     <article class="lesson">
       <header class="hero">
         <p class="eyebrow">DAY 09 · RETRY BY CONTRACT</p><h1>请求重试策略</h1>
         <p class="hero-lead">重试不是“失败后再跑一次”，而是在业务意图可安全重复、故障具备瞬时性、次数与等待仍在预算内时，显式地再次执行同一请求。</p>
-        <div class="pills"><span class="pill">建议 1.5～2.5 小时</span><span class="pill">前置：完成第08天门禁</span><span class="pill">只运行确定性离线测试</span><span class="pill">核心：common/retry*.py</span></div>
+        <div class="pills"><span class="pill">建议 1.5～2.5 小时</span><span class="pill">前置：完成第08天门禁</span><span class="pill">学习方式：沿调用链就地精讲</span><span class="pill">核心：common/retry*.py</span></div>
         <div class="hero-outcome"><strong>完成标志：</strong>面对 GET 500、GET 400、POST 有无幂等键、Timeout、SSL 和断言失败，你能先判断是否有重试资格，再解释等待、终止结果和证据。</div>
       </header>
 
@@ -53,8 +53,206 @@
         <div class="constraint"><strong>TOC 约束链：</strong>瞬时失败 → 习惯性“全都重试” → POST 重复副作用、确定性缺陷被隐藏、执行时间失控 → 用例偶尔通过但证据失真。真正约束不是重试代码不会写，而是没有先建立恢复资格的决策顺序。</div>
       </section>
 
-      <section id="model" data-section>
-        <p class="kicker">02 · Mental model</p><h2>RetryExecutor 前有资格闸门，循环内还有故障与预算闸门</h2>
+      <section id="code-first-walkthrough" class="document-walkthrough" data-section>
+        <p class="section-kicker">02 · 用例入口与策略传递</p>
+        <h2>先确认调用者交出了什么，不提前展开执行器</h2>
+        <p class="section-lead">本节只解释测试怎样提出“调用一次、内部恢复”的验收目标，以及示例Task和模块Request怎样显式传递RetryPolicy。BaseRequest、资格判断、分类与预算源码在对应章节首次出现时再展开。</p>
+
+        <div class="guided-start">
+          <div class="guided-start__header"><h3>本节唯一主线：瞬时GET失败后的显式恢复</h3><p>仓库用离线用例保证结果稳定，但这里不讲服务创建、fixture、端口或服务内部计数器。把<code>request</code>视为普通module已经准备好的Request对象，只研究一次业务调用如何经过公共请求内核完成两次attempt。</p></div>
+          <div class="guided-command"><strong>本课示例用例</strong><code>module/offline_framework_example/test_retry.py::TestRetry::test_retry_rescues_transient_get_failure</code></div>
+          <div class="guided-rule"><strong>初学者阅读规则</strong>先找测试中的Act，再跟进它调用的Task和Request；看到<code>retry_policy</code>后才进入公共内核，不要先从<code>RetryExecutor</code>背算法。</div>
+          <div class="guided-chain" aria-label="代码阅读顺序"><span>测试方法</span><b>→</b><span>Task.request_transient</span><b>→</b><span>Request.get_transient</span><b>→</b><span>BaseRequest.request</span><b>→</b><span>_send_with_retry</span><b>→</b><span>RetryExecutor.execute</span><b>→</b><span>Assertions</span></div>
+        </div>
+
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">1</span><div><h3>测试先定义“调用一次，框架内部尝试两次”</h3><p>先只看Act、最终业务断言和框架事实，不追示例服务如何产生503与200。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source">
+              <span class="guided-source__location">module/offline_framework_example/test_retry.py::TestRetry::test_retry_rescues_transient_get_failure · 有序教学选段；省略Request对象准备、服务内部计数断言和离线基础设施细节</span>
+              <pre><code>response = self.task.request_transient(request)
+
+self.assertions.assert_transient_recovered(response)
+
+group = offline_runtime_recorder.request_groups[-1]
+assert group.configured_max_attempts == 2
+assert [context.attributes["attempt_index"] for context in group.contexts] == [
+    1,
+    2,
+]
+assert [
+    response.status_code
+    for _, response in offline_runtime_recorder.responses
+] == [503, 200]
+metadata = offline_runtime_recorder.operation_metadata[-1]
+assert metadata.name == "offline_transient_request"
+assert metadata.role == RuntimeTrafficRole.WORKLOAD</code></pre>
+            </div>
+            <div class="guided-explanation">
+              <h4>先把验收事实分成三层</h4>
+              <div class="guided-point"><strong>业务入口</strong><p>测试只调用一次<code>task.request_transient(request)</code>，因此“重试”不是pytest重跑测试，而是这一次业务调用内部的恢复行为。</p></div>
+              <div class="guided-point success"><strong>最终业务结果</strong><p><code>assert_transient_recovered(response)</code>要求最终Response为200，JSON中的<code>status</code>为<code>ok</code>、<code>attempt</code>为2。</p></div>
+              <div class="guided-point"><strong>框架运行事实</strong><p>一个Request Group配置最多2次attempt，并绑定两个Context；观察到的响应顺序是503 → 200。</p></div>
+              <div class="guided-point warning"><strong>不要误读</strong><p><code>configured_max_attempts == 2</code>是上限；真正发生两次由<code>group.contexts</code>和响应序列共同证明。</p></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">2</span><div><h3>Task传递业务动作，Request把RetryPolicy送入公共入口</h3><p>策略不是全局开关，它沿这次调用显式传递。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source">
+              <span class="guided-source__location">module/offline_framework_example/task.py::OFFLINE_RETRY_POLICY</span>
+              <pre><code>OFFLINE_RETRY_POLICY = RetryPolicy(
+    max_attempts=2,
+    base_delay=0,
+    max_delay=0,
+    jitter=False,
+    respect_retry_after=True,
+    max_elapsed=1,
+    allow_post=False,
+)</code></pre>
+              <span class="guided-source__location" style="margin-top:18px">module/offline_framework_example/task.py::OfflineFrameworkTask.request_transient</span>
+              <pre><code>@allure_step("执行离线瞬时GET请求")
+def request_transient(
+    self,
+    request_client: OfflineFrameworkRequest,
+    retry_policy: RetryPolicy = OFFLINE_RETRY_POLICY,
+) -&gt; requests.Response:
+    return request_client.get_transient(retry_policy)</code></pre>
+              <span class="guided-source__location" style="margin-top:18px">module/offline_framework_example/request.py::OfflineFrameworkRequest.get_transient</span>
+              <pre><code>def get_transient(self, retry_policy: RetryPolicy) -&gt; requests.Response:
+    return self.get(
+        self.transient_path,
+        retry_policy=retry_policy,
+        runtime_metadata=runtime_metadata(
+            RuntimeOperationKind.HTTP,
+            name="offline_transient_request",
+            role=RuntimeTrafficRole.WORKLOAD,
+        ),
+    )</code></pre>
+            </div>
+            <div class="guided-explanation">
+              <h4>数据在三层之间如何变化</h4>
+              <table class="guided-io"><tr><th>Policy</th><td><code>max_attempts=2</code>包含首次发送；等待被设为0，使该教学用例快速且确定。</td></tr><tr><th>Task输入</th><td>一个Request客户端和一个RetryPolicy；Task只表达“执行瞬时GET请求”。</td></tr><tr><th>Request补充</th><td>把业务动作翻译为<code>GET /v1/transient</code>，并附加<code>retry_policy</code>和Runtime元数据。</td></tr><tr><th>函数输出</th><td>Task与Request都直接向上返回最终<code>requests.Response</code>。</td></tr></table>
+              <div class="guided-point"><strong>所有权边界</strong><p>本示例Task通过默认参数选择教学策略；通用框架中策略由调用方显式决定。模块Request只选择HTTP method和path，两层都不实现循环、sleep或异常分类。</p></div>
+              <div class="guided-point warning"><strong>关于源码中的Offline命名</strong><p>类名和Allure步骤名来自示例module，不改变Task → Request → BaseRequest的普通分层；本课不把离线环境实现当成知识目标。</p></div>
+            </div>
+          </div>
+        </article>
+
+        <div class="callout info"><strong>本节到此停止下钻</strong>当前只确认Policy沿Task与模块Request进入公共请求入口。下一节讲到逻辑请求所有者时，再展开<code>BaseRequest.request()</code>与<code>_send_with_retry()</code>。</div>
+      </section>
+
+      <section id="model" class="document-walkthrough" data-section>
+        <p class="kicker">03 · Public entry and gates</p><h2>公共入口先建立逻辑请求，再把恢复决策委托给执行器</h2>
+        <p class="lead">上一节只交出了GET、path和RetryPolicy。这里第一次进入公共内核，先展开谁拥有Operation、Request Group与Context工厂，再提炼四道闸门。</p>
+
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">3</span><div><h3><code>BaseRequest</code>拥有逻辑请求，并把重试编排委托给执行器</h3><p>先看公共入口选择Retry分支，再看它如何创建Group和Context工厂。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source">
+              <span class="guided-source__location">common/base_request.py::BaseRequest.request · 完整函数</span>
+              <pre><code>def request(self, method: str, path: str, **kwargs: Any) -&gt; requests.Response:
+    attach_log = kwargs.pop("_attach_log", True)
+    retry_policy = kwargs.pop("retry_policy", None)
+    inherit_session_headers = bool(kwargs.pop("_inherit_session_headers", True))
+    stream = bool(kwargs.get("stream"))
+    operation_kind = RuntimeOperationKind.SSE if stream else RuntimeOperationKind.HTTP
+    metadata = self._runtime_observer.normalize_metadata(
+        kwargs,
+        kind=operation_kind,
+        default_name="sse_request" if stream else "http_request",
+    )
+    operation = self._runtime_observer.start_operation(metadata)
+    try:
+        if retry_policy is not None:
+            response = self._send_with_retry(
+                method,
+                path,
+                retry_policy,
+                attach_log=attach_log,
+                inherit_session_headers=inherit_session_headers,
+                **kwargs,
+            )
+        else:
+            context = self._build_request_context(
+                method,
+                path,
+                attach_log=attach_log,
+                inherit_session_headers=inherit_session_headers,
+                **kwargs,
+            )
+            response = self._send_single_group(context)
+    except BaseException as error:
+        operation.finish_error(error)
+        raise
+    operation.finish_response(response, stream=stream)
+    return response</code></pre>
+              <span class="guided-source__location" style="margin-top:18px">common/base_request.py::BaseRequest._send_with_retry · 连续函数体选段；省略函数签名和重复参数声明</span>
+              <pre><code>first_context = self._build_request_context(
+    method,
+    path,
+    attach_log=attach_log,
+    request_step_name=request_step_name,
+    response_step_name=response_step_name,
+    protocol=protocol,
+    retry_policy=retry_policy,
+    polling_policy=polling_policy,
+    inherit_session_headers=inherit_session_headers,
+    deadline=deadline,
+    **kwargs,
+)
+
+group = self._runtime_observer.start_request_group(
+    method=first_context.method,
+    path=first_context.path,
+    protocol=first_context.protocol,
+    configured_max_attempts=retry_policy.max_attempts,
+)
+def context_factory(attempt_index: int) -&gt; RequestContext:
+    context = self._build_request_context(
+        method,
+        path,
+        attach_log=attach_log,
+        request_step_name=request_step_name,
+        response_step_name=response_step_name,
+        protocol=protocol,
+        retry_policy=retry_policy,
+        polling_policy=polling_policy,
+        inherit_session_headers=inherit_session_headers,
+        deadline=deadline,
+        **kwargs,
+    )
+    context.attributes["attempt_index"] = attempt_index
+    context.attributes["max_attempts"] = retry_policy.max_attempts
+    group.bind(context)
+    return context
+try:
+    return self.retry_executor.execute(
+        method=first_context.method,
+        request_kwargs=self._kwargs_with_session_headers(first_context.kwargs),
+        policy=retry_policy,
+        context_factory=context_factory,
+        send_once=self._send,
+        attach_records=self._attach_retry_records,
+        context_recorder=context_recorder,
+        on_wait=group.add_retry_wait,
+        deadline=deadline,
+    )
+finally:
+    group.finish()</code></pre>
+            </div>
+            <div class="guided-explanation">
+              <h4>两个函数分别拥有不同生命周期</h4>
+              <div class="guided-point"><strong><code>request()</code></strong><p>消费<code>retry_policy</code>，启动顶层Operation，根据策略是否存在选择发送分支，并对最终Response或异常收口。</p></div>
+              <div class="guided-point"><strong><code>_send_with_retry()</code></strong><p>启动一个逻辑Request Group，把<code>configured_max_attempts</code>记录为策略上限，并在<code>finally</code>中保证Group完成。</p></div>
+              <div class="guided-point success"><strong><code>context_factory()</code></strong><p>每次被执行器调用都会重新运行<code>_build_request_context()</code>，先写入本轮索引并绑定到同一个Group；随后<code>RetryExecutor._prepare_context()</code>最终写入索引、上限和共享<code>retry_records</code>。</p></div>
+              <div class="guided-point"><strong>依赖反转</strong><p>执行器不直接认识Session：<code>BaseRequest</code>把<code>self._send</code>作为<code>send_once</code>传入，把Context创建、记录附加和等待事实也作为回调交给执行器。</p></div>
+              <div class="guided-point warning"><strong>规划Context不是attempt</strong><p><code>first_context</code>只用于取得标准化method、path、protocol和含Session Header的资格参数；它不会发送、不会绑定Group，也不计入attempt数量。</p></div>
+            </div>
+          </div>
+        </article>
         <div class="formula">继续下一次 attempt = 显式策略 ∧ 方法有资格 ∧ 故障可恢复 ∧ 次数和等待仍在预算内<small>任意一项不成立，就不能把“再试一次”当成默认动作。</small></div>
         <div class="four-gates">
           <div class="gate-card"><span class="badge">闸门 1</span><h3>策略显式传入</h3><p>BaseRequest 默认不重试。RetryPolicy 自身虽有默认字段，请求没有传 retry_policy 仍只执行一次。</p></div>
@@ -66,9 +264,39 @@
         <div class="callout info"><strong>计数语义：</strong><code>max_attempts=3</code> 表示最多三次总尝试，不是首次请求后再重试三次，因此最多只有两段等待。</div>
       </section>
 
-      <section id="policy" data-section>
-        <p class="kicker">03 · Policy contract</p><h2>RetryPolicy 是冻结策略对象，不是全局自动开关</h2>
+      <section id="policy" class="document-walkthrough" data-section>
+        <p class="kicker">04 · Policy contract</p><h2>RetryPolicy 是冻结策略对象，不是全局自动开关</h2>
         <p class="lead">策略位于 <code>common/retry.py</code>，以 frozen Pydantic model 表达，避免同一调用过程被其他代码悄悄改写。</p>
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">4</span><div><h3><code>RetryPolicy</code>冻结一次调用的恢复合同</h3><p>策略字段在这里第一次成为决策输入，因此在字段表之前直接展开。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source"><span class="guided-source__location">common/retry.py::RetryPolicy</span><pre><code>class RetryPolicy(BaseModel):
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    max_attempts: int = 3
+    retry_statuses: frozenset[int] = DEFAULT_RETRY_STATUSES
+    retry_exceptions: tuple[type[BaseException], ...] = (
+        requests.ConnectionError,
+        requests.Timeout,
+    )
+    backoff: str = "exponential"
+    base_delay: float = 0.5
+    max_delay: float = 10.0
+    jitter: bool = True
+    respect_retry_after: bool = True
+    max_elapsed: float | None = 30.0
+    allowed_methods: frozenset[str] = DEFAULT_ALLOWED_METHODS
+    allow_post: bool = False
+    idempotency_header: str = "Idempotency-Key"</code></pre></div>
+            <div class="guided-explanation">
+              <h4>承接对象</h4><div class="guided-point"><p>上一节交来的不是“重试开关”，而是一份随本次GET调用显式传入的策略对象。</p></div>
+              <h4>职责</h4><p>策略只声明资格、故障集合、次数和等待边界；它不创建Context、不发送HTTP，也不拥有循环。</p>
+              <h4>处理顺序</h4><ol><li>模型校验次数、延迟和Header名称。</li><li><code>frozen=True</code>阻止执行过程中被悄悄修改。</li><li>执行器在每个决策点读取同一份策略。</li></ol>
+              <h4>输入与输出</h4><table class="guided-io"><tr><th>输入</th><td>调用方选择的恢复参数。</td></tr><tr><th>输出</th><td>不可变<code>RetryPolicy</code>，交给方法资格、分类、等待和预算判断。</td></tr></table>
+              <h4>边界</h4><div class="doc-boundary"><strong>不要混淆：</strong>类字段有默认值，不等于所有请求默认重试；没有传<code>retry_policy</code>时仍走单次发送。</div>
+            </div>
+          </div>
+        </article>
         <div class="table-wrap"><table class="policy-table"><thead><tr><th>字段</th><th>默认值</th><th>真实含义</th></tr></thead><tbody>
           <tr><td>max_attempts</td><td>3</td><td>包含首次请求的最大总尝试数，最小为 1。</td></tr>
           <tr><td>retry_statuses</td><td>429, 500, 502, 503, 504</td><td>400、404 默认不触发恢复。</td></tr>
@@ -96,8 +324,46 @@ response = self.request.get(
         <div class="callout warn"><strong>不要混淆：</strong>“RetryPolicy 默认 max_attempts 为 3”与“BaseRequest 默认重试三次”是两件事。没有传策略时，BaseRequest 走单次请求路径。</div>
       </section>
 
-      <section id="eligibility" data-section>
-        <p class="kicker">04 · Idempotency boundary</p><h2>幂等键赋予 POST 重试资格，但不会凭空创造幂等性</h2>
+      <section id="eligibility" class="document-walkthrough" data-section>
+        <p class="kicker">05 · Idempotency boundary</p><h2>幂等键赋予 POST 重试资格，但不会凭空创造幂等性</h2>
+        <p class="lead">执行器准备进入attempt循环前，先调用方法资格判断。本节在资格规则首次出现时展开该入口。</p>
+
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">5</span><div><h3><code>RetryExecutor.execute()</code>先判方法资格，再进入attempt循环</h3><p>策略存在不等于一定会多次发送；方法闸门在循环之前。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source">
+              <span class="guided-source__location">common/retry_executor.py::RetryExecutor.execute · 函数体首个连续选段</span>
+              <pre><code>retry_records: list[RetryAttemptRecord] = []
+
+if not is_method_retry_allowed(method, request_kwargs, policy):
+    self.require_remaining(deadline)
+    context = context_factory(1)
+    self._prepare_context(context, policy, 1, retry_records)
+    self._record_context(context_recorder, context)
+    return send_once(context)
+
+started_at = self.monotonic()
+last_response: requests.Response | None = None
+
+for attempt_index in range(1, policy.max_attempts + 1):
+    self.require_remaining(deadline, last_response=last_response)
+    context = context_factory(attempt_index)
+    self._prepare_context(context, policy, attempt_index, retry_records)
+    self._record_context(context_recorder, context)
+
+    try:
+        response = send_once(context)</code></pre>
+            </div>
+            <div class="guided-explanation">
+              <h4>进入Session之前已经发生四件事</h4>
+              <div class="guided-point"><strong>方法资格</strong><p><code>is_method_retry_allowed()</code>先看method；GET/HEAD默认允许，POST必须由<code>allow_post</code>或幂等Header取得资格。</p></div>
+              <div class="guided-point warning"><strong>无资格路径</strong><p>即使传了Policy，也只创建attempt 1并调用一次<code>send_once(context)</code>；响应状态不会让它重新进入循环。</p></div>
+              <div class="guided-point"><strong>次数语义</strong><p><code>range(1, max_attempts + 1)</code>证明<code>max_attempts</code>包含首次发送，不是“首次后再重试N次”。</p></div>
+              <div class="guided-point success"><strong>独立Context</strong><p>循环每轮先调用<code>context_factory(attempt_index)</code>；<code>_prepare_context()</code>再附上当前索引、上限和当时已有的Retry记录。</p></div>
+              <div class="guided-point"><strong>真实发送</strong><p><code>send_once</code>就是上一步传入的<code>BaseRequest._send</code>，因此每次attempt都完整经过Middleware → Session → after/exception Middleware。</p></div>
+            </div>
+          </div>
+        </article>
         <div class="decision-chain"><div class="decision-step"><b>1. 规范方法名</b><span>转为大写</span></div><div class="decision-step"><b>2. 查 allowed_methods</b><span>默认 GET / HEAD</span></div><div class="decision-step"><b>3. POST 特判</b><span>allow_post 或幂等 Header</span></div><div class="decision-step"><b>4. 其他方法</b><span>默认只发一次</span></div></div>
         <div class="rule-split">
           <div class="rule-box safe"><h3>推荐：请求级幂等键</h3><p>每个写操作使用稳定、唯一且可追踪的键，由服务端保证同一键只提交一次。Header 只作用于本次请求，不污染 Session。</p><pre style="margin-top:14px"><code>response = self.request.post(
@@ -111,8 +377,32 @@ response = self.request.get(
         <div class="callout danger"><strong>安全边界：</strong>框架以 Header 名称存在作为资格信号，不验证值是否唯一，也不验证服务端是否真的去重。资格判断不能替代业务合同。</div>
       </section>
 
-      <section id="signals" data-section>
-        <p class="kicker">05 · Failure classification</p><h2>响应、传输异常和确定性缺陷的终止方式不同</h2>
+      <section id="signals" class="document-walkthrough" data-section>
+        <p class="kicker">06 · Failure classification</p><h2>响应、传输异常和确定性缺陷的终止方式不同</h2>
+        <p class="lead">方法具有恢复资格后，当前Response或原始异常才进入分类。这里先展开纯判断，再阅读场景表。</p>
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">6</span><div><h3>响应与异常分类只回答“是否可能恢复”</h3><p>分类函数不拥有次数、等待或最终终止结果。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source"><span class="guided-source__location">common/retry.py::should_retry_exception / should_retry_response</span><pre><code>def should_retry_exception(error: BaseException, policy: RetryPolicy) -&gt; bool:
+    if isinstance(
+        error,
+        (requests.exceptions.SSLError, requests.exceptions.TooManyRedirects),
+    ):
+        return False
+    return isinstance(error, policy.retry_exceptions)
+
+
+def should_retry_response(response: requests.Response, policy: RetryPolicy) -&gt; bool:
+    return response.status_code in policy.retry_statuses</code></pre></div>
+            <div class="guided-explanation">
+              <h4>承接对象</h4><p>一次真实attempt产生的<code>Response</code>或原始传输异常。</p>
+              <h4>职责</h4><p>响应分支比较状态集合；异常分支比较异常类型，并显式排除SSL和重定向过多。</p>
+              <h4>处理顺序</h4><ol><li>先保留Response与异常的事实类型。</li><li>再判断它是否属于策略允许的恢复候选。</li><li>候选仍要经过次数和预算闸门。</li></ol>
+              <h4>输入与输出</h4><table class="guided-io"><tr><th>输入</th><td>当前Response或异常、同一RetryPolicy。</td></tr><tr><th>输出</th><td>布尔候选结果，不修改Response，不包装异常。</td></tr></table>
+              <h4>字段变化</h4><div class="doc-object">分类阶段不写Context；只有确定准备下一attempt时，执行器才新增<code>RetryAttemptRecord</code>。</div>
+            </div>
+          </div>
+        </article>
         <div class="signal-grid">
           <div class="signal yes"><h3>默认可恢复</h3><ul><li>HTTP 429</li><li>500 / 502 / 503 / 504</li><li>ConnectionError</li><li>Timeout</li></ul></div>
           <div class="signal no"><h3>默认不可恢复</h3><ul><li>HTTP 400 / 404</li><li>SSLError</li><li>TooManyRedirects</li><li>断言失败和代码错误</li></ul></div>
@@ -128,20 +418,80 @@ response = self.request.get(
         <div class="callout info"><strong>断言失败为何不重试：</strong>业务断言通常在请求返回之后，不属于传输恢复循环；用重试掩盖断言失败会把确定性缺陷伪装成瞬时波动。</div>
       </section>
 
-      <section id="delay" data-section>
-        <p class="kicker">06 · Backoff and budget</p><h2>等待由来源优先级与预算共同计算</h2>
+      <section id="delay" class="document-walkthrough" data-section>
+        <p class="kicker">07 · Backoff and budget</p><h2>等待由来源优先级与预算共同计算</h2>
         <p class="lead">指数模式为 <code>base_delay × 2^(attempt_index - 1)</code>，再受 max_delay 限制。有效 Retry-After 优先，非法值回退到普通退避。</p>
-        <div class="calculator">
-          <div class="controls">
-            <div class="field"><label for="attempt">失败 attempt 编号</label><input id="attempt" type="number" min="1" max="10" value="2"></div>
-            <div class="field"><label for="backoff">backoff</label><select id="backoff"><option value="exponential">exponential</option><option value="fixed">fixed</option></select></div>
-            <div class="field"><label for="base-delay">base_delay（秒）</label><input id="base-delay" type="number" min="0" step="0.1" value="0.5"></div>
-            <div class="field"><label for="max-delay">max_delay（秒）</label><input id="max-delay" type="number" min="0" step="0.1" value="10"></div>
-            <div class="field full"><label for="retry-after">Retry-After 秒数（留空或非法则回退）</label><input id="retry-after" type="text" placeholder="例如 3"></div>
-            <label class="checkline field full"><input id="jitter" type="checkbox" checked> 普通退避启用 jitter</label>
+
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">7</span><div><h3>分类只给出候选，次数、elapsed与deadline共同决定是否等待</h3><p>响应路径与异常路径相似，但终止时返回或抛出的事实不同。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source">
+              <span class="guided-source__location">common/retry_executor.py::RetryExecutor.execute · 异常路径连续选段</span>
+              <pre><code>except Exception as error:
+    if attempt_index &gt;= policy.max_attempts or not should_retry_exception(error, policy):
+        attach_records(context, retry_records)
+        raise
+
+    wait_seconds = calculate_retry_delay(policy, attempt_index)
+    retry_records.append(
+        RetryAttemptRecord(
+            attempt_index=attempt_index,
+            max_attempts=policy.max_attempts,
+            reason=retry_reason_for_exception(error),
+            wait_seconds=wait_seconds,
+            exception_type=type(error).__name__,
+            exception_message=str(error),
+        )
+    )
+    attach_records(context, retry_records)
+    if not self._can_retry_within_elapsed(policy, started_at, wait_seconds):
+        raise
+    if not self._can_wait_within_deadline(deadline, wait_seconds):
+        raise RetryDeadlineExceeded(last_response=last_response) from error
+    self.sleeper(wait_seconds)
+    self._notify_wait(on_wait, wait_seconds)
+    continue</code></pre>
+              <span class="guided-source__location" style="margin-top:18px">省略说明：上段与下段分别保留完整异常分支和完整响应分支；中间只省略分支切换处的空行。</span>
+              <pre><code>last_response = response
+if attempt_index &gt;= policy.max_attempts or not should_retry_response(response, policy):
+    attach_records(context, retry_records)
+    return response
+
+wait_seconds = calculate_retry_delay(policy, attempt_index, response=response)
+retry_records.append(
+    RetryAttemptRecord(
+        attempt_index=attempt_index,
+        max_attempts=policy.max_attempts,
+        reason=retry_reason_for_response(response),
+        wait_seconds=wait_seconds,
+        response_status_code=response.status_code,
+    )
+)
+attach_records(context, retry_records)
+if not self._can_retry_within_elapsed(policy, started_at, wait_seconds):
+    return response
+if not self._can_wait_within_deadline(deadline, wait_seconds):
+    raise RetryDeadlineExceeded(last_response=response)
+self.sleeper(wait_seconds)
+self._notify_wait(on_wait, wait_seconds)</code></pre>
+            </div>
+            <div class="guided-explanation">
+              <h4>按“分类 → 记录 → 预算 → 等待 → 终点”阅读</h4>
+              <div class="guided-point"><strong>故障分类</strong><p><code>should_retry_response()</code>只比较状态集合；<code>should_retry_exception()</code>只比较异常类型并排除SSL与重定向过多。它们只说明故障是否可能恢复。</p></div>
+              <div class="guided-point"><strong>记录候选</strong><p>只有准备进入下一attempt时才新增<code>RetryAttemptRecord</code>，记录原因和计划等待；最终200本身不会新增一条“重试记录”。</p></div>
+              <div class="guided-point warning"><strong>两种时间约束</strong><p><code>max_elapsed</code>只在准备等待前检查“当前已耗时 + 下一段等待”，不夹紧单次HTTP timeout，也不能中断正在执行的请求；外层<code>deadline</code>才是共享的绝对截止时间。</p></div>
+              <div class="guided-point success"><strong>本用例路径</strong><p>attempt 1得到503，命中状态集合，等待为0且预算允许；attempt 2得到200，不再重试，于是200 Response沿Request → Task返回Assertions。</p></div>
+              <div class="guided-point"><strong>响应终点</strong><p>状态不匹配、次数耗尽或<code>max_elapsed</code>不足时，返回当前Response；框架不把503自动改造成异常。</p></div>
+              <div class="guided-point warning"><strong>异常终点</strong><p>异常不可恢复、次数耗尽或<code>max_elapsed</code>不足时，用裸<code>raise</code>重抛当前原异常；只有外层<code>deadline</code>不足时改抛<code>RetryDeadlineExceeded</code>并保留异常链。</p></div>
+            </div>
           </div>
-          <div class="calc-output" aria-live="polite"><small>当前计算结果</small><div class="delay-value" id="delay-value">0 ～ 1 秒</div><div id="delay-source">来源：指数退避，再应用 jitter</div><div class="delay-trace" id="delay-trace"></div></div>
-        </div>
+        </article>
+        <div class="table-wrap"><table><thead><tr><th>输入事实</th><th>计算来源</th><th>计划等待</th><th>预算结论</th></tr></thead><tbody>
+          <tr><td>attempt 1，base=0.5，exponential</td><td>0.5 × 2^0</td><td>0.5秒；启用jitter时为0～0.5秒</td><td>再检查max_elapsed和外层deadline</td></tr>
+          <tr><td>attempt 2，base=0.5，exponential</td><td>0.5 × 2^1</td><td>1秒；再受max_delay截断</td><td>预算不足则不sleep</td></tr>
+          <tr><td>有效Retry-After: 3</td><td>服务端提示优先</td><td>3秒，无jitter，仍受max_delay截断</td><td>预算不足仍不能等待</td></tr>
+          <tr><td>非法Retry-After</td><td>回退fixed/exponential</td><td>按本地策略计算</td><td>不会因Header非法而制造异常</td></tr>
+        </tbody></table></div>
         <div class="cards">
           <div class="card"><h3>Retry-After 优先</h3><p>支持非负秒数和 HTTP-date。有效时无 jitter，但仍受 max_delay 截断。</p></div>
           <div class="card"><h3>max_elapsed 预判</h3><p>比较“当前已耗时 + 下一段等待”，越界便不 sleep、不进入下一 attempt。</p></div>
@@ -151,16 +501,37 @@ response = self.request.get(
         <div class="callout warn"><strong>与第10天衔接：</strong>max_elapsed 是一次 RetryExecutor 的局部预算；Polling 还有覆盖 HTTP attempt、Retry 等待和 poll sleep 的总 deadline。</div>
       </section>
 
-      <section id="executor" data-section>
-        <p class="kicker">07 · Execution lifecycle</p><h2>每次 attempt 都有新 RequestContext，但共享一个 Request Group</h2>
+      <section id="executor" class="document-walkthrough" data-section>
+        <p class="kicker">08 · Execution lifecycle</p><h2>每次 attempt 都有新 RequestContext，但共享一个 Request Group</h2>
         <p class="lead">选择路径观察执行器。新 Context 使中间件与 attempt 属性隔离；Group 把同一业务请求的实际尝试聚合起来。</p>
-        <div class="tabs"><button class="tab active" type="button" data-path="response">503 → 200</button><button class="tab" type="button" data-path="exception">Timeout → Timeout</button><button class="tab" type="button" data-path="ineligible">POST 无幂等键</button></div>
-        <div class="player" id="player"></div>
+        <article class="guided-step">
+          <div class="guided-step__title"><span class="guided-step__number">8</span><div><h3><code>_prepare_context()</code>把共享恢复事实挂到当前attempt</h3><p>Context由BaseRequest创建，attempt元数据的最终写入由RetryExecutor完成。</p></div></div>
+          <div class="guided-code-grid">
+            <div class="guided-source"><span class="guided-source__location">common/retry_executor.py::RetryExecutor._prepare_context</span><pre><code>@staticmethod
+def _prepare_context(
+    context: RequestContext,
+    policy: RetryPolicy,
+    attempt_index: int,
+    retry_records: list[RetryAttemptRecord],
+) -&gt; None:
+    context.attributes["attempt_index"] = attempt_index
+    context.attributes["max_attempts"] = policy.max_attempts
+    context.attributes["retry_records"] = retry_records</code></pre></div>
+            <div class="guided-explanation">
+              <h4>承接对象</h4><p><code>context_factory(attempt_index)</code>新建并绑定到Group的当前attempt Context。</p>
+              <h4>职责</h4><p>执行器补齐当前索引、策略上限和共享记录列表，使Middleware和日志能够解释本轮处于哪一次恢复尝试。</p>
+              <h4>处理顺序</h4><ol><li>BaseRequest创建独立Context并绑定Group。</li><li>执行器写入attempt级恢复元数据。</li><li><code>send_once=self._send</code>执行完整传输链。</li><li>如果真实sleep发生，Group再累计<code>retry_wait_seconds</code>。</li></ol>
+              <h4>输入与输出</h4><table class="guided-io"><tr><th>输入</th><td>当前Context、Policy、attempt索引与共享records。</td></tr><tr><th>输出</th><td>原地更新后的attempt扩展事实；不产生Response。</td></tr></table>
+              <h4>边界</h4><div class="doc-boundary"><strong>不要混淆：</strong><code>RetryAttemptRecord.wait_seconds</code>是计划等待；只有<code>on_wait=group.add_retry_wait</code>在真实sleep后调用，才证明等待已经发生。</div>
+            </div>
+          </div>
+        </article>
+        <div class="cards"><div class="card"><h3>503 → 200</h3><p>attempt 1创建Context并得到503；记录候选与计划等待，预算允许后真实sleep；attempt 2使用新Context得到200并返回。</p></div><div class="card"><h3>Timeout → Timeout</h3><p>每次异常均保留原类型；最终次数耗尽时裸<code>raise</code>重抛当前Timeout，不制造统一异常。</p></div><div class="card"><h3>POST无幂等资格</h3><p>Policy存在也只创建attempt 1；状态分类不会获得进入循环的机会。</p></div></div>
         <div class="callout good"><strong>职责边界：</strong>每个 attempt 都通过 BaseRequest._send() 执行中间件与 transport。RetryExecutor 只拥有编排，不接管 Context 构建、中间件和 HTTP 传输。</div>
       </section>
 
       <section id="evidence" data-section>
-        <p class="kicker">08 · Observable evidence</p><h2>Attempt、RetryAttemptRecord 与实际等待是三种事实</h2>
+        <p class="kicker">09 · Observable evidence</p><h2>Attempt、RetryAttemptRecord 与实际等待是三种事实</h2>
         <div class="evidence-grid">
           <div class="evidence-card"><h3>RequestContext</h3><p>每次发送都有独立 Context，包含 attempt_index 和 max_attempts。</p><strong>回答：第几次真实发送？</strong></div>
           <div class="evidence-card"><h3>RetryAttemptRecord</h3><p>记录促使恢复判断的失败、原因、计算等待、状态码或异常。</p><strong>回答：为什么考虑继续？</strong></div>
@@ -168,7 +539,8 @@ response = self.request.get(
           <div class="evidence-card"><h3>Allure / Quality</h3><p>日志挂载 records；Runtime Hooks 在 Quality 开启时映射事实，关闭时为 Noop。</p><strong>回答：如何下钻与聚合？</strong></div>
         </div>
         <div class="callout warn"><strong>细粒度陷阱：</strong>RetryAttemptRecord 在预算检查前生成，所以 max_elapsed 否决 sleep 后仍可能有“计算等待”；Request Group 的 retry_wait_seconds 只在真实 sleep 后增加。提议等待不等于已执行等待。</div>
-        <h3>代码阅读顺序</h3>
+        <div class="guided-conclusion"><h3>源码在对应章节展开后，再统一提炼</h3><ol><li>RetryPolicy是单次调用显式携带的恢复合同，不是全局自动重试。</li><li>BaseRequest拥有Operation、Request Group、Context工厂和真实单次发送；RetryExecutor只编排资格、循环、分类、等待与终止。</li><li>每个attempt都有独立RequestContext，但共享一个逻辑Request Group。</li><li>分类命中只是候选；次数、<code>max_elapsed</code>和外层<code>deadline</code>仍可阻止下一次发送。</li><li>成功路径返回最终Response；多数异常否决路径重抛原异常，deadline耗尽使用专用异常。</li></ol></div>
+        <h3>证据定位</h3>
         <div class="cards">
           <div class="card"><h3>1. 策略与纯判断</h3><p>资格、故障分类、Retry-After 和 delay。</p><div class="paths"><span class="path">common/retry.py</span><span class="path">tests/test_retry_policy.py</span></div></div>
           <div class="card"><h3>2. 编排循环</h3><p>attempts、预算、结果与 Context。</p><div class="paths"><span class="path">common/retry_executor.py</span><span class="path">tests/test_retry_executor.py</span></div></div>
@@ -177,42 +549,32 @@ response = self.request.get(
         </div>
       </section>
 
-      <section id="practice" data-section>
-        <p class="kicker">09 · Offline practice</p><h2>运行确定性场景，用三层证据解释结果</h2>
-        <p class="lead">以下命令只访问替身或 127.0.0.1 随机端口，不调用真实付费接口。</p>
-        <div class="commands">
-          <div class="command"><div class="command-head"><strong>主实践：离线 Retry 分类</strong><span>大纲要求</span></div><pre><code>.\.venv\Scripts\python.exe -m pytest module/offline_framework_example/test_retry.py -vv</code></pre></div>
-          <div class="command"><div class="command-head"><strong>补充：策略与执行器单元合同</strong><span>建议</span></div><pre><code>.\.venv\Scripts\python.exe -m pytest tests/test_retry_policy.py tests/test_retry_executor.py -q</code></pre></div>
-          <div class="command"><div class="command-head"><strong>聚焦：POST 有无幂等键</strong><span>建议</span></div><pre><code>.\.venv\Scripts\python.exe -m pytest module/offline_framework_example/test_retry.py -k "idempotent_post" -vv</code></pre></div>
-        </div>
-        <div class="cards">
-          <div class="card"><h3>业务结果</h3><p>最终 Response/异常是什么，领域断言为何通过或失败？</p></div>
-          <div class="card"><h3>服务端计数</h3><p>endpoint_call_counts 是 1 还是 2，是否与资格一致？</p></div>
-          <div class="card"><h3>运行时事实</h3><p>Group 中有几个 Context，各自 attempt_index 是什么？</p></div>
-          <div class="card"><h3>隔离边界</h3><p>请求级幂等 Header 是否没有残留到 session.headers？</p></div>
-        </div>
-        <h3>当日产出</h3>
-        <div class="notes-grid">
-          <label>事实：一个恢复成功与一个禁止重试的结果<textarea data-note="fact" placeholder="记录 attempt 数、最终结果和服务调用计数。"></textarea></label>
-          <label>因果：为什么重试不是“失败后再跑一次”<textarea data-note="cause" placeholder="按策略、方法、故障、预算、最终事实写因果链。"></textarea></label>
-          <label>迁移：如何评审新的 POST 重试需求<textarea data-note="transfer" placeholder="先问服务端幂等合同与键生命周期，再问故障和预算。"></textarea></label>
-          <label>证据：实际查阅的代码与测试<textarea data-note="evidence" placeholder="记录文件、nodeid和关键断言；不要记录密钥或真实响应。"></textarea></label>
-        </div>
+      <section id="organized-answers" data-section>
+        <p class="kicker">10 · Organized answers</p><h2>按真实执行顺序整理三条确定结论</h2>
+        <h3>答案一：503为什么能够被第二次attempt挽救</h3><pre><code>Test只调用一次Task
+→ Task把示例RetryPolicy交给模块Request
+→ BaseRequest消费Policy并建立Operation与Request Group
+→ first_context只用于规划，不发送、不计attempt
+→ RetryExecutor确认GET有资格
+→ attempt 1新Context → _send() → Response 503
+→ 分类命中 → 生成RetryAttemptRecord → 预算允许 → 真实等待0秒
+→ attempt 2新Context → _send() → Response 200
+→ Group.finish() → Operation.finish_response() → Response返回Assertions</code></pre>
+        <h3>答案二：响应和异常为什么有不同终点</h3><p>响应否决或次数耗尽时返回当前Response；异常否决或次数耗尽时重抛当前原异常。只有外层绝对deadline不足时才抛<code>RetryDeadlineExceeded</code>。</p>
+        <h3>答案三：max_elapsed不是什么</h3><p><code>max_elapsed</code>不是硬总截止时间：它只在准备下一段等待前检查“已耗时 + 下一段wait”，不会夹紧单次HTTP timeout，也无法中断正在执行的请求。硬deadline由第10天Polling主循环拥有。</p>
       </section>
 
       <section id="decision" data-section>
-        <p class="kicker">10 · Decision lab</p><h2>重试决策表：先判资格，再判故障</h2>
-        <p class="lead">统一前提：均显式传入默认 RetryPolicy，尚有剩余 attempt 且预算充足。选择当前失败是否触发下一次 attempt。</p>
-        <div class="decision-lab">
-          <div class="decision-row" data-answer="yes"><span><strong>GET 返回 500</strong>：方法与状态都符合。</span><select><option value="">请选择</option><option value="yes">允许重试</option><option value="no">不允许重试</option></select><span class="answer"></span></div>
-          <div class="decision-row" data-answer="no"><span><strong>GET 返回 400</strong>：方法有资格，状态不可恢复。</span><select><option value="">请选择</option><option value="yes">允许重试</option><option value="no">不允许重试</option></select><span class="answer"></span></div>
-          <div class="decision-row" data-answer="no"><span><strong>POST 返回 503，无幂等键</strong>：状态可恢复，方法无资格。</span><select><option value="">请选择</option><option value="yes">允许重试</option><option value="no">不允许重试</option></select><span class="answer"></span></div>
-          <div class="decision-row" data-answer="yes"><span><strong>POST 返回 503，有 Idempotency-Key</strong>：框架资格通过。</span><select><option value="">请选择</option><option value="yes">允许重试</option><option value="no">不允许重试</option></select><span class="answer"></span></div>
-          <div class="decision-row" data-answer="yes"><span><strong>GET 抛 ConnectTimeout</strong>：属于 requests.Timeout。</span><select><option value="">请选择</option><option value="yes">允许重试</option><option value="no">不允许重试</option></select><span class="answer"></span></div>
-          <div class="decision-row" data-answer="no"><span><strong>GET 抛 SSLError</strong>：被显式排除。</span><select><option value="">请选择</option><option value="yes">允许重试</option><option value="no">不允许重试</option></select><span class="answer"></span></div>
-          <div class="decision-row" data-answer="no"><span><strong>响应后的业务断言失败</strong>：不是传输恢复信号。</span><select><option value="">请选择</option><option value="yes">允许重试</option><option value="no">不允许重试</option></select><span class="answer"></span></div>
-        </div>
-        <button class="primary" id="check-decisions" type="button" style="margin-top:16px">检查决策表</button><div class="feedback" id="decision-feedback" aria-live="polite"></div>
+        <p class="kicker">11 · Decision answers</p><h2>重试决策答案：先判资格，再判故障与预算</h2>
+        <div class="table-wrap"><table><thead><tr><th>场景</th><th>结论</th><th>判断链</th></tr></thead><tbody>
+          <tr><td>GET返回500</td><td>允许成为重试候选</td><td>策略显式 + GET有资格 + 500命中；仍需次数与预算。</td></tr>
+          <tr><td>GET返回400</td><td>不重试</td><td>方法有资格，但400不在默认状态集合，直接返回Response。</td></tr>
+          <tr><td>POST返回503，无幂等键</td><td>不重试</td><td>方法闸门在循环前否决，只发送一次。</td></tr>
+          <tr><td>POST返回503，有Idempotency-Key</td><td>可成为候选</td><td>Header只证明客户端资格；服务端去重仍需业务合同。</td></tr>
+          <tr><td>GET抛ConnectTimeout</td><td>可成为候选</td><td>属于requests.Timeout；仍需次数与预算。</td></tr>
+          <tr><td>GET抛SSLError</td><td>不重试</td><td>异常分类明确排除SSL。</td></tr>
+          <tr><td>Response返回后业务断言失败</td><td>不进入Retry</td><td>断言位于传输循环之外，属于确定性业务判定。</td></tr>
+        </tbody></table></div>
       </section>
 
       <section id="design" data-section>
@@ -225,57 +587,54 @@ response = self.request.get(
         </div>
       </section>
 
-      <section id="quiz" data-section>
-        <p class="kicker">11 · Knowledge check</p><h2>知识自测</h2><p class="lead">答对 5 题视为达标。沿四道闸门判断，不以“提高成功率”为理由。</p>
-        <div class="quiz-list">
-          <fieldset class="quiz" data-answer="c"><legend>1. 创建 RetryPolicy 但没有传给请求，BaseRequest 执行几次？</legend><div class="options"><label><input type="radio" name="q1" value="a">最多3次</label><label><input type="radio" name="q1" value="b">按环境决定</label><label><input type="radio" name="q1" value="c">1次</label></div><div class="explanation">答案 C。只有显式收到 retry_policy 才进入 RetryExecutor。</div></fieldset>
-          <fieldset class="quiz" data-answer="b"><legend>2. max_attempts=3 的准确含义？</legend><div class="options"><label><input type="radio" name="q2" value="a">首次后再重试3次</label><label><input type="radio" name="q2" value="b">包含首次在内最多3次</label><label><input type="radio" name="q2" value="c">固定等待3秒</label></div><div class="explanation">答案 B。最多三次 transport attempt、两段等待。</div></fieldset>
-          <fieldset class="quiz" data-answer="a"><legend>3. POST 带 Idempotency-Key 后，框架证明什么？</legend><div class="options"><label><input type="radio" name="q3" value="a">方法资格通过，服务端幂等仍需合同保证</label><label><input type="radio" name="q3" value="b">服务端一定不会重复写</label><label><input type="radio" name="q3" value="c">所有4xx可重试</label></div><div class="explanation">答案 A。Header 是客户端资格信号，不是服务端去重证明。</div></fieldset>
-          <fieldset class="quiz" data-answer="c"><legend>4. 有效 Retry-After 与普通退避同时存在时如何处理？</legend><div class="options"><label><input type="radio" name="q4" value="a">相加并应用jitter</label><label><input type="radio" name="q4" value="b">忽略Retry-After</label><label><input type="radio" name="q4" value="c">优先Retry-After，无jitter，仍受max_delay限制</label></div><div class="explanation">答案 C。非法 Retry-After 才回退到 fixed/exponential。</div></fieldset>
-          <fieldset class="quiz" data-answer="b"><legend>5. 503 后等待会突破 max_elapsed，响应路径返回什么？</legend><div class="options"><label><input type="radio" name="q5" value="a">统一抛新超时</label><label><input type="radio" name="q5" value="b">当前503 Response，不sleep</label><label><input type="radio" name="q5" value="c">强制下一请求</label></div><div class="explanation">答案 B。max_elapsed 的响应路径保留当前 Response。</div></fieldset>
-          <fieldset class="quiz" data-answer="a"><legend>6. 哪个事实最能证明等待真的执行过？</legend><div class="options"><label><input type="radio" name="q6" value="a">Request Group 的 retry_wait_seconds</label><label><input type="radio" name="q6" value="b">策略 base_delay</label><label><input type="radio" name="q6" value="c">Record 的 wait_seconds</label></div><div class="explanation">答案 A。Record 可能在预算否决前生成，Group 只累计真实 sleep。</div></fieldset>
-        </div>
-        <button class="primary" id="submit-quiz" type="button" style="margin-top:16px">提交自测</button><div class="summary" id="quiz-summary" aria-live="polite">尚未提交。</div>
+      <section id="lesson-flow-summary" data-section>
+        <p class="section-kicker">12 · 课后流转总图</p><h2>策略、attempt、预算和终止事实怎样汇合</h2>
+        <p class="section-lead">中央是实际调用主链，Policy、Group和预算从侧面注入；菱形表示资格、故障与继续条件。</p>
+        <figure class="lesson-flow-map mermaid-flowchart" aria-labelledby="day09-flow-caption">
+          <figcaption class="flow-map-caption" id="day09-flow-caption"><strong>第9天Retry流转图</strong>：<code>first_context</code>只规划；每个真实attempt都拥有独立Context。</figcaption>
+          <div class="mermaid-flowchart__legend"><span>实线：调用与数据</span><span class="support">虚线：策略、Group和预算</span><span class="success">绿色：Response</span><span class="error">红色：原异常或deadline</span></div>
+          <div class="mermaid-flowchart__canvas"><svg viewBox="0 0 1200 1620" role="img" aria-labelledby="day09-title day09-desc">
+            <title id="day09-title">一次业务调用产生一个或多个Retry attempt的函数与数据流程</title><desc id="day09-desc">Test只调用一次，BaseRequest建立逻辑请求。RetryExecutor先计算方法资格：无资格仍创建attempt 1并只发送一次；有资格时才在故障候选、次数和预算允许下继续。RetryAttemptRecord在时间预算判定前追加。</desc>
+            <defs><marker id="d9a" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52708f"/></marker><marker id="d9s" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8a6b22"/></marker><marker id="d9g" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16794a"/></marker><marker id="d9r" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#b4233f"/></marker></defs>
+            <path class="mermaid-edge" d="M600 90V125" marker-end="url(#d9a)"/><path class="mermaid-edge" d="M600 205V245" marker-end="url(#d9a)"/><path class="mermaid-edge" d="M600 335V375" marker-end="url(#d9a)"/><path class="mermaid-edge mermaid-edge--support" d="M250 430H360" marker-end="url(#d9s)"/><path class="mermaid-edge" d="M600 505V550" marker-end="url(#d9a)"/><path class="mermaid-edge mermaid-edge--support" d="M960 605H840" marker-end="url(#d9s)"/><path class="mermaid-edge" d="M600 660V705" marker-end="url(#d9a)"/><path class="mermaid-edge" d="M600 855V900" marker-end="url(#d9a)"/><path class="mermaid-edge" d="M600 990V1035" marker-end="url(#d9a)"/><path class="mermaid-edge mermaid-edge--success" d="M430 1110H250V1215" marker-end="url(#d9g)"/><path class="mermaid-edge mermaid-edge--error" d="M770 1110H950V1215" marker-end="url(#d9r)"/><path class="mermaid-edge" d="M600 1185V1280" marker-end="url(#d9a)"/><path class="mermaid-edge mermaid-edge--success" d="M430 1350H250V1470" marker-end="url(#d9g)"/><path class="mermaid-edge mermaid-edge--error" d="M770 1350H950V1470" marker-end="url(#d9r)"/><path class="mermaid-edge" d="M600 1420V1510" marker-end="url(#d9a)"/><path class="mermaid-edge" d="M600 1580C1100 1580 1100 780 840 780" marker-end="url(#d9a)"/>
+            <text class="mermaid-edge-caption" x="620" y="115">request + Policy</text><text class="mermaid-edge-caption" x="620" y="235">GET + path + controls</text><text class="mermaid-edge-caption" x="620" y="365">Policy被框架消费</text><text class="mermaid-edge-caption" x="620" y="540">method + kwargs + Policy</text><text class="mermaid-edge-caption" x="620" y="890">真实attempt Context</text><text class="mermaid-edge-caption" x="620" y="1025">Response或原异常</text><text class="mermaid-edge-caption" x="620" y="1270">retry candidate</text><text class="mermaid-edge-caption" x="620" y="1500">真实sleep后循环</text>
+            <g class="mermaid-node mermaid-node--start"><rect x="420" y="20" width="360" height="70" rx="35"/><text class="mermaid-node__title" x="600" y="50" text-anchor="middle">Test只调用一次</text><text class="mermaid-node__detail" x="600" y="75" text-anchor="middle">request_transient(request)</text></g>
+            <g class="mermaid-node mermaid-node--business"><rect x="390" y="125" width="420" height="80" rx="14"/><text class="mermaid-node__title" x="600" y="157" text-anchor="middle">Task → module Request</text><text class="mermaid-node__detail" x="600" y="184" text-anchor="middle">GET /v1/transient + RetryPolicy</text></g>
+            <g class="mermaid-node mermaid-node--business"><rect x="360" y="245" width="480" height="90" rx="14"/><text class="mermaid-node__title" x="600" y="278" text-anchor="middle">BaseRequest.request()</text><text class="mermaid-node__detail" x="600" y="306" text-anchor="middle">Operation → _send_with_retry()</text></g>
+            <g class="mermaid-node mermaid-node--support"><rect x="40" y="375" width="210" height="130" rx="14"/><text class="mermaid-node__title" x="145" y="410" text-anchor="middle">RetryPolicy</text><text class="mermaid-node__detail" x="145" y="440" text-anchor="middle">资格/故障/次数</text><text class="mermaid-node__detail" x="145" y="468" text-anchor="middle">等待/max_elapsed</text></g>
+            <g class="mermaid-node mermaid-node--runtime"><rect x="360" y="375" width="480" height="130" rx="14"/><text class="mermaid-node__title" x="600" y="410" text-anchor="middle">_send_with_retry()</text><text class="mermaid-node__detail" x="600" y="440" text-anchor="middle">first_context只规划，不发送</text><text class="mermaid-node__detail" x="600" y="468" text-anchor="middle">创建Group与context_factory</text></g>
+            <g class="mermaid-node mermaid-node--support"><rect x="960" y="550" width="200" height="110" rx="14"/><text class="mermaid-node__title" x="1060" y="585" text-anchor="middle">Request Group</text><text class="mermaid-node__detail" x="1060" y="615" text-anchor="middle">聚合Contexts</text><text class="mermaid-node__detail" x="1060" y="640" text-anchor="middle">累计真实等待</text></g>
+            <g class="mermaid-node mermaid-node--runtime"><rect x="360" y="550" width="480" height="110" rx="14"/><text class="mermaid-node__title" x="600" y="585" text-anchor="middle">RetryExecutor.execute()</text><text class="mermaid-node__detail" x="600" y="615" text-anchor="middle">资格、循环、分类、等待、终止</text></g>
+            <g class="mermaid-node mermaid-node--runtime"><rect x="360" y="705" width="480" height="150" rx="14"/><text class="mermaid-node__title" x="600" y="748" text-anchor="middle">方法资格计算</text><text class="mermaid-node__detail" x="600" y="780" text-anchor="middle">GET/HEAD有资格；POST需幂等资格</text><text class="mermaid-node__detail" x="600" y="812" text-anchor="middle">无资格：single_attempt，只发送attempt 1</text><text class="mermaid-node__detail" x="600" y="838" text-anchor="middle">有资格：允许后续故障分类与循环</text></g>
+            <g class="mermaid-node mermaid-node--context"><rect x="360" y="900" width="480" height="90" rx="14"/><text class="mermaid-node__title" x="600" y="932" text-anchor="middle">context_factory → _prepare_context</text><text class="mermaid-node__detail" x="600" y="960" text-anchor="middle">每轮新Context + shared records</text></g>
+            <g class="mermaid-node mermaid-node--business"><rect x="360" y="1035" width="480" height="100" rx="14"/><text class="mermaid-node__title" x="600" y="1068" text-anchor="middle">send_once = BaseRequest._send()</text><text class="mermaid-node__detail" x="600" y="1096" text-anchor="middle">Middleware → Session → 结果</text></g>
+            <g class="mermaid-node mermaid-node--success"><rect x="60" y="1215" width="380" height="90" rx="14"/><text class="mermaid-node__title" x="250" y="1247" text-anchor="middle">Response分类</text><text class="mermaid-node__detail" x="250" y="1275" text-anchor="middle">status ∈ retry_statuses?</text></g>
+            <g class="mermaid-node mermaid-node--error"><rect x="760" y="1215" width="380" height="90" rx="14"/><text class="mermaid-node__title" x="950" y="1247" text-anchor="middle">异常分类</text><text class="mermaid-node__detail" x="950" y="1275" text-anchor="middle">类型命中且非SSL?</text></g>
+            <g class="mermaid-decision"><polygon points="600,1280 840,1350 600,1420 360,1350"/><text class="mermaid-decision__title" x="600" y="1342" text-anchor="middle">记录候选后允许继续？</text><text class="mermaid-decision__detail" x="600" y="1370" text-anchor="middle">RetryAttemptRecord已追加；再判次数与双预算</text></g>
+            <g class="mermaid-node mermaid-node--success"><rect x="60" y="1470" width="380" height="100" rx="14"/><text class="mermaid-node__title" x="250" y="1502" text-anchor="middle">Response终点</text><text class="mermaid-node__detail" x="250" y="1530" text-anchor="middle">返回当前或最终Response</text><text class="mermaid-node__detail" x="250" y="1555" text-anchor="middle">max_elapsed否决也不制造异常</text></g>
+            <g class="mermaid-node mermaid-node--error"><rect x="760" y="1470" width="380" height="100" rx="14"/><text class="mermaid-node__title" x="950" y="1502" text-anchor="middle">异常终点</text><text class="mermaid-node__detail" x="950" y="1530" text-anchor="middle">通常重抛原异常</text><text class="mermaid-node__detail" x="950" y="1555" text-anchor="middle">deadline才产生专用异常</text></g>
+            <g class="mermaid-node mermaid-node--runtime"><rect x="360" y="1510" width="480" height="70" rx="14"/><text class="mermaid-node__title" x="600" y="1540" text-anchor="middle">预算允许 → 真实sleep → 下一attempt</text><text class="mermaid-node__detail" x="600" y="1565" text-anchor="middle">计划等待已记录；已执行等待单独累计</text></g>
+            <g class="mermaid-branch-label mermaid-branch-label--success" transform="translate(250 1170)"><rect x="-70" y="-18" width="140" height="32" rx="16"/><text x="0" y="5" text-anchor="middle">Response</text></g><g class="mermaid-branch-label mermaid-branch-label--error" transform="translate(950 1170)"><rect x="-70" y="-18" width="140" height="32" rx="16"/><text x="0" y="5" text-anchor="middle">原异常</text></g><g class="mermaid-branch-label mermaid-branch-label--success" transform="translate(250 1435)"><rect x="-84" y="-18" width="168" height="32" rx="16"/><text x="0" y="5" text-anchor="middle">返回Response</text></g><g class="mermaid-branch-label mermaid-branch-label--error" transform="translate(950 1435)"><rect x="-90" y="-18" width="180" height="32" rx="16"/><text x="0" y="5" text-anchor="middle">异常/deadline</text></g>
+          </svg></div>
+        </figure>
+        <div class="callout info"><strong>读图规则</strong>无Retry资格不等于“不发送”，而是仍创建attempt 1并只执行一次<code>send_once()</code>。只有方法有资格、结果成为故障候选、剩余次数和时间预算都允许时，才会真实sleep并进入下一attempt；候选记录先于预算否决，<code>first_context</code>永远不计attempt。</div>
       </section>
 
-      <section id="gate" data-section>
-        <p class="kicker">12 · Exit gate</p><h2>本课门禁：能做恢复决策，才进入 Polling 总 deadline</h2>
-        <div class="gate-list">
-          <label class="gate"><input type="checkbox" data-gate="four"><span>我能说出显式策略、方法资格、故障分类和预算四道闸门。</span></label>
-          <label class="gate"><input type="checkbox" data-gate="idempotency"><span>我能解释幂等键与 allow_post 的边界，并说明为何使用请求级 Header。</span></label>
-          <label class="gate"><input type="checkbox" data-gate="delay"><span>我能计算 fixed/exponential、Retry-After、jitter 与 max_elapsed。</span></label>
-          <label class="gate"><input type="checkbox" data-gate="outcome"><span>我能区分响应耗尽、异常耗尽、计算等待与实际等待。</span></label>
-          <label class="gate"><input type="checkbox" data-gate="practice"><span>我已运行离线分类用例，完成决策表与当日产出。</span></label>
-          <label class="gate"><input type="checkbox" data-gate="record" data-gate-requires-record="gate-evidence"><span>已填写可复查的成果位置或口头讲解记录。</span></label>
-        </div>
-        <div class="notes-grid"><label>成果位置或口头记录（必填）<textarea data-record="gate-evidence" placeholder="记录重试决策表/预算账本路径，或口头讲解时间、追问与订正"></textarea></label></div>
-        <p data-record-status="gate-evidence" style="color:var(--amber);font-size:13px">尚未记录；仅勾选复选框不能通过门禁。</p>
-        <div class="callout good"><strong>一句话验收：</strong>重试是受幂等性、故障类型和时间预算约束的显式恢复策略；它不能修复确定性缺陷，也不能改变最终业务事实。</div>
+      <section id="oral-recap" data-section>
+        <p class="kicker">13 · 完整复述</p><h2>不用回看源码，连续讲清一次503 → 200</h2>
+        <blockquote>测试只调用一次Task。示例Task把显式RetryPolicy交给模块Request，模块Request形成GET、相对path与Runtime元数据。BaseRequest消费Policy、创建Operation，并在<code>_send_with_retry()</code>中建立规划用first_context、一个Request Group和Context工厂。RetryExecutor先判断GET资格，再创建attempt 1的独立Context，由<code>_prepare_context()</code>写入索引、上限与共享记录，随后通过<code>BaseRequest._send()</code>完成Middleware和Session。503只是Response，命中状态集合后生成计划等待记录；max_elapsed和外层deadline均允许时才真实sleep并创建attempt 2的新Context。attempt 2返回200，不再形成下一次恢复候选，于是Group和Operation收口，原Response返回Assertions。若响应预算否决就返回当前Response；若异常预算否决通常重抛原异常；只有外层deadline不足才抛RetryDeadlineExceeded。</blockquote>
         <div class="footer"><div class="footer-links"><a class="button" href="第08天-资源捕获下载与原子落盘.html">← 上一课</a><a class="button" href="../接口测试框架六周学习课程.html">返回课程大纲</a><a class="button" href="第10天-轮询状态机与总截止时间.html">下一课：轮询状态机与总截止时间 →</a></div></div>
       </section>
+
+
     </article>
   </main>
   <script>
     (function(){
-      var prefix="api-case-course-v2-day09-";
-      var paths={
-        response:{title:"响应路径：503 被第二次 attempt 挽救",nodes:[["Attempt 1","新 Context，完整中间件"],["HTTP 503","命中 retry_statuses"],["Record","原因 + 计算等待"],["Budget + sleep","未越界才等待"],["Attempt 2","新 Context 再发送"],["HTTP 200","最终返回"]],fact:"一个 operation、一个 Request Group、两个 Context、一个促成重试的 Record。"},
-        exception:{title:"异常路径：最终仍抛出原 Timeout",nodes:[["Attempt 1","transport 抛 Timeout"],["Record","异常类型与原因"],["Budget + sleep","允许后继续"],["Attempt 2","新 Context"],["Timeout","达到 max_attempts"],["Raise","抛最后原异常"]],fact:"最终 attempt 不触发下一次，因此记录主要描述此前恢复决策；原异常不被通用包装替换。"},
-        ineligible:{title:"方法无资格：策略存在也只执行一次",nodes:[["POST","传 RetryPolicy"],["Method gate","无幂等键"],["Attempt 1","一个 Context"],["HTTP 503","状态资格无意义"],["Return","第一次 Response"]],fact:"Group 可保留 configured_max_attempts，但真实 attempt_count 是 1；配置上限不等于执行次数。"}
-      };
-      var player=document.getElementById("player");
-      function renderPath(key){var path=paths[key];var nodes=path.nodes.map(function(item){return '<div class="timeline-node"><b>'+item[0]+'</b><small>'+item[1]+'</small></div>';}).join('<div class="arrow">→</div>');player.innerHTML='<h3>'+path.title+'</h3><div class="timeline">'+nodes+'</div><div class="player-fact"><strong>执行事实：</strong>'+path.fact+'</div>';}
-      document.querySelectorAll(".tab").forEach(function(button){button.addEventListener("click",function(){document.querySelectorAll(".tab").forEach(function(item){item.classList.remove("active");});button.classList.add("active");renderPath(button.dataset.path);});});renderPath("response");
-      function num(id,fallback){var value=Number(document.getElementById(id).value);return Number.isFinite(value)?value:fallback;}function fmt(value){return Number(value.toFixed(4)).toString();}
-      function calculate(){var attempt=Math.max(1,Math.floor(num("attempt",1)));var base=Math.max(0,num("base-delay",0));var max=Math.max(0,num("max-delay",0));var mode=document.getElementById("backoff").value;var text=document.getElementById("retry-after").value.trim();var retry=text===""?NaN:Number(text);var valid=Number.isFinite(retry)&&retry>=0;var jitter=document.getElementById("jitter").checked;var raw,source,trace;if(valid){raw=retry;source="来源：有效 Retry-After，禁用 jitter";trace="Retry-After "+fmt(raw)+" 秒；受 max_delay "+fmt(max)+" 秒限制";}else{raw=mode==="fixed"?base:base*Math.pow(2,Math.max(0,attempt-1));source="来源："+(mode==="fixed"?"固定退避":"指数退避")+(jitter?"，应用 jitter":"，无 jitter");trace=mode==="fixed"?"固定值 "+fmt(base):fmt(base)+" × 2^("+attempt+" - 1) = "+fmt(raw);trace+="；上限 "+fmt(max);}var capped=Math.min(max,raw);var useJitter=!valid&&jitter&&capped>0;document.getElementById("delay-value").textContent=useJitter?"0 ～ "+fmt(capped)+" 秒":fmt(capped)+" 秒";document.getElementById("delay-source").textContent=source;document.getElementById("delay-trace").textContent=trace+(useJitter?"；区间 [0, "+fmt(capped)+"]":"；最终 "+fmt(capped)+" 秒");}
-      ["attempt","backoff","base-delay","max-delay","retry-after","jitter"].forEach(function(id){document.getElementById(id).addEventListener("input",calculate);document.getElementById(id).addEventListener("change",calculate);});calculate();
-      document.getElementById("check-decisions").addEventListener("click",function(){var rows=Array.from(document.querySelectorAll(".decision-row"));var score=0;rows.forEach(function(row){var ok=row.querySelector("select").value===row.dataset.answer;var result=row.querySelector(".answer");result.textContent=ok?"✓":"✗";result.style.color=ok?"var(--green)":"var(--red)";if(ok)score++;});var feedback=document.getElementById("decision-feedback");feedback.textContent=score===rows.length?"7/7：决策正确。你先判断资格，再判断故障。":score+"/7：请按“策略 → 方法 → 故障 → 次数/预算”重查。";feedback.style.color=score===rows.length?"var(--green)":"var(--amber)";});
-      var notes=Array.from(document.querySelectorAll("[data-note]"));notes.forEach(function(note){note.value=localStorage.getItem(prefix+"note-"+note.dataset.note)||"";note.addEventListener("input",function(){localStorage.setItem(prefix+"note-"+note.dataset.note,note.value);});});
-      var gates=Array.from(document.querySelectorAll("[data-gate]"));function updateGate(){var done=gates.filter(function(item){return item.checked;}).length;document.getElementById("gate-text").textContent=done+"/"+gates.length;document.getElementById("gate-value").style.width=(done/gates.length*100)+"%";}gates.forEach(function(gate){gate.checked=localStorage.getItem(prefix+"gate-"+gate.dataset.gate)==="1";gate.addEventListener("change",function(){localStorage.setItem(prefix+"gate-"+gate.dataset.gate,gate.checked?"1":"0");updateGate();});});updateGate();
-      document.getElementById("submit-quiz").addEventListener("click",function(){var cards=Array.from(document.querySelectorAll(".quiz"));var score=0;cards.forEach(function(card){var selected=card.querySelector("input:checked");var ok=selected&&selected.value===card.dataset.answer;card.classList.toggle("correct",Boolean(ok));card.classList.toggle("wrong",!ok);if(ok)score++;});var output=document.getElementById("quiz-summary");output.textContent=score>=5?score+"/6：达标。请完成离线实践和门禁。":score+"/6：未达标。回看四道闸门、结果与证据。";output.style.background=score>=5?"var(--green-soft)":"var(--amber-soft)";output.style.color=score>=5?"var(--green)":"var(--amber)";localStorage.setItem(prefix+"quiz",String(score));});
-      document.getElementById("reset").addEventListener("click",function(){if(!confirm("确认清除第9课的笔记、门禁与自测记录？"))return;Object.keys(localStorage).filter(function(key){return key.startsWith(prefix);}).forEach(function(key){localStorage.removeItem(key);});notes.forEach(function(note){note.value="";});gates.forEach(function(gate){gate.checked=false;});document.querySelectorAll(".quiz").forEach(function(card){card.classList.remove("correct","wrong");});var summary=document.getElementById("quiz-summary");summary.textContent="尚未提交。";summary.removeAttribute("style");document.querySelectorAll(".decision-row").forEach(function(row){row.querySelector("select").value="";row.querySelector(".answer").textContent="";});document.getElementById("decision-feedback").textContent="";updateGate();});
-      document.getElementById("menu").addEventListener("click",function(){document.body.classList.toggle("nav-open");});document.getElementById("nav-list").addEventListener("click",function(){document.body.classList.remove("nav-open");});
-      var links=Array.from(document.querySelectorAll(".nav-list a"));var map=new Map(links.map(function(link){return[link.getAttribute("href").slice(1),link];}));var observer=new IntersectionObserver(function(entries){var visible=entries.filter(function(entry){return entry.isIntersecting;}).sort(function(a,b){return a.boundingClientRect.top-b.boundingClientRect.top;});if(!visible.length)return;links.forEach(function(link){link.classList.remove("active");});var current=map.get(visible[0].target.id);if(current)current.classList.add("active");},{rootMargin:"-8% 0px -78% 0px",threshold:[0,1]});document.querySelectorAll("[data-section]").forEach(function(section){observer.observe(section);});
+      var menu=document.getElementById("menu");if(menu){menu.addEventListener("click",function(){document.body.classList.toggle("nav-open");});}
+      var nav=document.getElementById("nav-list");if(nav){nav.addEventListener("click",function(){document.body.classList.remove("nav-open");});}
+      var links=Array.from(document.querySelectorAll(".nav-list a"));var map=new Map(links.map(function(link){return[link.getAttribute("href").slice(1),link];}));
+      var observer=new IntersectionObserver(function(entries){var visible=entries.filter(function(entry){return entry.isIntersecting;}).sort(function(a,b){return a.boundingClientRect.top-b.boundingClientRect.top;});if(!visible.length)return;links.forEach(function(link){link.classList.remove("active");});var current=map.get(visible[0].target.id);if(current)current.classList.add("active");},{rootMargin:"-8% 0px -78% 0px",threshold:[0,1]});document.querySelectorAll("[data-section]").forEach(function(section){observer.observe(section);});
       function progress(){var max=document.documentElement.scrollHeight-innerHeight;document.getElementById("page-progress").style.width=(max>0?scrollY/max*100:0)+"%";}addEventListener("scroll",progress,{passive:true});progress();
     })();
   </script>

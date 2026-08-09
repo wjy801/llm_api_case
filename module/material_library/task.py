@@ -21,6 +21,7 @@ DEFAULT_VOLC_LIVENESS_IMAGE_URL = "https://ark-project.tos-cn-beijing.volces.com
 DEFAULT_VOLC_SAMPLE_IMAGE_URL = "https://ark-project.tos-cn-beijing.volces.com/doc_image/r2v_tea_pic1.jpg"
 DEFAULT_VOLC_FAST_VIDEO_MODEL = "doubao-seedance-2-0-fast-260128"
 DEFAULT_VOLC_MINI_VIDEO_MODEL = "doubao-seedance-2-0-mini-260615"
+DEFAULT_VOLC_SEEDANCE_2_5_VIDEO_MODEL = "doubao-seedance-2-0-mini-260615"
 VOLC_ASSET_POLL_INTERVAL_SECONDS = 3
 VOLC_ASSET_POLL_TIMEOUT_SECONDS = 180
 VOLC_VISUAL_VALIDATE_POLL_INTERVAL_SECONDS = 3

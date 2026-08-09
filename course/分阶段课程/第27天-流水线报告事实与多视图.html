@@ -1,10 +1,234 @@
 <!doctype html><html lang='zh-CN'>
-<head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>第27天｜流水线报告事实与多视图</title><link rel='stylesheet' href='六周课程页.css'></head>
+<head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>第27天｜流水线报告事实与多视图</title><link rel='stylesheet' href="六周课程页.css"></head>
 <body data-day='27'><aside class='side' id='side'><div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第27天 · Pipeline Reporting</h2><p>第6周 / Facts、Report与Views</p></div><nav class='nav'>
-<a href='#question'><span class='num'>01</span><span>问题与边界</span></a><a href='#entry'><span class='num'>02</span><span>源码入口</span></a><a href='#chain'><span class='num'>03</span><span>生成链</span></a><a href='#sources'><span class='num'>04</span><span>事实来源</span></a><a href='#states'><span class='num'>05</span><span>状态语义</span></a><a href='#report'><span class='num'>06</span><span>结论对象</span></a><a href='#views'><span class='num'>07</span><span>多视图</span></a><a href='#evidence'><span class='num'>08</span><span>测试证据</span></a><a href='#practice'><span class='num'>09</span><span>离线实践</span></a><a href='#output'><span class='num'>10</span><span>当日产出</span></a><a href='#design'><span class='num'>11</span><span>设计边界</span></a><a href='#quiz'><span class='num'>12</span><span>知识自测</span></a><a href='#gate'><span class='num'>13</span><span>退出门禁</span></a>
+<a href='#code-first-walkthrough'><span class='num'>CODE</span><span>代码先行</span></a><a href='#question'><span class='num'>01</span><span>问题与边界</span></a><a href='#entry'><span class='num'>02</span><span>源码入口</span></a><a href='#chain'><span class='num'>03</span><span>生成链</span></a><a href='#sources'><span class='num'>04</span><span>事实来源</span></a><a href='#states'><span class='num'>05</span><span>状态语义</span></a><a href='#report'><span class='num'>06</span><span>结论对象</span></a><a href='#views'><span class='num'>07</span><span>多视图</span></a><a href='#evidence'><span class='num'>08</span><span>测试证据</span></a><a href='#practice'><span class='num'>09</span><span>离线实践</span></a><a href='#output'><span class='num'>10</span><span>当日产出</span></a><a href='#design'><span class='num'>11</span><span>设计边界</span></a><a href='#lesson-flow-summary'><span class='num'>FLOW</span><span>流转总图</span></a><a href='#quiz'><span class='num'>12</span><span>知识自测</span></a><a href='#gate'><span class='num'>13</span><span>退出门禁</span></a>
 </nav><div class='meter'><div class='meter-row'><span>门禁进度</span><span id='gate-text'>0/5</span></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div></aside>
 <main class='main'><div class='topbar'><div><button class='menu' id='menu'>本课目录</button> 接口测试框架源码架构与证据链六周课程 · 第27天 · 建议学习 2～2.5 小时</div><div class='toolbar'><a class='button' href='../接口测试框架六周学习课程.html'>课程大纲</a><button class='button' id='reset'>重置本课记录</button></div></div><article class='lesson'>
 <header class='hero'><p class='eyebrow'>WEEK 6 · DAY 27</p><h1>流水线报告事实与多视图</h1><p class='hero-lead'>Reporting不重新执行测试。它读取阶段、Runner、JUnit、收集清单与Quality事实，构造一个PipelineReport，再从同一对象生成Markdown、机器JSON和邮件视图。</p><div class='pills'><span class='pill'>Source</span><span class='pill'>PipelineReport</span><span class='pill'>Markdown</span><span class='pill'>JSON</span><span class='pill'>Email</span></div><div class='outcome'><strong>当日产出：</strong>来源优先级表、一个Report到多视图关系图，以及供Day29复用的机器产物矩阵。</div></header>
+<section id="code-first-walkthrough" data-section><p class="section-kicker">CODE · 代码先行精讲</p><h2>先证明四种视图共享一个PipelineReport，再追来源优先级</h2><p class="section-lead">Reporting的约束不是模板，而是“唯一结论对象”。阶段状态、Runner退出事实、JUnit统计、Quality/Metrics/Flaky各自有所有者；Reporting只能读取、排序优先级并投影为多种视图。</p>
+<div class="guided-start"><div class="guided-start__header"><h3>本节唯一主线：Markdown、JSON与Email共享同一结论</h3><p><strong>用例文件：</strong><code>tests/quality/test_pipeline_reporting.py</code>；<strong>测试函数：</strong><code>test_markdown_machine_summary_and_email_share_one_report</code>；<strong>pytest nodeid：</strong><code>tests/quality/test_pipeline_reporting.py::test_markdown_machine_summary_and_email_share_one_report</code>。</p></div><div class="guided-command"><strong>先运行这个真实Quality测试</strong><code>python -m pytest -q tests/quality/test_pipeline_reporting.py::test_markdown_machine_summary_and_email_share_one_report</code></div><div class="guided-rule"><strong>阅读规则</strong>先定位<code>report = build_pipeline_report(...)</code>，再看所有Renderer只消费report；任何视图自行重读JUnit都意味着规则复制。</div><div class="guided-chain" aria-label="代码阅读顺序"><span>共享视图测试</span><b>→</b><span>generate_pipeline_summary</span><b>→</b><span>load_pipeline_sources</span><b>→</b><span>load_quality_sources</span><b>→</b><span>build_pipeline_report</span><b>→</b><span>Renderers</span></div></div>
+
+<article class="guided-step"><div class="guided-step__title"><span class="guided-step__number">1</span><div><h3>测试同时读取机器视图和邮件视图核对同一Report</h3><p>用例只写一个JUnit输入，随后要求返回对象、JSON、主题和HTML表达同一测试数量与结论。</p></div></div><div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">tests/quality/test_pipeline_reporting.py::test_markdown_machine_summary_and_email_share_one_report · 完整测试函数</span><pre><code>def test_markdown_machine_summary_and_email_share_one_report(tmp_path):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    _write_junit(
+        reports / "unit-tests.xml",
+        [("tests.test_demo", "test_ok", "passed", None)],
+    )
+
+    report = generate_pipeline_summary(
+        tmp_path,
+        environment=_environment(RUN_FRAMEWORK_TESTS="true"),
+        machine_output_path="reports/pipeline-summary.json",
+        email_subject_path="reports/pipeline-email-subject.txt",
+        email_html_path="reports/pipeline-email.html",
+    )
+
+    assert report is not None
+    payload = json.loads(
+        (reports / "pipeline-summary.json").read_text(encoding="utf-8")
+    )
+    assert payload["conclusion"] == report.conclusion.value
+    assert payload["unit_tests"]["total"] == report.unit_tests.total == 1
+    assert "0 失败 / 1 项" in (
+        reports / "pipeline-email-subject.txt"
+    ).read_text(encoding="utf-8")
+    assert "1 总计 / 1 通过 / 0 失败 / 0 跳过" in (
+        reports / "pipeline-email.html"
+    ).read_text(encoding="utf-8")</code></pre></div><div class="guided-explanation"><h4>合同与证据</h4><div class="guided-point"><strong>输入事实</strong><p>唯一事实源是JUnit文件与环境开关；测试未让邮件Renderer自行读取XML。</p></div><div class="guided-point"><strong>验证</strong><p>返回的<code>PipelineReport</code>与机器JSON结论、测试总数一致，邮件只验证同一统计的表现形式。</p></div><div class="guided-point success"><strong>产物</strong><p>Markdown、JSON、邮件主题和HTML属于同一次生成调用。</p></div><div class="guided-point warning"><strong>失败边界</strong><p>多文件同时存在不自动证明逐字段一致；该测试冻结关键共享字段和同一对象生成路径。</p></div></div></div></article>
+
+<article class="guided-step"><div class="guided-step__title"><span class="guided-step__number">2</span><div><h3><code>generate_pipeline_summary()</code>拥有一次生成事务</h3><p>函数先读取配置和全部来源，构造唯一Report，然后从该对象写四类输出。</p></div></div><div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">pipeline_reporting/service.py::generate_pipeline_summary · 连续选段</span><pre><code>root = Path(workspace)
+config = load_pipeline_report_config(
+    environment,
+    dotenv_path=dotenv_path or root / ".env",
+)
+target = root / output_path if not Path(output_path).is_absolute() else Path(output_path)
+if not config.enabled:
+    target.unlink(missing_ok=True)
+    for optional_path in (
+        machine_output_path,
+        email_subject_path,
+        email_html_path,
+    ):
+        if optional_path is not None:
+            _resolve_output_path(root, optional_path).unlink(missing_ok=True)
+    return None
+context = context_from_environment(
+    environment,
+    quality_enabled=config.quality_enabled,
+)
+report = build_pipeline_report(
+    context,
+    load_pipeline_sources(
+        root,
+        include_quality=(
+            context.real_smoke_enabled and context.quality_enabled
+        ),
+    ),
+)
+_write_text_atomic(target, render_pipeline_summary(report))
+if machine_output_path is not None:
+    _write_text_atomic(
+        _resolve_output_path(root, machine_output_path),
+        json.dumps(
+            _jsonable(report),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+    )</code></pre></div><div class="guided-explanation"><h4>服务所有权</h4><div class="guided-point"><strong>输入验证</strong><p>配置关闭时删除陈旧视图并返回None，避免历史报告冒充本轮产物。</p></div><div class="guided-point"><strong>状态变化</strong><p>一次调用只构造一个<code>PipelineReport</code>；后续写文件不再改变结论。</p></div><div class="guided-point success"><strong>产物所有权</strong><p>Service拥有Markdown、机器JSON、邮件主题和HTML的原子写入路径。</p></div><div class="guided-point warning"><strong>失败边界</strong><p>Renderer失败可以由Jenkins兜底，但Reporting不得修改原始stage、JUnit、Quality或Metrics事实。</p></div></div></div></article>
+<article class="guided-step"><div class="guided-step__title"><span class="guided-step__number">3</span><div><h3>Source Loader按事实所有者读取，并把缺失转换成显式状态</h3><p>阶段JSON、Runner execution、JUnit、collect文本和Quality目录分别加载，warnings集中归并。</p></div></div><div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">pipeline_reporting/sources.py::load_pipeline_sources · 完整函数</span><pre><code>def load_pipeline_sources(
+    workspace: str | Path,
+    *,
+    include_quality: bool = True,
+) -&gt; LoadedPipelineSources:
+    root = Path(workspace)
+    reports = root / "reports"
+    warnings: list[str] = []
+
+    try:
+        stage_statuses = load_stage_statuses(reports / "pipeline-stage-status.json")
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        stage_statuses = {}
+        warnings.append(f"阶段状态不可用：{type(error).__name__}")
+
+    unit_tests = load_junit_summary((reports / "unit-tests.xml",), warnings=warnings)
+    smoke_paths = tuple(sorted(reports.glob("smoke-tests*.xml")))
+    smoke_tests = load_junit_summary(smoke_paths, warnings=warnings)
+    smoke_collect = load_collect_summary(reports / "smoke-collect.txt", warnings=warnings)
+    execution = load_execution_summary(
+        reports / "execution-result.json", warnings=warnings
+    )
+
+    quality_sources = LoadedQualitySources()
+    if include_quality:
+        try:
+            from pipeline_reporting.quality_sources import load_quality_sources
+
+            quality_sources = load_quality_sources(
+                reports / "quality",
+                warnings=warnings,
+            )
+        except Exception as error:
+            warnings.append(f"质量观测数据源不可用：{type(error).__name__}")
+
+    return LoadedPipelineSources(
+        stage_statuses=stage_statuses,
+        unit_tests=unit_tests,
+        smoke_tests=smoke_tests,
+        smoke_collect=smoke_collect,
+        execution=execution,
+        quality_facts_available=quality_sources.facts_available,
+        quality_run_id=quality_sources.run_id,
+        request_health=quality_sources.request_health,
+        retry_health=quality_sources.retry_health,
+        interface_timings=quality_sources.interface_timings,
+        flaky=quality_sources.flaky,
+        warnings=tuple(warnings),
+    )</code></pre><span class="guided-source__location">pipeline_reporting/quality_sources.py::load_quality_sources · 完整函数</span><pre><code>def load_quality_sources(
+    quality_dir: str | Path,
+    *,
+    warnings: list[str],
+) -&gt; LoadedQualitySources:
+    quality = Path(quality_dir)
+    run_id, manifest, facts_available = _load_quality_facts(quality, warnings)
+    request_health = RequestHealth()
+    if run_id and manifest:
+        request_path = quality / "merged" / "request-metrics.jsonl"
+        expected_hash = _mapping(manifest.get("output_hashes")).get(
+            "request-metrics"
+        )
+        if _artifact_hash_matches(
+            request_path,
+            expected_hash,
+            warnings,
+            "请求指标",
+        ):
+            request_health = load_request_health(
+                request_path,
+                run_id=run_id,
+                warnings=warnings,
+            )
+
+    metrics_payload = (
+        _load_metrics_payload(quality, run_id, warnings) if run_id else None
+    )
+    retry_health = (
+        _retry_health(metrics_payload) if metrics_payload else RetryHealth()
+    )
+    timings = _interface_timings(metrics_payload) if metrics_payload else ()
+
+    flaky_payload = (
+        _load_flaky_payload(quality, run_id, warnings) if run_id else None
+    )
+    flaky = _flaky_summary(flaky_payload) if flaky_payload else FlakySummary()</code></pre></div><div class="guided-explanation"><h4>来源优先级</h4><div class="guided-point"><strong>输入事实</strong><p>stage status表示编排选择，execution-result表示Runner执行，JUnit表示测试统计，Quality目录表示观测事实。</p></div><div class="guided-point"><strong>验证</strong><p>Quality、Metrics、Flaky都先走Manifest/Hash准入；不可用分区返回空模型并记录warning。</p></div><div class="guided-point success"><strong>状态表达</strong><p>缺文件不自动等于0；Builder据开关、stage status和来源可用性区分NOT_RUN、NO_DATA与FAILED。</p></div><div class="guided-point warning"><strong>失败边界</strong><p>Source Loader不能根据Markdown或文件名猜成功，也不能让陈旧Quality覆盖本轮未执行状态。</p></div></div></div></article>
+
+<article class="guided-step"><div class="guided-step__title"><span class="guided-step__number">4</span><div><h3>Builder集中结论，Renderer只做无副作用投影</h3><p><code>build_pipeline_report()</code>生成阶段结果、总评和建议；Markdown/JSON/Email都消费同一不可变对象。</p></div></div><div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">pipeline_reporting/builder.py::build_pipeline_report · 完整函数</span><pre><code>def build_pipeline_report(
+    context: PipelineContext,
+    sources: LoadedPipelineSources,
+) -&gt; PipelineReport:
+    framework = _test_stage(
+        "框架单测",
+        "framework_tests",
+        context.framework_tests_enabled,
+        sources.unit_tests,
+        sources,
+    )
+    collect = _collect_stage(context, sources)
+    real_smoke = _test_stage(
+        "接口测试",
+        "real_smoke",
+        context.real_smoke_enabled,
+        sources.smoke_tests,
+        sources,
+    )
+    quality = _quality_stage(context, sources, real_smoke.status)
+    stages = (framework, collect, real_smoke, quality)
+    conclusion = _conclusion(context, sources, stages)
+    actions = _actions(context, sources, stages)
+    return PipelineReport(
+        context=context,
+        conclusion=conclusion,
+        conclusion_text=_conclusion_text(conclusion, context, sources, stages),
+        stages=stages,
+        unit_tests=sources.unit_tests,
+        smoke_tests=sources.smoke_tests,
+        smoke_collect=sources.smoke_collect,
+        execution=sources.execution,
+        request_health=sources.request_health,
+        retry_health=sources.retry_health,
+        interface_timings=sources.interface_timings,
+        flaky=sources.flaky,
+        actions=actions,
+        warnings=sources.warnings,
+    )</code></pre><span class="guided-source__location">pipeline_reporting/renderer.py::render_pipeline_summary · 连续选段</span><pre><code>lines.extend(_test_section("框架单测", report.unit_tests, context.framework_tests_enabled))
+lines.extend(_collect_section(report))
+lines.extend(_test_section("接口测试", report.smoke_tests, context.real_smoke_enabled))
+lines.extend(_case_details(report))
+if context.real_smoke_enabled and context.quality_enabled:
+    lines.extend(_request_section(report))
+    lines.extend(_retry_section(report))
+    lines.extend(_timing_section(report))
+    lines.extend(_flaky_section(report))
+lines.extend(
+    [
+        "## 建议动作",
+        "",
+        *(f"- {_md(item)}" for item in report.actions),
+        "",
+    ]
+)
+if report.warnings:
+    lines.extend(
+        [
+            "## 报告生成提示",
+            "",
+            *(f"- {_md(item)}" for item in report.warnings[:10]),
+            "",
+        ]
+    )</code></pre></div><div class="guided-explanation"><h4>结论与视图</h4><div class="guided-point"><strong>状态变化</strong><p>Builder是唯一把source facts转换成StageResult、PipelineConclusion和actions的函数。</p></div><div class="guided-point"><strong>数据合流</strong><p>Runner/JUnit与Metrics/Flaky在<code>PipelineReport</code>中汇合，但字段仍保留各自来源语义。</p></div><div class="guided-point success"><strong>产物所有权</strong><p>Renderer只读取Report生成文本，无权回写source或改变conclusion。</p></div><div class="guided-point warning"><strong>失败边界</strong><p>不同视图若出现不一致，应修复共享Report或Renderer，不应新增第二套判断规则。</p></div></div></div></article>
+</section>
 <section id='question' data-section><p class='kicker'>01 · Question</p><h2>报告只能解释事实，不能发明事实</h2><p class='lead'>阶段状态、pytest退出码、JUnit统计、Quality指标各自回答不同问题。若Renderer各自读取文件，就可能产生多个互相矛盾的结论；项目因此先集中构建不可变Report对象。</p><div class='callout warn'><strong>边界：</strong>本课只运行Reporting帮助与专项测试，不触发Smoke，不把历史reports当作本轮证据。</div></section>
 <section id='entry' data-section><p class='kicker'>02 · Source entry</p><h2>五个模块完成事实到视图的单向转换</h2><div class='grid2'><div class='card'><h3>合同</h3><p><code>pipeline_reporting/contracts.py</code>定义状态、Source摘要与PipelineReport。</p></div><div class='card'><h3>来源适配</h3><p><code>sources.py</code>和<code>quality_sources.py</code>读取机器事实。</p></div><div class='card'><h3>结论构建</h3><p><code>builder.py</code>计算StageResult、Conclusion和Actions。</p></div><div class='card'><h3>服务与视图</h3><p><code>service.py</code>协调，<code>renderer.py</code>生成Markdown。</p></div></div></section>
 <section id='chain' data-section><p class='kicker'>03 · Call chain</p><h2>CLI只负责调度一次纯生成流程</h2><div class='flow'><span>环境与开关</span><i>→</i><span>PipelineContext</span><i>→</i><span>load_pipeline_sources</span><i>→</i><span>build_pipeline_report</span><i>→</i><span>同一Report</span><i>→</i><span>Markdown/JSON/邮件</span></div><p><code>python -m pipeline_reporting generate</code>通过<code>service.generate_pipeline_summary</code>完成读取、构建和原子写入。</p></section>
@@ -22,6 +246,14 @@
   tests/quality/test_pipeline_reporting_dependency_boundaries.py -q</code></pre></div><p>测试使用临时workspace与固定夹具，不读取当前reports作为学习结论。</p></section>
 <section id='output' data-section><p class='kicker'>10 · Day29 input</p><h2>提交Day29复用的机器产物矩阵</h2><div class='notes'><label>来源优先级<textarea data-note='priority' placeholder='阶段状态、Runner、JUnit、collect、Quality的判定顺序'></textarea></label><label>Day29机器产物矩阵<textarea data-note='day29-artifact-matrix' placeholder='产物 → 生产者 → 身份字段 → 状态 → 消费者 → 人/机器视图'></textarea></label><label>多视图关系<textarea data-note='views' placeholder='PipelineReport → Markdown / JSON / Email'></textarea></label><label>降级语义<textarea data-note='degraded' placeholder='NOT_RUN、BLOCKED、NO_DATA和warning分别何时出现'></textarea></label></div><div class='callout good'><strong>交接到Day29：</strong>沿离线场景追踪时，用矩阵定位每份机器产物的生产者、消费者和不可替代职责。</div></section>
 <section id='design' data-section><p class='kicker'>11 · Design choice</p><h2>设计选择与适用边界</h2><div class='table-wrap'><table><tbody><tr><th>现方案</th><td>先按来源优先级构造唯一PipelineReport，再从同一对象渲染Markdown、机器JSON和邮件视图。</td></tr><tr><th>替代方案</th><td>每个视图独立读取JUnit、阶段文件和Quality产物，并各自判断状态与结论。</td></tr><tr><th>选择理由</th><td>结论集中在一个领域对象中，可避免人读、机器读和通知渠道因读取时机或规则复制而漂移。</td></tr><tr><th>不适用条件</th><td>超大规模交互式分析、按需切片或持续流式报表需要查询层与投影存储，不能把全部明细塞入单个内存Report。</td></tr></tbody></table></div></section>
+<section id="lesson-flow-summary" data-section><p class="section-kicker">FLOW · 课后流转总图</p><h2>阶段、Runner、JUnit、Metrics与Flaky如何汇成一个PipelineReport</h2><figure class="lesson-flow-map"><div class="flow-stage-list">
+<article class="flow-stage"><div class="flow-stage__index">1</div><div class="flow-stage__function"><h3>Jenkins与Runner生产事实</h3><p>Jenkins写stage status；Runner写execution-result；pytest写JUnit与Allure。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>执行Artifact</h3><p>阶段是否选择、原始退出码、nodeid和测试统计分别保存在其所有者产物中。</p></div></article>
+<article class="flow-stage"><div class="flow-stage__index">2</div><div class="flow-stage__function"><h3>Quality流水线生产事实</h3><p>P0/Semantic/Metrics/Flaky各自提交Manifest、Hash、状态和领域Artifact。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>质量Artifact</h3><p>Request health、retry/timing Metrics与Flaky变更保持独立来源和准入状态。</p></div></article>
+<article class="flow-stage"><div class="flow-stage__index">3</div><div class="flow-stage__function"><h3><code>load_pipeline_sources()</code></h3><p>读取stage、Runner、JUnit、collect，并按开关决定是否加载Quality。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3><code>LoadedPipelineSources</code></h3><p>缺失和错误进入warnings，不被填成零；来源身份保持可追溯。</p></div></article>
+<article class="flow-stage"><div class="flow-stage__index">4</div><div class="flow-stage__function"><h3><code>load_quality_sources()</code></h3><p>验证Quality、Metrics、Flaky Manifest/Hash并构造各分区摘要。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>可信质量分区</h3><p>不可信分区单独降级，不能污染Runner/JUnit事实或其他质量分区。</p></div></article>
+<article class="flow-stage"><div class="flow-stage__index">5</div><div class="flow-stage__function"><h3><code>build_pipeline_report()</code></h3><p>按来源优先级生成StageResult、总评、建议动作和warnings。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>唯一<code>PipelineReport</code></h3><p>Artifact、Manifest、Metrics、Flaky和Pipeline执行事实第一次在一个只读对象中汇合。</p></div></article>
+<article class="flow-stage"><div class="flow-stage__index">6</div><div class="flow-stage__function"><h3>Service与Renderers</h3><p>同一Report原子写Markdown、JSON、邮件主题和HTML。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>多视图同源</h3><p>视图可以格式不同，但结论、阶段和计数必须源自同一Report；Jenkins只发布和通知。</p></div></article>
+</div><div class="flow-fact-footer"><strong>最终所有权</strong><p>事实由Jenkins、Runner、pytest和Quality各自产生；Reporting拥有来源优先级、PipelineReport和视图；Renderer不拥有事实重算。</p></div></figure></section>
 <section id='quiz' data-section><p class='kicker'>12 · Knowledge check</p><h2>知识自测</h2><div class='quiz' data-answer='b'><strong>1. Reporting会重新执行测试吗？</strong><label><input type='radio' name='q1' value='a'>会</label><label><input type='radio' name='q1' value='b'>不会，只消费事实</label><label><input type='radio' name='q1' value='c'>只执行失败用例</label></div><div class='quiz' data-answer='c'><strong>2. 已选择阶段但机器产物不可用是什么状态？</strong><label><input type='radio' name='q2' value='a'>NOT_RUN</label><label><input type='radio' name='q2' value='b'>PASSED</label><label><input type='radio' name='q2' value='c'>NO_DATA</label></div><div class='quiz' data-answer='a'><strong>3. 接口阶段execution final_exit_code非零时？</strong><label><input type='radio' name='q3' value='a'>可判FAILED</label><label><input type='radio' name='q3' value='b'>忽略</label><label><input type='radio' name='q3' value='c'>判NOT_RUN</label></div><div class='quiz' data-answer='b'><strong>4. 三种视图为何应共享一个Report？</strong><label><input type='radio' name='q4' value='a'>节省CSS</label><label><input type='radio' name='q4' value='b'>保证结论一致</label><label><input type='radio' name='q4' value='c'>绕过Manifest</label></div><div class='quiz' data-answer='c'><strong>5. Quality何时加载？</strong><label><input type='radio' name='q5' value='a'>目录存在就加载</label><label><input type='radio' name='q5' value='b'>永远加载</label><label><input type='radio' name='q5' value='c'>接口阶段与Quality都开启时</label></div><button class='primary' id='submit-quiz'>提交答案</button><div class='verdict' id='quiz-summary'>建议达到4/5再进入门禁。</div></section>
 <section id='gate' data-section><p class='kicker'>13 · Exit gate</p><h2>本课门禁</h2><div class='gate-list'><label class='gate'><input type='checkbox' data-gate='sources'><span>已完成来源优先级表。</span></label><label class='gate'><input type='checkbox' data-gate='states'><span>能区分NOT_RUN、BLOCKED与NO_DATA。</span></label><label class='gate'><input type='checkbox' data-gate='report'><span>能解释PipelineReport字段与结论。</span></label><label class='gate'><input type='checkbox' data-gate='views'><span>能说明三种视图共享同一对象。</span></label><label class='gate'><input type='checkbox' data-gate='safe'><span>实践未触发Smoke或使用历史reports。</span></label></div><div class='notes'><label>成果位置<textarea data-note='gate-output-location' placeholder='记录Day29机器产物矩阵或Reporting测试结果的路径'></textarea></label><label>口头记录<textarea data-note='gate-oral-record' placeholder='说明为何三个视图必须来自同一PipelineReport'></textarea></label></div><div class='callout good'><strong>验收句：</strong>我能从机器事实追踪到唯一PipelineReport，并解释Markdown、JSON和邮件为何必须保持同一结论。</div><div class='footer'><div class='footer-links'><a class='button' href='第26天-Artifact读取Hash与Manifest信任.html'>← 上一课</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a><a class='button' href='../接口测试框架六周学习课程.html#section-4'>术语表</a><a class='button' href='第28天-持续集成编排与发布边界.html'>下一课 →</a></div></div></section>
-</article></main><script src='六周课程页.js'></script></body></html>
+</article></main><script src="六周课程页.js"></script></body></html>

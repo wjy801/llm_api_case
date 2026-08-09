@@ -1,27 +1,485 @@
 <!doctype html>
-<html lang='zh-CN'>
-<head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta name='description' content='接口测试框架源码架构与证据链六周课程第08天：资源捕获、下载关闭与原子落盘'><title>第08天｜资源捕获下载与原子落盘</title><link rel='stylesheet' href='六周课程页.css'></head>
-<body data-day='08'>
-  <aside class='side' id='side'><div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第08天 · 下载资源闭环</h2><p>第2周 / Capture与原子落盘</p></div><nav class='nav'>
-    <a href='#question'><span class='num'>01</span><span>本课问题与边界</span></a><a href='#entry'><span class='num'>02</span><span>源码入口</span></a><a href='#chain'><span class='num'>03</span><span>输入输出Capture链</span></a><a href='#objects'><span class='num'>04</span><span>任务与资源所有权</span></a><a href='#model'><span class='num'>05</span><span>下载状态与关闭</span></a><a href='#effects'><span class='num'>06</span><span>原子落盘副作用</span></a><a href='#boundary'><span class='num'>07</span><span>失败与清理边界</span></a><a href='#evidence'><span class='num'>08</span><span>测试证据</span></a><a href='#practice'><span class='num'>09</span><span>离线实践</span></a><a href='#output'><span class='num'>10</span><span>当日产出</span></a><a href='#design'><span class='num'>D</span><span>设计选择与边界</span></a><a href='#quiz'><span class='num'>11</span><span>知识自测</span></a><a href='#gate'><span class='num'>12</span><span>退出门禁</span></a>
-  </nav><div class='meter'><div class='meter-row'><span>门禁进度</span><span id='gate-text'>0/5</span></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div></aside>
-  <main class='main'><div class='topbar'><div><button class='menu' id='menu'>本课目录</button> 第08天 · 建议学习 1.5～2.5 小时</div><div class='toolbar'><a class='button' href='../接口测试框架六周学习课程.html#section-4'>统一术语表</a><a class='button' href='../接口测试框架六周学习课程.html'>课程大纲</a><button class='button' id='reset'>重置本课记录</button></div></div><article class='lesson'>
-    <header class='hero'><p class='eyebrow'>WEEK 2 · DAY 08</p><h1>资源捕获、下载与原子落盘</h1><p class='hero-lead'>输入资源和输出资源何时开始、由谁等待与关闭，下载失败后怎样清理，以及最终文件何时才允许对外可见。</p><div class='pills'><span class='pill'>CapturePolicy</span><span class='pill'>Input tasks</span><span class='pill'>Response close</span><span class='pill'>.part</span><span class='pill'>Atomic replace</span></div><div class='outcome'><strong>当日产出：</strong>输入/输出Capture触发链、下载资源所有权表、原子落盘步骤和失败后目录事实。</div></header>
-    <section id='question' data-section><p class='kicker'>01 · Question</p><h2>Capture增强证据，但不能重新定义业务结果</h2><p class='lead'>业务请求、轮询终态和断言已经各有所有者。Capture只负责识别资源、执行受控下载、关闭响应并安全落盘；失败必须留下可见状态并清理临时文件，而不能把证据增强层变成新的业务判定层。</p><div class='callout warn'><strong>范围限制：</strong>本课只讨论Capture触发、下载、Response关闭、取消、大小限制、<code>.part</code>、<code>replace</code>和异常清理；文件消费与信任判断留到后续课程。</div></section>
-    <section id='entry' data-section><p class='kicker'>02 · Source entry</p><h2>四组入口共同完成下载闭环</h2><div class='grid2'><div class='card'><h3>Capture策略与任务</h3><p><code>common/capture.py</code>定义输入、输出开关、字节上限和任务状态。</p></div><div class='card'><h3>输入触发</h3><p><code>MediaResourceMiddleware.before_request</code>从POST JSON识别输入媒体并登记任务。</p></div><div class='card'><h3>输出触发</h3><p><code>download_links_from_poll_get</code>在轮询成功后提取结果URL并同步下载。</p></div><div class='card'><h3>落盘与收尾</h3><p>下载实现负责流式读取、关闭Response、清理<code>.part</code>并在完成后<code>replace</code>最终路径。</p></div></div></section>
-    <section id='chain' data-section><p class='kicker'>03 · Call chain</p><h2>输入Capture和输出Capture不能画成同一触发链</h2><h3>输入资源</h3><div class='flow'><span>fixture建立任务集合</span><i>→</i><span>POST before_request</span><i>→</i><span>daemon线程下载</span><i>→</i><span>业务请求并行继续</span><i>→</i><span>teardown停止并附加</span></div><h3>输出资源</h3><div class='flow'><span>poll_get完成</span><i>→</i><span>最终Response</span><i>→</i><span>result_json_path</span><i>→</i><span>URL去重</span><i>→</i><span>同步下载与记录</span><i>→</i><span>返回原Response</span></div></section>
-    <section id='objects' data-section><p class='kicker'>04 · Ownership</p><h2>策略、任务、Response和文件各有唯一收尾者</h2><div class='table-wrap'><table><thead><tr><th>对象</th><th>所有者</th><th>职责</th><th>不负责</th></tr></thead><tbody><tr><td>CapturePolicy</td><td>调用配置</td><td>决定输入、输出开关和字节上限</td><td>业务断言</td></tr><tr><td>输入下载任务</td><td>测试级任务集合与teardown</td><td>保存线程、done、cancel、path和error，并在退出时收口</td><td>改变POST结果</td></tr><tr><td>输出下载调用</td><td>poll_get返回边界</td><td>从最终Response提取链接、逐个下载并返回原Response</td><td>重新判断Polling状态</td></tr><tr><td>下载Response与文件句柄</td><td>下载函数</td><td>在成功和异常路径关闭资源，清理临时文件并只暴露最终路径</td><td>把半文件交给调用者</td></tr></tbody></table></div></section>
-    <section id='model' data-section><p class='kicker'>05 · Lifecycle</p><h2>下载状态必须在有限时间内收口</h2><div class='grid3'><div class='card'><h3>成功</h3><p>文件完整写入后设置最终path和done，teardown或装饰器才能暴露文件。</p></div><div class='card'><h3>失败</h3><p>异常文本写入task.error，done仍被设置；调用方读取失败事实而不是永久等待。</p></div><div class='card'><h3>未完成</h3><p>teardown设置cancel_event并记录未完成诊断，不以无限等待阻塞测试结束。</p></div></div><div class='callout'><strong>关键约束：</strong>下载线程是daemon并不等于可以丢失所有权；任务集合和teardown仍负责停止、检查和附加。</div></section>
-    <section id='effects' data-section><p class='kicker'>06 · Side effects</p><h2>原子落盘避免暴露半文件</h2><div class='flow'><span>清洗并分配唯一文件名</span><i>→</i><span>写隐藏.part</span><i>→</i><span>校验Content-Length与累计字节</span><i>→</i><span>关闭Response与文件</span><i>→</i><span>replace最终文件</span><i>→</i><span>异常时清理临时与目标</span></div><div class='callout good'><strong>完成条件：</strong>只有关闭资源并成功replace后的最终路径才可以被附件或测试读取。大小超限、取消或传输失败都不能留下看似完整的目标文件。</div></section>
-    <section id='boundary' data-section><p class='kicker'>07 · Boundary</p><h2>失败路径必须关闭资源并恢复干净目录</h2><div class='grid2'><div class='card'><h3>取消或超限</h3><p>停止继续读取，关闭下载Response和文件句柄，删除<code>.part</code>，不创建最终目标。</p></div><div class='card'><h3>传输或replace失败</h3><p>保存可诊断错误，清理临时与不完整目标；业务Response是否继续返回由输入/输出Capture边界分别决定。</p></div></div><div class='callout warn'><strong>边界检查：</strong>“线程是daemon”不能替代teardown，“关闭Session”也不能替代关闭单次下载Response；每个资源都要能指出直接所有者。</div></section>
-    <section id='evidence' data-section><p class='kicker'>08 · Evidence</p><h2>只用Capture与下载测试验证本课合同</h2><div class='table-wrap'><table><thead><tr><th>测试</th><th>关注断言</th></tr></thead><tbody><tr><td><code>module/offline_framework_example/test_capture_assertions.py</code></td><td>成功业务Response在Capture超限时仍可断言，目录中无最终文件和<code>.part</code>残留。</td></tr><tr><td><code>tests/test_capture_downloads.py</code></td><td>大小预检、流式累计、取消、唯一命名、Response关闭、replace时机和异常清理。</td></tr></tbody></table></div></section>
-    <section id='practice' data-section><p class='kicker'>09 · Offline practice</p><h2>只运行Capture与下载合同</h2><div class='command'><button class='copy'>复制</button><pre><code>.\.venv\Scripts\python.exe -m pytest `
-  module/offline_framework_example/test_capture_assertions.py `
-  tests/test_capture_downloads.py `
-  -q</code></pre></div><p class='lead'>实践只使用测试夹具临时目录和本机loopback。重点核对取消、大小限制、异常路径是否关闭Response，失败后目录是否为空、<code>.part</code>是否清理，以及最终文件是否只在replace后出现。</p></section>
-    <section id='output' data-section><p class='kicker'>10 · Output</p><h2>完成资源生命周期图和职责矩阵</h2><div class='notes'><label>输入Capture生命周期<textarea data-note='input' placeholder='fixture → before_request → daemon → teardown → cancel/close/attachment'></textarea></label><label>输出Capture生命周期<textarea data-note='output' placeholder='poll_get → final Response → JSONPath → download → close → return'></textarea></label><label>原子落盘链<textarea data-note='atomic' placeholder='.part、大小校验、关闭资源、replace与异常清理'></textarea></label><label>本轮测试证据<textarea data-note='evidence' placeholder='命令、结果、耗时和一个失败后无残留断言'></textarea></label></div></section>
-    <section id='design' class='design-boundary' data-section><p class='kicker'>Design Choice · Boundary</p><h2>设计选择与适用边界：临时文件校验后再replace最终路径</h2><div class='boundary-grid'><div class='boundary-card current'><h3>当前方案</h3><p>流式写入唯一<code>.part</code>，检查大小并关闭Response与文件，成功后用<code>replace</code>发布最终路径；异常统一清理。</p></div><div class='boundary-card alternative'><h3>替代方案</h3><p>直接向最终文件名流式写入，或把完整响应读入内存后一次性写盘。</p></div><div class='boundary-card reason'><h3>选择理由</h3><p>临时文件避免读者看到半文件，流式下载控制内存；关闭后再replace让最终可见时机和资源收尾形成单一提交点。</p></div><div class='boundary-card limit'><h3>不适用条件</h3><p>目标位于不支持同文件系统原子替换的远端存储或跨卷路径时，应使用存储服务的临时对象、完成标记或事务提交语义。</p></div></div></section>
-    <section id='quiz' data-section><p class='kicker'>11 · Knowledge check</p><h2>知识自测</h2><div class='quiz' data-answer='b'><strong>1. 输入Capture为什么不阻塞POST主请求？</strong><label><input type='radio' name='q1' value='a'>因为不下载</label><label><input type='radio' name='q1' value='b'>下载由任务线程执行，teardown统一收口</label><label><input type='radio' name='q1' value='c'>因为Session负责下载</label></div><div class='quiz' data-answer='c'><strong>2. 输出Capture何时触发？</strong><label><input type='radio' name='q2' value='a'>每次poll前</label><label><input type='radio' name='q2' value='b'>请求中间件before阶段</label><label><input type='radio' name='q2' value='c'>poll_get返回最终Response后</label></div><div class='quiz' data-answer='a'><strong>3. 最终文件何时对外可见？</strong><label><input type='radio' name='q3' value='a'>关闭资源并replace成功后</label><label><input type='radio' name='q3' value='b'>收到第一个分块后</label><label><input type='radio' name='q3' value='c'>创建文件名后</label></div><div class='quiz' data-answer='b'><strong>4. 下载过程取消或超限后首先要保证什么？</strong><label><input type='radio' name='q4' value='a'>保留最终文件供人工判断</label><label><input type='radio' name='q4' value='b'>关闭Response与文件并删除.part</label><label><input type='radio' name='q4' value='c'>重新判断Polling状态</label></div><div class='quiz' data-answer='c'><strong>5. 为什么daemon线程仍需要任务集合和teardown？</strong><label><input type='radio' name='q5' value='a'>为了增加线程数量</label><label><input type='radio' name='q5' value='b'>为了修改业务Response</label><label><input type='radio' name='q5' value='c'>为了取消、等待、记录错误并确认资源已收口</label></div><button class='primary' id='submit-quiz'>提交答案</button><div class='verdict' id='quiz-summary'>建议达到4/5再进入门禁。</div></section>
-    <section id='gate' data-section><p class='kicker'>12 · Exit gate</p><h2>本课门禁</h2><div class='gate-list'><label class='gate'><input type='checkbox' data-gate='input'><span>已画出输入Capture的任务、取消和teardown链。</span></label><label class='gate'><input type='checkbox' data-gate='output'><span>已画出输出Capture在最终Response之后的触发链。</span></label><label class='gate'><input type='checkbox' data-gate='close'><span>能指出下载Response、文件句柄和任务线程的直接收口者。</span></label><label class='gate'><input type='checkbox' data-gate='atomic'><span>能解释.part、大小校验、关闭资源、replace和异常清理。</span></label><label class='gate'><input type='checkbox' data-gate='command'><span>已记录本轮离线测试结果和失败后目录事实。</span></label><label class='gate'><input type='checkbox' data-gate='record' data-gate-requires-record='gate-evidence'><span>已填写可复查的成果位置或口头讲解记录。</span></label></div><div class='record-panel'><label class='record-field'>成果位置或口头记录（必填）<textarea data-record='gate-evidence' placeholder='记录Capture触发链/资源所有权表路径，或口头讲解关闭与清理边界的追问和订正'></textarea></label><p class='record-status' data-record-status='gate-evidence'>尚未记录；仅勾选复选框不能通过门禁。</p></div><div class='callout good'><strong>验收句：</strong>我能分别解释输入与输出Capture的触发者、下载Response与文件的关闭者，以及<code>.part → replace</code>失败时如何恢复干净目录。</div><div class='footer'><div class='footer-links'><a class='button' href='第07天-请求中间件脱敏与诊断日志.html'>← 上一课</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a><a class='button' href='第09天-请求重试策略.html'>下一课 →</a></div></div></section>
-  </article></main><script src='六周课程页.js'></script>
-</body></html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="接口测试框架源码架构与证据链六周课程第08天：资源捕获、下载与原子落盘">
+  <title>第08天｜资源捕获下载与原子落盘</title>
+  <link rel="stylesheet" href="六周课程页.css">
+</head>
+<body data-day="08">
+  <aside class="side" id="side">
+    <div class="mark"><small>接口测试框架源码架构与证据链六周课程</small><h2>第08天 · 下载资源闭环</h2><p>第2周 / Capture与原子落盘</p></div>
+    <nav class="nav">
+      <a href="#core-constraint"><span class="num">01</span><span>问题与策略边界</span></a>
+      <a href="#code-first-walkthrough"><span class="num">02</span><span>失败降级主锚点</span></a>
+      <a href="#orchestration-owner"><span class="num">03</span><span>创建轮询所有者</span></a>
+      <a href="#decorator-control"><span class="num">04</span><span>输出Capture控制流</span></a>
+      <a href="#atomic-download"><span class="num">05</span><span>原子下载事务</span></a>
+      <a href="#input-capture"><span class="num">06</span><span>输入Capture任务</span></a>
+      <a href="#teardown-cancel"><span class="num">07</span><span>取消与线程边界</span></a>
+      <a href="#evidence"><span class="num">08</span><span>现有证据边界</span></a>
+      <a href="#organized-answers"><span class="num">09</span><span>整理答案</span></a>
+      <a href="#design-boundary"><span class="num">D</span><span>设计选择与边界</span></a>
+      <a href="#lesson-flow-summary"><span class="num">10</span><span>课后流转总图</span></a>
+      <a href="#oral-recap"><span class="num">11</span><span>完整复述</span></a>
+      <a href="#exit-gate"><span class="num">12</span><span>验收结论</span></a>
+    </nav>
+  </aside>
+  <main class="main">
+    <div class="topbar"><div><button class="menu" id="menu" type="button">本课目录</button> 第08天 · 建议学习 2～3 小时</div><div class="toolbar"><a class="button" href="../接口测试框架六周学习课程.html#section-4">统一术语表</a><a class="button" href="../接口测试框架六周学习课程.html">课程大纲</a></div></div>
+    <article class="lesson">
+      <header class="hero">
+        <p class="eyebrow">WEEK 2 · DAY 08</p><h1>资源捕获、下载与原子落盘</h1>
+        <p class="hero-lead">今天区分四个所有者：异步任务编排、输出Capture装饰器、下载事务和输入任务收尾。重点不是“下载了文件”，而是每个阶段究竟能证明什么。</p>
+        <div class="pills"><span class="pill">CapturePolicy</span><span class="pill">MediaGenerationCapability</span><span class="pill">Decorator timing</span><span class="pill">.part → replace</span><span class="pill">Cancel is not join</span></div>
+        <div class="outcome"><strong>本课结果：</strong>能够解释业务Response为何不被Capture失败覆盖、最终路径何时可见，以及为什么teardown设置取消事件仍不能证明worker完成或线程终止。</div>
+      </header>
+      <section id="core-constraint" data-section>
+        <p class="kicker">01 · 问题与策略边界</p>
+        <h2>Capture增强证据，但不能重新定义业务结果</h2>
+        <p class="lead">业务创建、task_id提取、轮询终态和断言已有所有者。Capture只决定是否下载输入/输出资源以及大小上限；下载失败必须可见并清理残留，但不能替代业务Response。</p>
+        <div class="source-example source-example--related"><p class="source-example__label">本节入口</p><div class="source-example__grid"><span><strong>用例文件</strong><code>module/offline_framework_example/test_capture_assertions.py</code></span><span><strong>测试方法</strong><code>TestCaptureAndAssertions.test_capture_limit_failure_does_not_override_response</code></span><span><strong>关键实现函数</strong><code>common.capture.CapturePolicy.__post_init__</code></span></div><p class="source-example__note">本节借主用例确定策略边界，不把该用例解释成对所有Capture生命周期的覆盖。</p></div>
+        <article class="source-card source-card--required"><div class="source-card__heading"><div><h3><code>CapturePolicy</code>只表达开关与上限</h3><p>策略不执行下载，也不判断业务成功</p></div></div><div class="source-card__body">
+          <div class="source-code-wrap"><pre class="source-code"><code class="language-python">@dataclass(frozen=True)
+class CapturePolicy:
+    capture_input_media: bool = True
+    capture_output_results: bool = True
+    max_input_bytes: int | None = None
+    max_output_bytes: int | None = None
+
+    def __post_init__(self) -&gt; None:
+        for name in ("max_input_bytes", "max_output_bytes"):
+            value = getattr(self, name)
+            if value is not None and value &lt;= 0:
+                raise ValueError(f"{name} must be greater than 0")</code></pre></div>
+          <div class="source-answer"><div class="source-answer__heading"><strong>源码精讲</strong><p>四个不可变字段把输入Capture、输出Capture和各自大小上限分开，构造时只拒绝非正上限。</p></div><div class="source-explanation-grid">
+            <div><strong>承接对象</strong><p>调用方提供的Capture配置。</p></div><div><strong>职责</strong><p>表达能力开关与字节上限。</p></div>
+            <div><strong>处理顺序</strong><p>构造不可变对象 → 校验两个上限。</p></div><div><strong>输入输出</strong><p>输入为布尔值和可选整数；输出为策略对象。</p></div>
+            <div><strong>字段/状态变化</strong><p>对象创建后字段不再变化。</p></div><div><strong>边界</strong><p>不负责提取URL、启动线程、下载文件或覆盖Response。</p></div>
+          </div></div>
+        </div></article>
+      </section>
+      <section id="code-first-walkthrough" data-section>
+        <p class="kicker">02 · 失败降级主锚点</p>
+        <h2>先看“下载超限，但业务Response保留”的真实合同</h2>
+        <p class="lead">离线用例只提供稳定载体。本段从Act开始，不展开载体创建细节；断言把业务终点和Capture文件终点分开。</p>
+        <div class="source-example source-example--related"><p class="source-example__label">本节入口</p><div class="source-example__grid"><span><strong>用例文件</strong><code>module/offline_framework_example/test_capture_assertions.py</code></span><span><strong>测试方法</strong><code>TestCaptureAndAssertions.test_capture_limit_failure_does_not_override_response</code></span><span><strong>关键实现函数</strong><code>BaseTask.create_and_poll_media_generation → MediaGenerationCapability.create_and_poll_media_generation → BaseRequest.poll_get</code></span></div></div>
+        <article class="source-card source-card--evidence"><div class="source-card__heading"><div><h3>主锚点：输出Capture失败不覆盖业务结果</h3><p>先读取调用与断言，再追踪生产所有者</p></div></div><div class="source-card__body">
+          <div class="source-code-wrap"><pre class="source-code"><code class="language-python">response = self.task.create_and_poll_media_generation(
+    request,
+    payload,
+    poll_interval=0.01,
+    poll_timeout=1,
+    polling_policy=OFFLINE_POLLING_POLICY,
+)
+
+assert self.assertions.assert_status_code(response, 200) is response
+assert self.assertions.assert_task_status(response, "succeeded") is response
+assert self.assertions.assert_schema(
+    response, OFFLINE_POLLING_SUCCESS_SCHEMA
+) is response
+result_url = response.json()["result"]["url"]
+assert result_url.endswith("/assets/oversized-output.png")
+assert list(offline_capture_dirs.output_dir.iterdir()) == []
+assert not any(
+    path.name.endswith(".part")
+    for path in offline_capture_dirs.output_dir.iterdir()
+)</code></pre></div>
+          <div class="source-answer"><div class="source-answer__heading"><strong>源码精讲</strong><p>同一个Response通过状态、终态和Schema断言；与此同时输出目录为空且无<code>.part</code>，说明Capture失败没有改写业务终点。</p></div><div class="source-explanation-grid">
+            <div><strong>承接对象</strong><p>已准备的Request、payload和轮询策略。</p></div><div><strong>职责</strong><p>固定“业务成功、Capture失败降级、目录干净”的联合合同。</p></div>
+            <div><strong>处理顺序</strong><p>创建并轮询 → 返回Response → 业务断言 → 文件终态断言。</p></div><div><strong>输入输出</strong><p>输入为异步任务调用参数；输出为最终Response和空输出目录。</p></div>
+            <div><strong>字段/状态变化</strong><p>Response保持成功终态；超限下载未留下最终文件或临时文件。</p></div><div><strong>边界</strong><p>该用例证明失败降级，不证明输入线程在teardown时已停止。</p></div>
+          </div></div>
+        </div></article>
+      </section>
+      <section id="orchestration-owner" data-section>
+        <p class="kicker">03 · 创建轮询所有者</p>
+        <h2>BaseTask是legacy facade，真正编排者是MediaGenerationCapability</h2>
+        <p class="lead">判断所有者要看谁按顺序调用create、extract_task_id和poll。BaseTask只把自身方法注入Capability，真正控制顺序的是Capability。</p>
+        <div class="source-example source-example--related"><p class="source-example__label">本节入口</p><div class="source-example__grid"><span><strong>用例文件</strong><code>module/offline_framework_example/test_capture_assertions.py</code></span><span><strong>测试方法</strong><code>TestCaptureAndAssertions.test_capture_limit_failure_does_not_override_response</code></span><span><strong>关键实现函数</strong><code>common.base_task.BaseTask.create_and_poll_media_generation → common.task_capabilities.media_generation.MediaGenerationCapability.create_and_poll_media_generation</code></span></div></div>
+        <article class="source-card source-card--required"><div class="source-card__heading"><div><h3>facade委托与真实编排主链</h3><p>两段源码共同证明所有权</p></div></div><div class="source-card__body">
+          <div class="source-code-wrap"><pre class="source-code"><code class="language-python"># BaseTask中的委托主体
+return self._media_capability().create_and_poll_media_generation(
+    request_client,
+    payload,
+    poll_interval=poll_interval,
+    poll_timeout=poll_timeout,
+    polling_policy=polling_policy,
+    retry_policy=retry_policy,
+    create=self.create_media_generation,
+    extract_task_id=self.extract_task_id,
+    poll=self.poll_media_generation_result,
+)
+
+# MediaGenerationCapability中的编排主体
+create_call = create or self.create_media_generation
+extract_call = extract_task_id or self.extract_task_id
+poll_call = poll or self.poll_media_generation_result
+with operation_scope(
+    RuntimeOperationKind.ASYNC_TASK,
+    name="media_generation",
+    role=RuntimeTrafficRole.WORKLOAD,
+    model_id=model_id_from_kwargs({"json": payload}),
+):
+    create_response = create_call(request_client, payload)
+    task_id = extract_call(create_response)
+    return poll_call(
+        request_client,
+        task_id,
+        poll_interval=poll_interval,
+        poll_timeout=poll_timeout,
+        polling_policy=polling_policy,
+        retry_policy=retry_policy,
+    )</code></pre></div>
+          <div class="source-answer"><div class="source-answer__heading"><strong>源码精讲</strong><p>BaseTask只选择Capability并注入兼容方法；Capability建立operation_scope并严格执行create → task_id → poll。</p></div><div class="source-explanation-grid">
+            <div><strong>承接对象</strong><p>Request、payload、轮询/重试策略和三个可调用对象。</p></div><div><strong>职责</strong><p>Capability拥有异步任务业务编排；BaseTask提供兼容入口。</p></div>
+            <div><strong>处理顺序</strong><p>解析调用对象 → 创建任务 → 提取task_id → 轮询最终结果。</p></div><div><strong>输入输出</strong><p>输入为创建与轮询参数；输出为poll调用返回的最终Response。</p></div>
+            <div><strong>字段/状态变化</strong><p>局部值从create_response变为task_id，最终形成poll Response。</p></div><div><strong>边界</strong><p>Capability不执行输出下载；下载发生在被装饰的<code>poll_get()</code>返回之后。</p></div>
+          </div></div>
+        </div></article>
+      </section>
+      <section id="decorator-control" data-section>
+        <p class="kicker">04 · 输出Capture控制流</p>
+        <h2>wrapper先接管调用，但只有内层poll_get成功返回后才开始下载</h2>
+        <p class="lead">装饰器调用发生在进入<code>poll_get</code>之前；真正的输出Capture门槛是<code>response = func(...)</code>成功完成。若轮询抛异常，后续URL提取和下载不会执行。</p>
+        <div class="source-example source-example--related"><p class="source-example__label">本节入口</p><div class="source-example__grid"><span><strong>用例文件</strong><code>tests/test_capture_downloads.py</code></span><span><strong>测试方法</strong><code>test_output_download_failure_does_not_replace_polling_response</code></span><span><strong>关键实现函数</strong><code>common.base_request.BaseRequest.poll_get → common.base_decorators.BaseDecorators.download_links_from_poll_get</code></span></div></div>
+        <article class="source-card source-card--required"><div class="source-card__heading"><div><h3><code>download_links_from_poll_get()</code>的时间顺序</h3><p>先得到业务Response，再执行可降级副作用</p></div></div><div class="source-card__body">
+          <div class="source-code-wrap"><pre class="source-code"><code class="language-python">def download_links_from_poll_get(self, func: F) -&gt; F:
+    @wraps(func)
+    def wrapper(instance: Any, path: str, *args: Any, **kwargs: Any) -&gt; requests.Response:
+        capture_policy = getattr(instance, "capture_policy", DEFAULT_CAPTURE_POLICY)
+        polling_policy = kwargs.get("polling_policy")
+        result_json_path = getattr(polling_policy, "result_json_path", None)
+        response = func(instance, path, *args, **kwargs)
+        if result_json_path is None or not capture_policy.capture_output_results:
+            return response
+        try:
+            link_value = self._extract_json_path_value(response, result_json_path)
+            for url in self._extract_urls(link_value):
+                try:
+                    file_path = self._download_url(
+                        url, DOWNLOAD_DIR,
+                        max_bytes=capture_policy.max_output_bytes,
+                    )
+                    self._record_model_result_file(file_path)
+                except Exception as error:
+                    self._attach_download_failure(url, error)
+        except Exception as error:
+            self._attach_download_failure("&lt;result-json-path&gt;", error)
+        return response</code></pre></div>
+          <div class="source-answer"><div class="source-answer__heading"><strong>源码精讲</strong><p>wrapper先读取策略与结果路径，再调用内层poll_get；只有拿到Response后才决定跳过、提取URL或下载。下载与提取错误被附件化，最后仍返回原Response。</p></div><div class="source-explanation-grid">
+            <div><strong>承接对象</strong><p>被装饰的poll_get、实例、path、轮询策略和Capture策略。</p></div><div><strong>职责</strong><p>在业务轮询完成后追加输出下载副作用。</p></div>
+            <div><strong>处理顺序</strong><p>进入wrapper → 读策略 → 调内层poll_get → 得Response → 提取URL → 下载 → 返回Response。</p></div><div><strong>输入输出</strong><p>输入为poll_get调用；输出始终是内层成功返回的同一个Response。</p></div>
+            <div><strong>字段/状态变化</strong><p>成功下载时记录文件；失败时附加失败文本，Response引用不变。</p></div><div><strong>边界</strong><p>内层poll_get抛异常时不会进入输出Capture；装饰器不把下载失败提升为业务失败。</p></div>
+          </div></div>
+        </div></article>
+      </section>
+      <section id="atomic-download" data-section>
+        <p class="kicker">05 · 原子下载事务</p>
+        <h2><code>download_url()</code>拥有从临时文件到最终发布的完整事务</h2>
+        <p class="lead">最终路径不是写入起点，而是提交结果。函数先写唯一<code>.part</code>，在响应和文件上下文关闭后执行<code>replace</code>；任何异常都删除临时路径与目标路径。</p>
+        <div class="source-example source-example--related"><p class="source-example__label">本节入口</p><div class="source-example__grid"><span><strong>用例文件</strong><code>tests/test_capture_downloads.py</code></span><span><strong>测试方法</strong><code>test_download_limit_removes_partial_file</code></span><span><strong>关键实现函数</strong><code>util.downloads.download_url</code></span></div><p class="source-example__note">该测试直接证明流式超限后的目录清理；成功replace时机来自生产函数控制流，不扩写为该测试已覆盖。</p></div>
+        <article class="source-card source-card--required"><div class="source-card__heading"><div><h3>流式下载、大小判定与原子发布</h3><p>事务边界全部位于同一个生产函数</p></div></div><div class="source-card__body">
+          <div class="source-code-wrap"><pre class="source-code"><code class="language-python">def download_url(
+    url: str,
+    download_dir: Path,
+    *,
+    fallback_name: str = "download",
+    timeout: float | tuple[float, float] = 600,
+    cancel_event: Event | None = None,
+    max_bytes: int | None = None,
+) -&gt; Path:
+    if cancel_event is not None and cancel_event.is_set():
+        raise DownloadCancelled()
+    download_dir.mkdir(parents=True, exist_ok=True)
+    file_path = unique_file_path(
+        download_dir / filename_from_url(url, fallback_name=fallback_name)
+    )
+    temporary_path = file_path.with_name(
+        f".{file_path.name}.{uuid.uuid4().hex}.part"
+    )
+    written = 0
+    try:
+        with requests.get(url, stream=True, timeout=timeout) as response:
+            response.raise_for_status()
+            content_length = response.headers.get("Content-Length")
+            if max_bytes is not None and content_length and int(content_length) &gt; max_bytes:
+                raise DownloadLimitExceeded(f"download exceeds {max_bytes} bytes")
+            with temporary_path.open("wb") as output:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise DownloadCancelled()
+                    if not chunk:
+                        continue
+                    written += len(chunk)
+                    if max_bytes is not None and written &gt; max_bytes:
+                        raise DownloadLimitExceeded(f"download exceeds {max_bytes} bytes")
+                    output.write(chunk)
+        temporary_path.replace(file_path)
+        return file_path
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        file_path.unlink(missing_ok=True)
+        raise</code></pre></div>
+          <div class="source-answer"><div class="source-answer__heading"><strong>源码精讲</strong><p>头部长度可提前拒绝；流式累计值可处理中途超限；取消在请求前和每个分块前检查。两个<code>with</code>都退出后才replace，失败路径统一双清理。</p></div><div class="source-explanation-grid">
+            <div><strong>承接对象</strong><p>URL、下载目录、可选取消事件和字节上限。</p></div><div><strong>职责</strong><p>拥有<code>.part → close → replace</code>事务与异常回滚。</p></div>
+            <div><strong>处理顺序</strong><p>预检查 → 建临时路径 → 打开响应 → 流式写入/校验 → 关闭资源 → replace。</p></div><div><strong>输入输出</strong><p>输入为下载参数；成功输出最终Path，失败重新抛异常。</p></div>
+            <div><strong>字段/状态变化</strong><p><code>written</code>递增；临时文件出现；成功后最终路径出现且临时路径消失。</p></div><div><strong>边界</strong><p>源码说明事务顺序；当前超限测试只直接证明流式超限后目录为空。</p></div>
+          </div></div>
+        </div></article>
+      </section>
+      <section id="input-capture" data-section>
+        <p class="kicker">06 · 输入Capture任务</p>
+        <h2>输入资源在POST前启动后台任务，但返回值不含线程句柄</h2>
+        <p class="lead">默认Middleware在POST的before阶段读取JSON并调用启动函数。启用时每个资源创建daemon线程，但调用方只得到<code>MediaDownloadTask</code>。</p>
+        <div class="source-example source-example--related"><p class="source-example__label">本节入口</p><div class="source-example__grid"><span><strong>用例文件</strong><code>tests/test_capture_downloads.py</code></span><span><strong>测试方法</strong><code>test_disabled_input_capture_starts_no_download_thread</code></span><span><strong>关键实现函数</strong><code>common.request_middleware.MediaResourceMiddleware.before_request → util.media_resources.start_media_downloads</code></span></div></div>
+        <article class="source-card source-card--required"><div class="source-card__heading"><div><h3>从POST payload到后台下载任务</h3><p>策略短路、任务状态与线程所有权同时展开</p></div></div><div class="source-card__body">
+          <div class="source-code-wrap"><pre class="source-code"><code class="language-python">def before_request(self, context: RequestContext) -&gt; None:
+    if context.method == "POST":
+        start_media_downloads(
+            context.kwargs.get("json"),
+            policy=self.capture_policy,
+        )
+
+def start_media_downloads(payload: Any, *, policy=DEFAULT_CAPTURE_POLICY):
+    if not policy.capture_input_media:
+        return []
+    tasks = []
+    for media_type, url in _extract_media_entries(payload):
+        task = MediaDownloadTask(
+            media_type=media_type,
+            url=url,
+            max_bytes=policy.max_input_bytes,
+        )
+        thread = threading.Thread(
+            target=_run_download,
+            args=(task,),
+            name=f"media-download-{media_type}",
+            daemon=True,
+        )
+        thread.start()
+        tasks.append(task)
+    _record_media_download_tasks(tasks)
+    return tasks</code></pre></div>
+          <div class="source-answer"><div class="source-answer__heading"><strong>源码精讲</strong><p>禁用时在线程构造前返回空列表；启用时线程启动后只把task保存和返回，局部<code>thread</code>句柄没有进入任务对象。</p></div><div class="source-explanation-grid">
+            <div><strong>承接对象</strong><p>POST Context中的JSON payload和CapturePolicy。</p></div><div><strong>职责</strong><p>提取输入资源，为每项创建状态任务并启动daemon worker。</p></div>
+            <div><strong>处理顺序</strong><p>检查开关 → 提取资源 → 建task → 建并启动线程 → 记录tasks。</p></div><div><strong>输入输出</strong><p>输入为payload；输出为<code>list[MediaDownloadTask]</code>。</p></div>
+            <div><strong>字段/状态变化</strong><p>task初始持有cancel_event、done_event，file_path/error为空。</p></div><div><strong>边界</strong><p>返回tasks不等于返回线程；调用方无法据此执行join。</p></div>
+          </div></div>
+        </div></article>
+      </section>
+      <section id="teardown-cancel" data-section>
+        <p class="kicker">07 · 取消与线程边界</p>
+        <h2>设置cancel_event只是请求取消，不是完成确认</h2>
+        <p class="lead">当前teardown收集tasks并调用附件函数；未完成任务只设置取消事件和附加回退文本。代码没有保存线程句柄，也没有执行任何同步等待。</p>
+        <div class="source-example source-example--related"><p class="source-example__label">本节入口</p><div class="source-example__grid"><span><strong>用例文件</strong><code>module/offline_framework_example/test_capture_assertions.py</code></span><span><strong>测试方法</strong><code>TestCaptureAndAssertions.test_input_capture_uses_only_loopback_resource</code></span><span><strong>关键实现函数</strong><code>module.conftest._attach_collected_test_resources → util.media_resources.attach_media_download_steps → util.media_resources._run_download</code></span></div><p class="source-example__note">覆盖边界：该用例观察输入Capture成功落盘；取消请求、done、join与线程终止结论来自生产代码阅读，不声称存在直接取消测试。</p></div>
+        <article class="source-card source-card--required"><div class="source-card__heading"><div><h3>teardown只消费任务状态并请求取消</h3><p>附件收口不等于线程同步收口</p></div></div><div class="source-card__body">
+          <div class="source-code-wrap"><pre class="source-code"><code class="language-python">media_download_token = state.pop("media_download_token", None)
+if media_download_token is not None:
+    attach_media_download_steps(
+        stop_media_download_collection(media_download_token)
+    )
+
+def attach_media_download_steps(tasks: list[MediaDownloadTask]) -&gt; None:
+    if not tasks:
+        return
+    with allure.step(MEDIA_DOWNLOAD_PARENT_STEP_NAME):
+        for task in tasks:
+            if task.is_done and task.file_path is not None and task.file_path.exists():
+                allure.attach.file(
+                    str(task.file_path),
+                    name=task.media_type,
+                    attachment_type=_attachment_type_for_file(task.file_path),
+                )
+                continue
+            if not task.is_done:
+                task.cancel_event.set()
+                status = MEDIA_DOWNLOAD_STEP_FALLBACK
+            else:
+                status = "资源下载失败"
+            allure.attach(
+                _fallback_text(task, status),
+                name=task.media_type,
+                attachment_type=AttachmentType.TEXT,
+            )</code></pre></div>
+          <div class="source-answer"><div class="source-answer__heading"><strong>源码精讲</strong><p>teardown停止收集并把tasks交给附件函数；已完成且文件存在时附文件，未完成时只调用<code>cancel_event.set()</code>并附加“未完成”文本。</p></div><div class="source-explanation-grid">
+            <div><strong>承接对象</strong><p>当前测试收集到的<code>list[MediaDownloadTask]</code>。</p></div><div><strong>职责</strong><p>根据当下状态附加文件或回退诊断，并对未完成任务发出取消请求。</p></div>
+            <div><strong>处理顺序</strong><p>停止收集 → 遍历task → 判断is_done/file_path → 附件或set取消。</p></div><div><strong>输入输出</strong><p>输入为tasks；输出为附件副作用，无完成状态返回值。</p></div>
+            <div><strong>字段/状态变化</strong><p>未完成任务的cancel_event从未设置变为已设置；done_event不在此处改变。</p></div><div><strong>边界</strong><p>当前teardown不能证明worker已观察取消、done_event已设置或线程已经终止。</p></div>
+          </div></div>
+        </div></article>
+        <article class="source-card source-card--support"><div class="source-card__heading"><div><h3>done_event只能由worker的finally设置</h3><p>取消请求与完成事实之间仍隔着worker执行</p></div></div><div class="source-card__body">
+          <div class="source-code-wrap"><pre class="source-code"><code class="language-python">@dataclass
+class MediaDownloadTask:
+    media_type: str
+    url: str
+    cancel_event: threading.Event = field(default_factory=threading.Event)
+    done_event: threading.Event = field(default_factory=threading.Event)
+    file_path: Path | None = None
+    error: str | None = None
+    max_bytes: int | None = None
+
+    @property
+    def is_done(self) -&gt; bool:
+        return self.done_event.is_set()
+
+def _run_download(task: MediaDownloadTask) -&gt; None:
+    try:
+        task.file_path = _download_media_url(
+            task.url,
+            MEDIA_DOWNLOAD_DIR,
+            task.cancel_event,
+            max_bytes=task.max_bytes,
+        )
+    except (MediaDownloadCancelled, DownloadCancelled):
+        task.error = MEDIA_DOWNLOAD_STEP_FALLBACK
+    except Exception as error:
+        task.error = f"{type(error).__name__}: {error}"
+    finally:
+        task.done_event.set()</code></pre></div>
+          <div class="source-answer"><div class="source-answer__heading"><strong>源码精讲</strong><p>worker只有在下载调用返回或抛错并进入finally后才设置done_event。取消事件只是供下载循环轮询的输入，不会异步强杀线程。</p></div><div class="source-explanation-grid">
+            <div><strong>承接对象</strong><p>包含URL、取消事件和上限的MediaDownloadTask。</p></div><div><strong>职责</strong><p>执行下载，把结果写入file_path或error，并在退出时标记done。</p></div>
+            <div><strong>处理顺序</strong><p>调用下载 → 成功写file_path / 异常写error → finally设置done_event。</p></div><div><strong>输入输出</strong><p>输入为task；无函数返回值，结果回写task字段。</p></div>
+            <div><strong>字段/状态变化</strong><p>file_path或error被赋值；最后done_event被设置。</p></div><div><strong>边界</strong><p>done_event表示worker走到finally；当前API仍没有线程句柄和join证据。teardown也没有等待done_event。</p></div>
+          </div></div>
+        </div></article>
+        <div class="callout warn"><strong>必须分开的五个事实：</strong>调用<code>cancel_event.set()</code>；worker观察到取消；响应/文件上下文退出；异常清理完成并设置done_event；线程真正终止。当前teardown只直接证明第一项。</div>
+      </section>
+      <section id="evidence" data-section>
+        <p class="kicker">08 · 现有证据边界</p>
+        <h2><code>test_capture_downloads.py</code>只证明四个局部合同</h2>
+        <div class="source-example source-example--related"><p class="source-example__label">本节入口</p><div class="source-example__grid"><span><strong>用例文件</strong><code>tests/test_capture_downloads.py</code></span><span><strong>测试方法</strong><code>4个test_*函数，逐项见下表</code></span><span><strong>关键实现函数</strong><code>start_media_downloads / download_links_from_poll_get / download_url / 文件名兼容辅助函数</code></span></div><p class="source-example__note">本节只做证据归属，不把生产代码可推导的行为冒充为测试已经直接证明。</p></div>
+        <div class="table-wrap"><table><thead><tr><th>现有测试</th><th>直接证明</th><th>明确不证明</th></tr></thead><tbody>
+          <tr><td><code>test_disabled_input_capture_starts_no_download_thread</code></td><td>禁用输入Capture时，在Thread构造前返回空列表。</td><td>启用后的完成、取消观察、资源关闭、done或join。</td></tr>
+          <tr><td><code>test_output_download_failure_does_not_replace_polling_response</code></td><td>输出下载抛Timeout时，wrapper返回同一个Response对象。</td><td>下载成功发布时机或输入worker收口。</td></tr>
+          <tr><td><code>test_download_limit_removes_partial_file</code></td><td>流式累计超限后抛出DownloadLimitExceeded，测试目录为空。</td><td>成功replace、取消后的线程结束或所有关闭路径。</td></tr>
+          <tr><td><code>test_input_and_output_compatibility_helpers_share_naming_rules</code></td><td>输入/输出兼容辅助函数共享文件名清理与URL文件名规则。</td><td>任何下载生命周期或线程状态。</td></tr>
+        </tbody></table></div>
+        <div class="callout"><strong>独立主锚点：</strong><code>TestCaptureAndAssertions.test_capture_limit_failure_does_not_override_response</code>额外证明普通module链中业务Response成功且输出目录无残留；它不扩大上表四项测试自身的覆盖范围。</div>
+      </section>
+
+      <section id="organized-answers" data-section>
+        <p class="kicker">09 · 整理答案</p>
+        <h2>直接给出五个判断与依据</h2>
+        <div class="grid2">
+          <div class="card"><h3>创建轮询所有者</h3><p><strong>MediaGenerationCapability。</strong>它按create → task_id → poll编排；BaseTask只是legacy facade。</p></div>
+          <div class="card"><h3>输出Capture起点</h3><p><strong>wrapper先进入，下载后发生。</strong>只有内层poll_get成功返回Response后才提取URL。</p></div>
+          <div class="card"><h3>最终文件可见时机</h3><p><strong>两个上下文关闭且replace成功之后。</strong>写入过程中只有唯一<code>.part</code>。</p></div>
+          <div class="card"><h3>取消请求是否等于线程停止</h3><p><strong>不等于。</strong><code>cancel_event.set()</code>只是协作式信号，worker需要之后观察并退出。</p></div>
+          <div class="card"><h3>当前teardown能否证明done/join</h3><p><strong>不能。</strong>代码没有等待done_event，没有保存线程句柄，也没有调用join。</p></div>
+        </div>
+      </section>
+      <section id="design-boundary" data-section>
+        <p class="kicker">Design · 设计选择与边界</p>
+        <h2>把业务结果、下载事务和后台任务状态分开</h2>
+        <div class="grid2">
+          <div class="card"><h3>业务结果</h3><p>Capability与poll_get拥有最终Response；输出Capture失败只附加诊断，不替换Response。</p></div>
+          <div class="card"><h3>下载事务</h3><p><code>download_url()</code>拥有临时路径、资源关闭、replace和异常回滚。</p></div>
+          <div class="card"><h3>后台任务</h3><p>MediaDownloadTask保存协作式事件与结果字段，但没有线程句柄。</p></div>
+          <div class="card"><h3>当前约束</h3><p>teardown追求快速附加当前状态，因此只能请求取消；若要同步终止保证，API必须额外持有线程并等待。</p></div>
+        </div>
+      </section>
+      <section id="lesson-flow-summary" data-section>
+        <p class="kicker">10 · 课后流转总图</p>
+        <h2>业务Response、输出下载与输入后台任务是三条相交但不等价的事实链</h2>
+        <p class="lead">先沿中央主链得到最终Response，再从Response分出输出Capture；左侧输入Capture独立运行。图中的每条分支都标明交接对象，避免把“已请求取消”误读成“线程已结束”。</p>
+        <figure class="lesson-flow-map mermaid-flowchart" aria-labelledby="day08-flow-caption">
+          <figcaption class="flow-map-caption" id="day08-flow-caption"><strong>第8天资源捕获流转图</strong>：实线表示业务与文件主链，虚线表示输入后台任务和诊断侧链。</figcaption>
+          <div class="mermaid-flowchart__legend"><span>蓝色：业务调用</span><span class="success">绿色：可交付终点</span><span class="error">红色：失败或降级</span><span class="support">虚线：输入Capture与取消事实</span></div>
+          <div class="mermaid-flowchart__canvas"><svg viewBox="0 0 1500 1900" role="img" aria-labelledby="day08-mermaid-title day08-mermaid-desc">
+            <title id="day08-mermaid-title">异步业务Response、输出资源原子下载和输入Capture取消边界</title>
+            <desc id="day08-mermaid-desc">测试经BaseTask门面进入MediaGenerationCapability，完成create、task_id提取和被装饰的poll_get。最终Response始终回到业务调用方；输出Capture在Response之后提取URL并调用download_url。输入Capture由后台worker执行，teardown只设置取消事件，不能证明done、join或线程终止。</desc>
+            <defs>
+              <marker id="day08-arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52708f"/></marker>
+              <marker id="day08-success" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16794a"/></marker>
+              <marker id="day08-error" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#b4233f"/></marker>
+              <marker id="day08-support" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8a6b22"/></marker>
+            </defs>
+
+            <path class="mermaid-edge" d="M760 100 V145" marker-end="url(#day08-arrow)"/>
+            <path class="mermaid-edge" d="M760 245 V290" marker-end="url(#day08-arrow)"/>
+            <path class="mermaid-edge" d="M760 410 V455" marker-end="url(#day08-arrow)"/>
+            <path class="mermaid-edge" d="M760 555 V600" marker-end="url(#day08-arrow)"/>
+            <path class="mermaid-edge" d="M760 700 V745" marker-end="url(#day08-arrow)"/>
+            <path class="mermaid-edge" d="M500 795 H420" marker-end="url(#day08-arrow)"/>
+            <path class="mermaid-edge mermaid-edge--success" d="M300 920 H490 V930" marker-end="url(#day08-success)"/>
+            <path class="mermaid-edge mermaid-edge--error" d="M180 850 H135 V930" marker-end="url(#day08-error)"/>
+            <path class="mermaid-edge mermaid-edge--success" d="M490 1030 V1080" marker-end="url(#day08-success)"/>
+            <path class="mermaid-edge mermaid-edge--success" d="M490 1030 H245 V1580" marker-end="url(#day08-success)"/>
+            <path class="mermaid-edge" d="M490 1180 V1225" marker-end="url(#day08-arrow)"/>
+            <path class="mermaid-edge mermaid-edge--success" d="M370 1315 H300 V1400" marker-end="url(#day08-success)"/>
+            <path class="mermaid-edge mermaid-edge--support" d="M610 1315 H455 V1580" marker-end="url(#day08-support)"/>
+            <path class="mermaid-edge" d="M300 1500 V1545" marker-end="url(#day08-arrow)"/>
+            <path class="mermaid-edge mermaid-edge--success" d="M180 1635 H120 V1740" marker-end="url(#day08-success)"/>
+            <path class="mermaid-edge mermaid-edge--error" d="M420 1635 H780 V1580" marker-end="url(#day08-error)"/>
+
+            <path class="mermaid-edge mermaid-edge--support" d="M960 505 H1040 V390 H1060" marker-end="url(#day08-support)"/>
+            <path class="mermaid-edge mermaid-edge--support" d="M1200 390 V500" marker-end="url(#day08-support)"/>
+            <path class="mermaid-edge mermaid-edge--support" d="M1200 600 V650" marker-end="url(#day08-support)"/>
+            <path class="mermaid-edge mermaid-edge--support" d="M1200 750 V795" marker-end="url(#day08-support)"/>
+            <path class="mermaid-edge mermaid-edge--support" d="M1080 885 H970 V1040" marker-end="url(#day08-support)"/>
+            <path class="mermaid-edge mermaid-edge--support" d="M1320 885 H1390 V1040" marker-end="url(#day08-support)"/>
+            <path class="mermaid-edge mermaid-edge--support" d="M1390 1140 V1190" marker-end="url(#day08-support)"/>
+
+            <text class="mermaid-branch-label" x="390" y="910" text-anchor="middle">Polling成功</text>
+            <text class="mermaid-branch-label" x="120" y="835" text-anchor="middle">Polling失败</text>
+            <text class="mermaid-branch-label" x="330" y="1295" text-anchor="middle">存在URL</text>
+            <text class="mermaid-branch-label" x="690" y="1295" text-anchor="middle">无URL</text>
+            <text class="mermaid-branch-label" x="140" y="1615" text-anchor="middle">下载成功</text>
+            <text class="mermaid-branch-label" x="530" y="1615" text-anchor="middle">失败 / 超限</text>
+            <text class="mermaid-branch-label" x="1030" y="865" text-anchor="middle">worker完成</text>
+            <text class="mermaid-branch-label" x="1360" y="865" text-anchor="middle">teardown时未完成</text>
+
+            <g class="mermaid-node mermaid-node--start"><rect x="570" y="25" width="380" height="75" rx="38"/><text class="mermaid-node__title" x="760" y="55" text-anchor="middle">Test</text><text class="mermaid-node__detail" x="760" y="80" text-anchor="middle">Request + payload + CapturePolicy</text></g>
+            <g class="mermaid-node mermaid-node--business"><rect x="540" y="145" width="440" height="100" rx="14"/><text class="mermaid-node__title" x="760" y="180" text-anchor="middle">BaseTask facade</text><text class="mermaid-node__detail" x="760" y="210" text-anchor="middle">只选择Capability并转交参数</text></g>
+            <g class="mermaid-node mermaid-node--business"><rect x="500" y="290" width="520" height="120" rx="14"/><text class="mermaid-node__title" x="760" y="325" text-anchor="middle">MediaGenerationCapability</text><text class="mermaid-node__detail" x="760" y="355" text-anchor="middle">真正拥有create → task_id → poll编排</text><text class="mermaid-node__detail" x="760" y="382" text-anchor="middle">不直接拥有输入Capture线程</text></g>
+            <g class="mermaid-node mermaid-node--business"><rect x="560" y="455" width="400" height="100" rx="14"/><text class="mermaid-node__title" x="760" y="490" text-anchor="middle">create()</text><text class="mermaid-node__detail" x="760" y="520" text-anchor="middle">输出创建Response</text></g>
+            <g class="mermaid-node mermaid-node--context"><rect x="560" y="600" width="400" height="100" rx="14"/><text class="mermaid-node__title" x="760" y="635" text-anchor="middle">extract_task_id()</text><text class="mermaid-node__detail" x="760" y="665" text-anchor="middle">Response → task_id</text></g>
+            <g class="mermaid-node mermaid-node--business"><rect x="500" y="745" width="520" height="100" rx="14"/><text class="mermaid-node__title" x="760" y="780" text-anchor="middle">decorated poll_get()</text><text class="mermaid-node__detail" x="760" y="810" text-anchor="middle">先执行内层Polling，再轮到输出Capture</text></g>
+            <g class="mermaid-decision"><polygon points="300,780 420,850 300,920 180,850"/><text class="mermaid-decision__title" x="300" y="845" text-anchor="middle">Polling终态？</text><text class="mermaid-decision__detail" x="300" y="870" text-anchor="middle">Response / 异常</text></g>
+            <g class="mermaid-node mermaid-node--success"><rect x="280" y="930" width="420" height="100" rx="14"/><text class="mermaid-node__title" x="490" y="965" text-anchor="middle">final Response</text><text class="mermaid-node__detail" x="490" y="995" text-anchor="middle">业务终态已经确定</text></g>
+            <g class="mermaid-node mermaid-node--error"><rect x="10" y="930" width="250" height="100" rx="14"/><text class="mermaid-node__title" x="135" y="965" text-anchor="middle">Polling异常终点</text><text class="mermaid-node__detail" x="135" y="992" text-anchor="middle">wrapper后半段不执行</text><text class="mermaid-node__detail" x="135" y="1015" text-anchor="middle">异常直接向外传播</text></g>
+            <g class="mermaid-node mermaid-node--runtime"><rect x="280" y="1080" width="420" height="100" rx="14"/><text class="mermaid-node__title" x="490" y="1115" text-anchor="middle">输出Capture wrapper</text><text class="mermaid-node__detail" x="490" y="1145" text-anchor="middle">从final Response提取资源URL</text></g>
+            <g class="mermaid-decision"><polygon points="490,1225 610,1315 490,1405 370,1315"/><text class="mermaid-decision__title" x="490" y="1310" text-anchor="middle">URL列表？</text><text class="mermaid-decision__detail" x="490" y="1336" text-anchor="middle">有资源 / 无资源</text></g>
+            <g class="mermaid-node mermaid-node--runtime"><rect x="90" y="1400" width="420" height="100" rx="14"/><text class="mermaid-node__title" x="300" y="1435" text-anchor="middle">download_url()</text><text class="mermaid-node__detail" x="300" y="1465" text-anchor="middle">写.part → 关闭Response与文件 → replace</text></g>
+            <g class="mermaid-decision"><polygon points="300,1545 420,1635 300,1725 180,1635"/><text class="mermaid-decision__title" x="300" y="1630" text-anchor="middle">下载事务？</text><text class="mermaid-decision__detail" x="300" y="1656" text-anchor="middle">成功 / 失败或超限</text></g>
+            <g class="mermaid-node mermaid-node--success"><rect x="25" y="1740" width="430" height="100" rx="42"/><text class="mermaid-node__title" x="240" y="1775" text-anchor="middle">文件落盘终点</text><text class="mermaid-node__detail" x="240" y="1805" text-anchor="middle">最终路径只在replace后可见</text></g>
+            <g class="mermaid-node mermaid-node--success"><rect x="35" y="1580" width="420" height="100" rx="42"/><text class="mermaid-node__title" x="245" y="1615" text-anchor="middle">业务Response终点</text><text class="mermaid-node__detail" x="245" y="1645" text-anchor="middle">Capture成功、无URL或失败都不替换它</text></g>
+            <g class="mermaid-node mermaid-node--error"><rect x="610" y="1580" width="420" height="120" rx="14"/><text class="mermaid-node__title" x="820" y="1615" text-anchor="middle">下载异常诊断 / 清理</text><text class="mermaid-node__detail" x="820" y="1645" text-anchor="middle">下载失败或超限删除.part</text><text class="mermaid-node__detail" x="820" y="1672" text-anchor="middle">只记录诊断，不覆盖Response</text></g>
+
+            <g class="mermaid-node mermaid-node--support"><rect x="1060" y="290" width="280" height="100" rx="14"/><text class="mermaid-node__title" x="1200" y="320" text-anchor="middle">MediaResourceMiddleware</text><text class="mermaid-node__detail" x="1200" y="348" text-anchor="middle">before_request读取输入URL</text><text class="mermaid-node__detail" x="1200" y="374" text-anchor="middle">Capture禁用则不创建线程</text></g>
+            <g class="mermaid-node mermaid-node--support"><rect x="1030" y="500" width="340" height="100" rx="14"/><text class="mermaid-node__title" x="1200" y="535" text-anchor="middle">start_media_downloads()</text><text class="mermaid-node__detail" x="1200" y="565" text-anchor="middle">创建MediaDownloadTask与worker</text></g>
+            <g class="mermaid-node mermaid-node--support"><rect x="1030" y="650" width="340" height="100" rx="14"/><text class="mermaid-node__title" x="1200" y="685" text-anchor="middle">worker执行download_url()</text><text class="mermaid-node__detail" x="1200" y="715" text-anchor="middle">结果回写file_path / error</text></g>
+            <g class="mermaid-decision"><polygon points="1200,795 1320,885 1200,975 1080,885"/><text class="mermaid-decision__title" x="1200" y="880" text-anchor="middle">teardown观察？</text><text class="mermaid-decision__detail" x="1200" y="906" text-anchor="middle">done / 未完成</text></g>
+            <g class="mermaid-node mermaid-node--support"><rect x="820" y="1040" width="300" height="100" rx="14"/><text class="mermaid-node__title" x="970" y="1075" text-anchor="middle">已有完成事实</text><text class="mermaid-node__detail" x="970" y="1102" text-anchor="middle">worker finally已先设置done_event</text><text class="mermaid-node__detail" x="970" y="1126" text-anchor="middle">teardown随后附文件或错误</text></g>
+            <g class="mermaid-node mermaid-node--error"><rect x="1240" y="1040" width="300" height="100" rx="14"/><text class="mermaid-node__title" x="1390" y="1075" text-anchor="middle">cancel_event.set()</text><text class="mermaid-node__detail" x="1390" y="1105" text-anchor="middle">只证明请求取消</text></g>
+            <g class="mermaid-node mermaid-node--error"><rect x="1220" y="1190" width="340" height="120" rx="14"/><text class="mermaid-node__title" x="1390" y="1225" text-anchor="middle">尚未证明完全收口</text><text class="mermaid-node__detail" x="1390" y="1255" text-anchor="middle">未等待done_event，无线程句柄</text><text class="mermaid-node__detail" x="1390" y="1282" text-anchor="middle">无join或线程终止证据</text></g>
+          </svg></div>
+        </figure>
+        <div class="callout"><strong>读图规则：</strong>final Response先成立，输出Capture才开始；无URL时直接返回Response，不产生下载诊断。输入Capture由create请求经过<code>MediaResourceMiddleware.before_request()</code>触发；worker finally先设置<code>done_event</code>，teardown才能观察完成。<code>cancel_event.set()</code>只证明请求取消。</div>
+      </section>
+
+      <section id="oral-recap" data-section>
+        <p class="kicker">11 · 完整复述</p>
+        <h2>用一段连续叙述讲清三条事实链</h2>
+        <blockquote>测试把Request、payload、Polling策略和CapturePolicy交给BaseTask。BaseTask只是兼容门面，真正按create、task_id提取、poll_get顺序编排的是MediaGenerationCapability。create请求进入公共发送管线时，MediaResourceMiddleware.before_request读取输入URL并按CapturePolicy决定是否启动后台下载任务，Capability本身不拥有线程。输出Capture装饰器先进入wrapper，但必须等内层poll_get成功返回final Response后，才从Response提取URL；无URL时直接返回Response，有URL时才调用download_url。download_url先写唯一的.part文件，只有Response上下文和文件上下文都退出后才执行replace，因此最终路径只在完整下载并关闭资源后可见；失败、超限或取消会清理.part，诊断信息不能替换已经成立的业务Response。输入worker结束时在finally设置done_event，teardown之后才能观察完成；若teardown先看到任务未完成，只调用cancel_event.set()请求协作式取消，不能证明worker已观察信号、done_event已设置或线程已经终止。</blockquote>
+      </section>
+
+      <section id="exit-gate" data-section>
+        <p class="kicker">12 · 验收结论</p>
+        <h2>满足以下事实，才算真正掌握Day8</h2>
+        <div class="grid2">
+          <div class="card"><h3>编排所有者准确</h3><p>能说明BaseTask只是facade，MediaGenerationCapability才拥有create → task_id → poll顺序。</p></div>
+          <div class="card"><h3>双终点准确</h3><p>能区分业务Response终点与文件落盘终点，并说明Capture失败不能覆盖Response。</p></div>
+          <div class="card"><h3>原子发布准确</h3><p>能说明.part写入、资源关闭、replace和异常清理的先后关系。</p></div>
+          <div class="card"><h3>取消边界准确</h3><p>能明确cancel_event.set()只证明请求取消，不证明done_event、join或线程终止。</p></div>
+        </div>
+        <div class="callout good"><strong>验收句：</strong>业务编排先产生Response，输出Capture再尝试产生文件；输入Capture的取消请求只是中间事实，不能被提升为完全收口证明。</div>
+        <div class="footer"><div class="footer-links"><a class="button" href="第07天-请求中间件脱敏与诊断日志.html">← 上一课</a><a class="button" href="../接口测试框架六周学习课程.html">返回课程大纲</a><a class="button" href="第09天-请求重试策略.html">下一课 →</a></div></div>
+      </section>
+    </article>
+  </main>
+  <script src="六周课程页.js"></script>
+</body>
+</html>

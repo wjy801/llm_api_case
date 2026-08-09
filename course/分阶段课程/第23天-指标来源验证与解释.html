@@ -1,10 +1,270 @@
 <!doctype html>
 <html lang='zh-CN'>
-<head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta name='description' content='接口测试框架六周学习课程第23天：Metrics来源信任、关系验证、WORKLOAD分母、缺失语义和指标状态'><title>第23天｜指标来源验证与解释</title><link rel='stylesheet' href='六周课程页.css'></head>
+<head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta name='description' content='接口测试框架六周学习课程第23天：Metrics来源信任、关系验证、WORKLOAD分母、缺失语义和指标状态'><title>第23天｜指标来源验证与解释</title><link rel='stylesheet' href="六周课程页.css"></head>
 <body data-day='23'>
-  <aside class='side' id='side'><div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第23天 · 没有可信来源就没有指标</h2><p>第5周 / Quality指标</p></div><nav class='nav'><a href='#question'><span class='num'>01</span><span>问题与约束</span></a><a href='#contract'><span class='num'>02</span><span>指标服务合同</span></a><a href='#sources'><span class='num'>03</span><span>来源信任链</span></a><a href='#relations'><span class='num'>04</span><span>关系再验证</span></a><a href='#exclusions'><span class='num'>05</span><span>WORKLOAD分母</span></a><a href='#aggregates'><span class='num'>06</span><span>三层聚合</span></a><a href='#missing'><span class='num'>07</span><span>缺失与分母</span></a><a href='#status'><span class='num'>08</span><span>状态与Manifest</span></a><a href='#tests'><span class='num'>09</span><span>现有测试证据</span></a><a href='#practice'><span class='num'>10</span><span>本轮指标实践</span></a><a href='#design'><span class='num'>11</span><span>设计边界</span></a><a href='#quiz'><span class='num'>12</span><span>知识自测</span></a><a href='#gate'><span class='num'>13</span><span>学习门禁</span></a></nav><div class='meter'><div class='meter-row'><span>门禁完成度</span><strong id='gate-text'>0/5</strong></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div></aside>
+  <aside class='side' id='side'><div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第23天 · 没有可信来源就没有指标</h2><p>第5周 / Quality指标</p></div><nav class='nav'><a href='#code-first-walkthrough'><span class='num'>CODE</span><span>代码先行</span></a><a href='#question'><span class='num'>01</span><span>问题与约束</span></a><a href='#contract'><span class='num'>02</span><span>指标服务合同</span></a><a href='#sources'><span class='num'>03</span><span>来源信任链</span></a><a href='#relations'><span class='num'>04</span><span>关系再验证</span></a><a href='#exclusions'><span class='num'>05</span><span>WORKLOAD分母</span></a><a href='#aggregates'><span class='num'>06</span><span>三层聚合</span></a><a href='#missing'><span class='num'>07</span><span>缺失与分母</span></a><a href='#status'><span class='num'>08</span><span>状态与Manifest</span></a><a href='#tests'><span class='num'>09</span><span>现有测试证据</span></a><a href='#practice'><span class='num'>10</span><span>本轮指标实践</span></a><a href='#design'><span class='num'>11</span><span>设计边界</span></a><a href='#lesson-flow-summary'><span class='num'>FLOW</span><span>流转总图</span></a><a href='#quiz'><span class='num'>12</span><span>知识自测</span></a><a href='#gate'><span class='num'>13</span><span>学习门禁</span></a></nav><div class='meter'><div class='meter-row'><span>门禁完成度</span><strong id='gate-text'>0/5</strong></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div></aside>
   <main class='main'><div class='topbar'><div>接口测试框架源码架构与证据链六周课程 <span>›</span> 第5周 <span>›</span> Day 23</div><div class='toolbar'><button class='menu' id='menu'>目录</button><button class='button' id='reset'>清除本课记录</button></div></div><article class='lesson'>
     <header class='hero'><p class='eyebrow'>WEEK 5 · DAY 23</p><h1>指标来源验证与解释</h1><p class='hero-lead'>追踪<code>quality/metrics/</code>如何先验证run、P0、Semantic版本与Hash，再检查关系和成员资格，最后只对WORKLOAD事实计算Operation、Request Group与Request Event三层指标。</p><div class='pills'><span class='pill'>建议时长 3 小时</span><span class='pill'>Source Trust</span><span class='pill'>Denominator</span><span class='pill'>Missing Semantics</span></div><div class='outcome'><strong>可核验产出：</strong>指标来源信任链、分母与排除表、原始事实/逻辑事实/派生指标三层图，以及本轮run-metrics解释记录。</div><div class='grid3'><div class='card'><h3>前序输入</h3><p>Day21的P0提交证据与Day22的Semantic Manifest、关系成员和来源Hash。</p></div><div class='card'><h3>本日新增</h3><p>来源验证、三层分母、排除规则、缺失语义与可解释run-metrics。</p></div><div class='card'><h3>依赖边界</h3><p>本课Metrics产出不是Day24 Flaky导入的前置；Day24直接读取Day21后的P0支线。</p></div></div></header>
+
+    <section id="code-first-walkthrough" data-section>
+      <p class="section-kicker">CODE · 代码先行精讲</p>
+      <h2>先让一个真实测试生成Metrics，再反向解释每个可信门槛</h2>
+      <p class="section-lead">本课先从可执行nodeid确认最终产物，再沿测试、服务、来源校验和聚合器回溯。核心约束是：只有通过Manifest、Hash、关系和WORKLOAD资格验证的成员，才有权进入指标分母。</p>
+      <div class="guided-start">
+        <div class="guided-start__header"><h3>本节唯一主线：可信来源生成单run指标</h3><p><strong>用例文件：</strong><code>tests/quality/test_metrics_sources.py</code>；<strong>测试函数：</strong><code>test_metrics_aggregate_writes_versioned_current_run_artifact</code>；<strong>pytest nodeid：</strong><code>tests/quality/test_metrics_sources.py::test_metrics_aggregate_writes_versioned_current_run_artifact</code>。</p></div>
+        <div class="guided-command"><strong>先运行这个真实Quality测试</strong><code>python -m pytest -q tests/quality/test_metrics_sources.py::test_metrics_aggregate_writes_versioned_current_run_artifact</code></div>
+        <div class="guided-rule"><strong>阅读规则</strong>先确认测试要求的Manifest、Hash和计数，再进入<code>aggregate_run_metrics()</code>；不要先背成功率公式，因为来源和成员资格才是系统约束。</div>
+        <div class="guided-chain" aria-label="代码阅读顺序"><span>测试函数</span><b>→</b><span>aggregate_run_metrics</span><b>→</b><span>load_sources</span><b>→</b><span>validate_source_relationships</span><b>→</b><span>build_run_metrics</span><b>→</b><span>Manifest提交</span></div>
+      </div>
+
+      <article class="guided-step">
+        <div class="guided-step__title"><span class="guided-step__number">1</span><div><h3>测试先冻结输入事实与最终产物合同</h3><p>测试不只断言数字，还断言Metrics状态、三层成员数量、usage总量、Manifest提交状态和产物Hash。</p></div></div>
+        <div class="guided-code-grid">
+          <div class="guided-source"><span class="guided-source__location">tests/quality/test_metrics_sources.py::test_metrics_aggregate_writes_versioned_current_run_artifact · 完整测试函数</span><pre><code>def test_metrics_aggregate_writes_versioned_current_run_artifact(semantic_runtime):
+    _build_sources(semantic_runtime)
+
+    result = aggregate_run_metrics(
+        RunMetricsAggregationRequest(
+            run_id=semantic_runtime.run_context.run_id,
+            output_dir=semantic_runtime.output_dir,
+        )
+    )
+
+    assert result.status is RunMetricsStatus.AGGREGATED
+    assert result.operation_count == result.request_group_count == result.request_event_count == 1
+    assert result.metrics is not None
+    assert result.metrics.run_metrics is not None
+    assert result.metrics.run_metrics.usage.input_tokens.total == 2
+    assert result.metrics.run_metrics.usage.output_tokens.total == 3
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["write_status"] == "complete"
+    assert manifest["output_hashes"]["run_metrics"]</code></pre></div>
+          <div class="guided-explanation"><h4>逐函数阅读</h4><div class="guided-point"><strong>输入事实</strong><p><code>_build_sources()</code>准备同一run的P0、Semantic与request facts；被测函数只接收<code>run_id</code>和Quality输出目录。</p></div><div class="guided-point success"><strong>验证</strong><p>测试要求Operation、Request Group、Request Event三层各有一个可信WORKLOAD成员，且usage来自成员事实而不是报告文本。</p></div><div class="guided-point"><strong>状态与产物</strong><p>成功终点必须同时出现<code>RunMetricsStatus.AGGREGATED</code>、<code>write_status=complete</code>和非空<code>run_metrics</code> Hash。</p></div><div class="guided-point warning"><strong>失败边界</strong><p>若来源被篡改，测试族中的相邻用例要求在数据库或下游消费前拒绝，而不是计算一个“看起来合理”的数字。</p></div></div>
+        </div>
+      </article>
+
+      <article class="guided-step">
+        <div class="guided-step__title"><span class="guided-step__number">2</span><div><h3>服务函数先声明聚合中，再提交成功或失败Manifest</h3><p><code>aggregate_run_metrics()</code>拥有Metrics事务边界：先写进行中状态，成功后提交Hash和计数，异常时改写失败状态。</p></div></div>
+        <div class="guided-code-grid">
+          <div class="guided-source"><span class="guided-source__location">quality/metrics/service.py::aggregate_run_metrics · 非连续选段：开始、成功提交与失败提交三个连续分支，中间计数字典未展示</span><pre><code>run_id = request.run_id.strip()
+if not run_id:
+    raise ValueError("run_id must not be empty")
+output_dir = Path(request.output_dir)
+metrics_dir = output_dir / "metrics"
+manifest_path = metrics_dir / "manifest.json"
+metrics_path = metrics_dir / "run-metrics.json"
+created_at = datetime.now(UTC)
+write_metrics_manifest(
+    manifest_path,
+    run_id=run_id,
+    write_status="aggregating",
+    metrics_status=None,
+    created_at=created_at,
+    source_evidence=None,
+    output_hashes={},
+    output_counts={},
+    issues=(),
+)
+try:
+    sources = load_sources(run_id, output_dir)
+    metrics = build_run_metrics(
+        run_id, sources, generated_at=datetime.now(UTC)
+    )
+    output_hash = write_run_metrics(metrics_path, metrics)
+
+write_metrics_manifest(
+    manifest_path,
+    run_id=run_id,
+    write_status="complete",
+    metrics_status=metrics.status,
+    created_at=created_at,
+    source_evidence=metrics.source_evidence,
+    output_hashes={"run_metrics": output_hash},
+    output_counts=counts,
+    issues=metrics.issues,
+)
+
+except Exception as error:
+    issue = failure_issue(error)
+    try:
+        write_metrics_manifest(
+            manifest_path,
+            run_id=run_id,
+            write_status="failed",
+            metrics_status=RunMetricsStatus.FAILED,
+            created_at=created_at,
+            source_evidence=None,
+            output_hashes={},
+            output_counts={},
+            issues=(issue,),
+        )
+    except Exception:
+        pass</code></pre></div>
+          <div class="guided-explanation"><h4>事务与所有权</h4><div class="guided-point"><strong>输入验证</strong><p>空<code>run_id</code>在任何写入前直接拒绝；目录所有权固定在<code>output_dir/metrics</code>。</p></div><div class="guided-point"><strong>状态变化</strong><p>Manifest从<code>aggregating</code>转到<code>complete</code>或<code>failed</code>，因此消费者不会把半写文件误认成已提交产物。</p></div><div class="guided-point success"><strong>产物所有权</strong><p>服务函数拥有<code>run-metrics.json</code>与<code>metrics/manifest.json</code>的同轮提交；Hash只在目标文件写完后生成。</p></div><div class="guided-point warning"><strong>失败边界</strong><p>聚合异常被转换成FAILED结果；即使失败Manifest自身写入也失败，函数仍不伪造成功状态。</p></div></div>
+        </div>
+      </article>
+      <article class="guided-step">
+        <div class="guided-step__title"><span class="guided-step__number">3</span><div><h3>来源加载先验Manifest与Hash，再验关系闭合</h3><p><code>load_sources()</code>建立文件信任；<code>validate_source_relationships()</code>建立成员所有权信任，两者缺一不可。</p></div></div>
+        <div class="guided-code-grid">
+          <div class="guided-source"><span class="guided-source__location">quality/metrics/sources.py::load_sources · 连续选段</span><pre><code>def load_sources(run_id: str, output_dir: Path) -&gt; MetricsSources:
+    run_path = output_dir / "run.json"
+    p0_manifest_path = output_dir / "merged" / "manifest.json"
+    request_metrics_path = output_dir / "merged" / "request-metrics.jsonl"
+    semantic_dir = output_dir / "semantic" / "merged"
+    semantic_manifest_path = semantic_dir / "manifest.json"
+
+    run = read_model(run_path, RunRecord, "run_record_invalid")
+    if run.run_id != run_id:
+        raise_source_error(
+            "run_id_mismatch", "run.json belongs to a different run", run.run_id
+        )
+
+    p0_manifest = read_json_object(p0_manifest_path, "p0_manifest_invalid")
+    require_manifest(
+        p0_manifest,
+        run_id=run_id,
+        status="complete",
+        versions={
+            "manifest_version": P0_MANIFEST_VERSION,
+            "schema_version": SCHEMA_VERSION,
+        },
+        code_prefix="p0",
+    )
+    p0_integrity_status = str(p0_manifest.get("integrity_status") or "unknown")
+    if p0_integrity_status == IntegrityStatus.FAILED.value:
+        raise_source_error(
+            "p0_integrity_failed", "P0 merged facts failed integrity validation"
+        )
+    p0_request_hash = validated_source_output_hash(
+        request_metrics_path,
+        (p0_manifest.get("output_hashes") or {}).get("request-metrics"),
+    )</code></pre><span class="guided-source__location">quality/metrics/validation.py::validate_source_relationships · 连续选段</span><pre><code>def validate_source_relationships(run_id: str, sources: MetricsSources) -&gt; None:
+    events = unique_index(
+        sources.requests,
+        lambda item: item.request_event_id,
+        "request_event_duplicate",
+    )
+    groups = unique_index(
+        sources.groups,
+        lambda item: item.request_group_id,
+        "request_group_duplicate",
+    )
+    sessions = unique_index(
+        sources.sessions,
+        lambda item: item.polling_session_id,
+        "polling_session_duplicate",
+    )
+    operations = unique_index(
+        sources.operations,
+        lambda item: item.operation_id,
+        "operation_duplicate",
+    )
+    for record in (
+        *sources.requests,
+        *sources.groups,
+        *sources.sessions,
+        *sources.operations,
+    ):
+        if record.run_id != run_id:
+            raise_source_error(
+                "foreign_run_record", "a source record belongs to another run"
+            )</code></pre></div>
+          <div class="guided-explanation"><h4>两层验证</h4><div class="guided-point"><strong>文件层</strong><p><code>run.json</code>、P0 Manifest、Semantic Manifest和目标文件Hash必须属于同一run并处于可消费状态。</p></div><div class="guided-point"><strong>关系层</strong><p>Event、Group、Polling Session、Operation先按稳定ID建立唯一索引，再拒绝重复ID和外来run记录。</p></div><div class="guided-point success"><strong>状态变化</strong><p>验证成功只产生不可变<code>MetricsSources</code>输入；此阶段不写Metrics，也不修改上游Artifact。</p></div><div class="guided-point warning"><strong>失败边界</strong><p>任何版本、状态、Hash或所有权断裂都抛<code>MetricsSourceError</code>，后续Builder没有降级猜测权限。</p></div></div>
+        </div>
+      </article>
+
+      <article class="guided-step">
+        <div class="guided-step__title"><span class="guided-step__number">4</span><div><h3>Builder只对WORKLOAD成员建分母，Writer拥有最终字节</h3><p>聚合器先构造三层成员集合，再计算排除、问题与状态；Writer原子写JSON并返回磁盘字节Hash。</p></div></div>
+        <div class="guided-code-grid">
+          <div class="guided-source"><span class="guided-source__location">quality/metrics/builder.py::build_run_metrics · 连续选段</span><pre><code>def build_run_metrics(
+    run_id: str,
+    sources: MetricsSources,
+    *,
+    generated_at: datetime,
+) -&gt; RunMetricsResult:
+    events = {item.request_event_id: item for item in sources.requests}
+    event_owner = {
+        event_id: group
+        for group in sources.groups
+        for event_id in group.attempt_event_ids
+    }
+    workload_operations = tuple(
+        sorted(
+            (
+                item
+                for item in sources.operations
+                if item.traffic_role is TrafficRole.WORKLOAD
+            ),
+            key=lambda item: item.operation_id,
+        )
+    )
+    workload_groups = tuple(
+        sorted(
+            (
+                item
+                for item in sources.groups
+                if item.traffic_role is TrafficRole.WORKLOAD
+            ),
+            key=lambda item: item.request_group_id,
+        )
+    )
+    workload_events = tuple(
+        sorted(
+            (
+                item
+                for item in sources.requests
+                if (
+                    (owner := event_owner.get(item.request_event_id)) is not None
+                    and owner.traffic_role is TrafficRole.WORKLOAD
+                )
+            ),
+            key=lambda item: item.request_event_id,
+        )
+    )
+    exclusions = build_exclusions(sources, event_owner)
+    issues, degraded_reasons = build_issues(sources, exclusions)
+    status = metrics_status(
+        sources.run.status,
+        workload_operation_count=len(workload_operations),
+        degraded_reasons=degraded_reasons,
+    )</code></pre><span class="guided-source__location">quality/metrics/writer.py::write_run_metrics / write_metrics_manifest · 非连续选段：两个完整函数</span><pre><code>def write_run_metrics(path: Path, metrics: RunMetricsResult) -&gt; str:
+    write_json_atomic(path, metrics)
+    return output_file_sha256(path)
+
+def write_metrics_manifest(
+    path: Path,
+    *,
+    run_id: str,
+    write_status: str,
+    metrics_status: RunMetricsStatus | None,
+    created_at: datetime,
+    source_evidence: SourceEvidence | None,
+    output_hashes: dict[str, str],
+    output_counts: dict[str, int],
+    issues: Sequence[MetricsIssue],
+) -&gt; None:
+    write_json_atomic(
+        path,
+        {
+            "manifest_version": RUN_METRICS_MANIFEST_VERSION,
+            "schema_version": RUN_METRICS_SCHEMA_VERSION,
+            "aggregation_version": RUN_METRICS_AGGREGATION_VERSION,
+            "run_id": run_id,
+            "write_status": write_status,
+            "metrics_status": (
+                metrics_status.value if metrics_status is not None else None
+            ),
+            "created_at": created_at,
+            "source_evidence": source_evidence,
+            "output_hashes": output_hashes,
+            "output_counts": output_counts,
+            "issues": tuple(issues),
+        },
+    )</code></pre></div>
+          <div class="guided-explanation"><h4>分母与提交</h4><div class="guided-point"><strong>成员资格</strong><p>Operation和Group直接按<code>traffic_role</code>筛选；Event必须先找到所属Group，再继承WORKLOAD资格。</p></div><div class="guided-point"><strong>状态变化</strong><p>排除项和degraded reasons决定<code>aggregated/no_data/degraded</code>，不是由“文件是否存在”决定。</p></div><div class="guided-point success"><strong>产物所有权</strong><p><code>write_json_atomic()</code>拥有最终JSON字节；Hash在落盘后读取，因此Manifest引用的是可复核磁盘事实。</p></div><div class="guided-point warning"><strong>边界</strong><p>Flaky导入不依赖本Metrics产物；Pipeline Reporting可以消费可信Metrics，但不得回写指标事实。</p></div></div>
+        </div>
+      </article>
+    </section>
 
     <section id='question' data-section><p class='kicker'>01 · First principles</p><h2>指标是对可信成员集合的函数，不是对文件中数字求平均</h2><p class='lead'>任何成功率、均值或usage总量都隐含两个前提：来源属于同一run且未被篡改，分母中的成员确实属于该指标。Metrics首先验证前提，再计算数字。</p><div class='grid3'><div class='card'><h3>来源可信</h3><p>版本、run_id、状态、Hash和P0证据链成立。</p></div><div class='card'><h3>成员可信</h3><p>Operation、Group、Event关系闭合且流量角色明确。</p></div><div class='card'><h3>表达可信</h3><p>缺失、未知和不适用保留语义，不偷换为0。</p></div></div><div class='callout warn'><strong>TOC约束：</strong>指标系统的约束不是计算公式，而是分母资格。分母不透明，再精确的小数也无法解释。</div></section>
 
@@ -63,8 +323,23 @@ try {
 finally { foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name,$old[$name]) } }</code></pre></div><div class='notes'><label>来源信任链<textarea data-note='trust' placeholder='run → P0 manifest/hash → Semantic manifest/hash → Metrics'></textarea></label><label>分母说明<textarea data-note='denominator' placeholder='Operation、Group、Event各自分母，CONTROL/UNKNOWN如何处理'></textarea></label><label>缺失解释<textarea data-note='missing' placeholder='eligible、sample、missing、unknown、not applicable的区别'></textarea></label><label>本轮指标<textarea data-note='evidence' placeholder='status、成功率分子/样本、usage覆盖、排除和degraded reasons'></textarea></label></div></section>
 
     <section id='design' data-section><p class='kicker'>11 · Design choice</p><h2>设计选择与适用边界</h2><div class='table-wrap'><table><tbody><tr><th>现方案</th><td>先验证P0与Semantic的run、版本、状态、Hash和成员关系，再按Operation、Request Group、Request Event三个分母计算精确指标。</td></tr><tr><th>替代方案</th><td>直接扫描结果文件或报告表格，对所有可见耗时做平均并把缺失值填成0。</td></tr><tr><th>选择理由</th><td>指标只对可信成员集合有意义；分层分母与显式缺失语义避免控制请求、未知成员和无数据状态污染结论。</td></tr><tr><th>不适用条件</th><td>实时监控的近似窗口、跨run趋势仓库或高基数在线查询需要流式指标与专用存储，本方案面向单run可审计聚合。</td></tr></tbody></table></div></section>
+
+    <section id="lesson-flow-summary" data-section>
+      <p class="section-kicker">FLOW · 课后流转总图</p><h2>从P0/Semantic Artifact到Metrics Manifest，再到下游消费</h2>
+      <figure class="lesson-flow-map">
+        <div class="flow-stage-list">
+          <article class="flow-stage"><div class="flow-stage__index">1</div><div class="flow-stage__function"><h3>测试入口与<code>aggregate_run_metrics()</code></h3><p>nodeid准备同run的P0、Semantic和Request事实，并把<code>run_id/output_dir</code>交给聚合服务。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>输入Artifact集合</h3><p><code>run.json</code>、P0 Manifest、Semantic Manifest及各自目标文件是只读输入；测试冻结期望Metrics计数与usage。</p></div></article>
+          <article class="flow-stage"><div class="flow-stage__index">2</div><div class="flow-stage__function"><h3><code>write_metrics_manifest()</code>预提交</h3><p>服务在读取上游前先写<code>write_status=aggregating</code>。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>Manifest声明事务未完成</h3><p>此时没有输出Hash和计数；Pipeline或人工检查不得把它当作可消费Metrics。</p></div></article>
+          <article class="flow-stage"><div class="flow-stage__index">3</div><div class="flow-stage__function"><h3><code>load_sources()</code></h3><p>按run → P0 → Semantic顺序验证版本、状态、integrity与磁盘Hash。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>可信<code>MetricsSources</code></h3><p>Artifact字节通过Manifest准入后才解析为模型；任何错误终止Metrics链，不影响并行的Flaky P0导入链。</p></div></article>
+          <article class="flow-stage"><div class="flow-stage__index">4</div><div class="flow-stage__function"><h3><code>validate_source_relationships()</code></h3><p>校验Event、Group、Session、Operation的唯一ID、同run身份和双向引用。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>成员所有权闭合</h3><p>只有找到唯一拥有者的成员才能继续；孤儿、重复、外来run或attempt顺序错误直接失败。</p></div></article>
+          <article class="flow-stage"><div class="flow-stage__index">5</div><div class="flow-stage__function"><h3><code>build_run_metrics()</code></h3><p>构造WORKLOAD Operation、Group、Event三层分母并计算排除、issues和Metrics状态。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3><code>RunMetricsResult</code></h3><p>CONTROL被排除，UNKNOWN形成降级证据；0、missing与not applicable保持不同语义。</p></div></article>
+          <article class="flow-stage"><div class="flow-stage__index">6</div><div class="flow-stage__function"><h3>Writer与下游边界</h3><p><code>write_run_metrics()</code>原子写目标并计算Hash，服务再提交complete或failed Manifest。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>Metrics → Pipeline；Flaky保持并行</h3><p>Pipeline Reporting只读取可信Metrics和Manifest生成视图；Flaky直接消费P0支线，不把Metrics当作身份历史来源。</p></div></article>
+        </div>
+        <div class="flow-fact-footer"><strong>最终所有权</strong><p>P0/Semantic生产上游Artifact与Manifest；Metrics负责成员资格、聚合、run-metrics与其Manifest；Flaky走独立P0分支；Pipeline只消费并呈现，不改写事实。</p></div>
+      </figure>
+    </section>
     <section id='quiz' data-section><p class='kicker'>12 · Knowledge check</p><h2>知识自测</h2><div class='quiz' data-answer='c'><strong>1. Metrics读取Semantic前先验证什么？</strong><label><input type='radio' name='q1' value='a'>只有文件扩展名</label><label><input type='radio' name='q1' value='b'>只有记录数量</label><label><input type='radio' name='q1' value='c'>run、版本、状态、Hash及P0证据绑定</label></div><div class='quiz' data-answer='b'><strong>2. CONTROL流量为什么不进入WORKLOAD分母？</strong><label><input type='radio' name='q2' value='a'>它一定失败</label><label><input type='radio' name='q2' value='b'>管理或usage查询会污染被测业务指标</label><label><input type='radio' name='q2' value='c'>它没有HTTP请求</label></div><div class='quiz' data-answer='a'><strong>3. usage缺失时input_tokens应如何处理？</strong><label><input type='radio' name='q3' value='a'>增加missing_count，不当作0</label><label><input type='radio' name='q3' value='b'>自动补0并进入均值</label><label><input type='radio' name='q3' value='c'>删除整个run</label></div><div class='quiz' data-answer='c'><strong>4. 来源可信但没有WORKLOAD Operation时状态是什么？</strong><label><input type='radio' name='q4' value='a'>failed</label><label><input type='radio' name='q4' value='b'>aggregated</label><label><input type='radio' name='q4' value='c'>no_data</label></div><div class='quiz' data-answer='b'><strong>5. Retry后成功时哪个说法正确？</strong><label><input type='radio' name='q5' value='a'>失败attempt应被删除</label><label><input type='radio' name='q5' value='b'>Operation可成功，Group显示rescue，Event仍保留失败attempt</label><label><input type='radio' name='q5' value='c'>三层结果必须完全相同</label></div><button class='primary' id='submit-quiz'>提交答案</button><div class='verdict' id='quiz-summary'>建议达到4/5再进入门禁。</div></section>
 
     <section id='gate' data-section><p class='kicker'>13 · Exit gate</p><h2>本课门禁</h2><div class='gate-list'><label class='gate'><input type='checkbox' data-gate='trust'><span>已完成run、P0、Semantic到Metrics的来源信任链。</span></label><label class='gate'><input type='checkbox' data-gate='membership'><span>能说明关系再验证与WORKLOAD成员资格。</span></label><label class='gate'><input type='checkbox' data-gate='layers'><span>能区分Operation、Group、Event和Case四层指标。</span></label><label class='gate'><input type='checkbox' data-gate='missing'><span>能解释0、missing、unknown、not applicable及其分母。</span></label><label class='gate'><input type='checkbox' data-gate='evidence'><span>已核对本轮Metrics状态、Hash、成功率和usage覆盖。</span></label></div><div class='notes'><label>成果位置<textarea data-note='gate-output-location' placeholder='记录run-metrics、分母表或来源核验结果的路径'></textarea></label><label>口头记录<textarea data-note='gate-oral-record' placeholder='解释为什么缺失不能按0进入平均值'></textarea></label></div><div class='callout good'><strong>验收句：</strong>我能从可信来源和成员资格解释每个指标的分母、排除与缺失，并区分aggregated、no_data、degraded和failed。</div><div class='footer'><div class='footer-links'><a class='button' href='第22天-语义关系与所有权完整性.html'>← 上一课</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a><a class='button' href='../接口测试框架六周学习课程.html#section-4'>术语表</a><a class='button' href='第24天-不稳定用例身份周期与导入.html'>下一课 →</a></div></div></section>
-  </article></main><script src='六周课程页.js'></script>
+  </article></main><script src="六周课程页.js"></script>
 </body></html>

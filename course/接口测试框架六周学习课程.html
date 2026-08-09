@@ -133,7 +133,7 @@
 <a class="toc-link toc-level-2 lesson-toc-link" href="%E5%88%86%E9%98%B6%E6%AE%B5%E8%AF%BE%E7%A8%8B/%E7%AC%AC24%E5%A4%A9-%E4%B8%8D%E7%A8%B3%E5%AE%9A%E7%94%A8%E4%BE%8B%E8%BA%AB%E4%BB%BD%E5%91%A8%E6%9C%9F%E4%B8%8E%E5%AF%BC%E5%85%A5.html"><span>Day 24：不稳定用例身份周期与导入</span><small>已生成</small></a>
 <a class="toc-link toc-level-2 lesson-toc-link" href="%E5%88%86%E9%98%B6%E6%AE%B5%E8%AF%BE%E7%A8%8B/%E7%AC%AC25%E5%A4%A9-%E4%B8%8D%E7%A8%B3%E5%AE%9A%E7%94%A8%E4%BE%8B%E7%8A%B6%E6%80%81%E4%B8%8E%E6%B2%BB%E7%90%86.html"><span>Day 25：不稳定用例状态与治理</span><small>已生成</small></a>
 <a class="toc-link toc-level-2" href="#week-5-gate" data-target="week-5-gate">第5周门禁</a>
-<a class="toc-link toc-level-1" href="#week-6" data-target="week-6">第6周：理解产物信任、报告、CI和完整实现链</a>
+<a class="toc-link toc-level-1" href="#week-6" data-target="week-6">第6周：深化产物信任、报告、CI和完整实现链</a>
 <a class="toc-link toc-level-2" href="#topic-10" data-target="topic-10">本周目标</a>
 <a class="toc-link toc-level-2 lesson-toc-link" href="%E5%88%86%E9%98%B6%E6%AE%B5%E8%AF%BE%E7%A8%8B/%E7%AC%AC26%E5%A4%A9-Artifact%E8%AF%BB%E5%8F%96Hash%E4%B8%8EManifest%E4%BF%A1%E4%BB%BB.html"><span>Day 26：Artifact读取Hash与Manifest信任</span><small>已生成</small></a>
 <a class="toc-link toc-level-2 lesson-toc-link" href="%E5%88%86%E9%98%B6%E6%AE%B5%E8%AF%BE%E7%A8%8B/%E7%AC%AC27%E5%A4%A9-%E6%B5%81%E6%B0%B4%E7%BA%BF%E6%8A%A5%E5%91%8A%E4%BA%8B%E5%AE%9E%E4%B8%8E%E5%A4%9A%E8%A7%86%E5%9B%BE.html"><span>Day 27：流水线报告事实与多视图</span><small>已生成</small></a>
@@ -349,10 +349,10 @@ common -X-&gt; quality</code></pre>
 </tr>
 <tr>
 <td>Capture</td>
-<td>捕获输入输出资源并管理下载任务</td>
-<td>Artifact可信消费</td>
+<td>捕获输入输出资源并管理下载任务；取消请求不等于线程已经结束</td>
+<td>Artifact可信消费或同步收口证明</td>
 <td>Day8</td>
-<td>Capture与下载测试</td>
+<td>Capture与下载测试、done_event</td>
 </tr>
 <tr>
 <td>Retry</td>
@@ -377,10 +377,10 @@ common -X-&gt; quality</code></pre>
 </tr>
 <tr>
 <td>TestContext</td>
-<td>保存跨步骤测试数据并按LIFO清理资源</td>
+<td>按“提取/缺失处理 → transform → expected_type校验 → 写入”保存跨步骤数据，并按LIFO清理资源</td>
 <td>RequestContext</td>
 <td>Day12</td>
-<td>Context清理测试</td>
+<td>Context提取与清理测试</td>
 </tr>
 <tr>
 <td>ContextVar</td>
@@ -479,28 +479,28 @@ common -X-&gt; quality</code></pre>
 </tr>
 <tr>
 <td>Manifest</td>
-<td>声明身份、来源、完整性与可消费状态</td>
-<td>文件存在性</td>
+<td>声明身份、版本、提交状态、完整性状态与目标产物Hash；是否可消费仍由消费者准入策略决定</td>
+<td>文件存在性或发布者真实性证明</td>
 <td>Day21</td>
-<td>各级Manifest</td>
+<td>各级Manifest与消费者校验</td>
 </tr>
 <tr>
 <td>Semantic</td>
-<td>从可信P0请求事实与Semantic分片建立Case、Operation、Request Group等关系</td>
-<td>原始请求事实</td>
+<td>当前实现只以P0 run_id、status=complete和request-metrics Hash作为来源门禁，再与Semantic分片建立Case、Operation、Request Group等关系</td>
+<td>完整性可信P0；当前未检查P0版本和integrity_status</td>
 <td>Day22</td>
 <td>Semantic JSONL与Manifest</td>
 </tr>
 <tr>
 <td>Metrics</td>
-<td>同时消费可信P0与Semantic关系，在来源与分母可解释后派生指标</td>
+<td>同时消费满足准入条件的P0与Semantic关系，在来源与分母可解释后派生指标</td>
 <td>原始事实</td>
 <td>Day23</td>
 <td>run-metrics.json</td>
 </tr>
 <tr>
 <td>Flaky identity</td>
-<td>从可信P0 Case、Failure和完整性事实独立建立跨run稳定身份，不依赖Semantic或Metrics</td>
+<td>从满足Flaky导入准入条件的P0 Case、Failure和完整性事实独立建立跨run稳定身份，不依赖Semantic或Metrics</td>
 <td>单次execution_id</td>
 <td>Day24</td>
 <td>identity与import测试</td>
@@ -514,15 +514,15 @@ common -X-&gt; quality</code></pre>
 </tr>
 <tr>
 <td>detected_state</td>
-<td>机器根据历史样本得到的检测状态</td>
-<td>人工治理状态</td>
+<td>自动状态域中的检测/评估基线；部分人工裁决和恢复完成会重新锚定或同步它</td>
+<td>永远不受人工操作影响的纯机器列</td>
 <td>Day25</td>
-<td>projection测试</td>
+<td>projection与override测试</td>
 </tr>
 <tr>
 <td>current_state</td>
-<td>人工治理后的当前状态</td>
-<td>原始检测结论</td>
+<td>叠加自动检测、人工裁决和QUARANTINED/RECOVERING治理阶段后的有效状态</td>
+<td>单纯的人工状态列</td>
 <td>Day25</td>
 <td>governance审计记录</td>
 </tr>
@@ -669,15 +669,15 @@ common -X-&gt; quality</code></pre>
 </tr>
 <tr>
 <td>第5周</td>
-<td>Quality归并、语义、指标与Flaky</td>
-<td><code>quality/</code></td>
-<td>解释机器事实如何形成可信关系、指标和历史状态</td>
+<td>Artifact基础准入、Quality归并、语义、指标与Flaky</td>
+<td><code>quality/</code>、Manifest消费者</td>
+<td>区分提交完成、完整性状态和消费者准入，再解释P0如何分叉形成关系、指标和历史状态</td>
 </tr>
 <tr>
 <td>第6周</td>
-<td>Artifact、Reporting、Jenkins与综合串联</td>
+<td>Artifact高级边界、Reporting、Jenkins与综合串联</td>
 <td><code>util/artifact_io.py</code>、<code>pipeline_reporting/</code>、<code>Jenkinsfile</code></td>
-<td>解释产物信任、报告视图、CI编排和同轮证据链</td>
+<td>比较跨消费者策略与Hash/签名边界，解释报告视图、CI编排和同轮证据链</td>
 </tr>
 </tbody></table></div>
 <h3 id="topic-4" tabindex="-1"><a class="heading-anchor" href="#topic-4" aria-label="跳转到本节">#</a>独立课程入口约定</h3>
@@ -760,12 +760,12 @@ common -X-&gt; quality</code></pre>
 <h2 id="day-8" tabindex="-1"><a class="heading-anchor" href="#day-8" aria-label="跳转到本节">#</a>Day 8：资源捕获下载与原子落盘</h2>
 <div class="lesson-entry"><a href="%E5%88%86%E9%98%B6%E6%AE%B5%E8%AF%BE%E7%A8%8B/%E7%AC%AC08%E5%A4%A9-%E8%B5%84%E6%BA%90%E6%8D%95%E8%8E%B7%E4%B8%8B%E8%BD%BD%E4%B8%8E%E5%8E%9F%E5%AD%90%E8%90%BD%E7%9B%98.html">进入第8天课程</a><span class="lesson-status ready">已生成</span></div>
 <ul>
-<li><strong>实现问题</strong>：请求输入输出资源如何捕获、下载、关闭并通过临时文件安全落盘。</li>
+<li><strong>实现问题</strong>：请求输入输出资源如何捕获并安全落盘，以及取消请求、worker观察取消、Response/文件关闭、临时文件清理、done_event和线程结束分别能证明什么。</li>
 <li><strong>核心入口</strong>：Media/Capture、downloads和<code>.part → 校验 → replace</code>落盘链。</li>
-<li><strong>离线验证</strong>：只运行已有Capture与下载测试，核对取消、大小限制、异常清理和最终文件可见时机。</li>
-<li><strong>可核验产出</strong>：输入/输出Capture触发链、下载资源所有权表、原子落盘步骤和失败后目录记录。</li>
+<li><strong>离线验证</strong>：现有<code>tests/test_capture_downloads.py</code>只有4项测试，分别证明关闭Capture不启动线程、输出下载失败仍返回原Response、累计字节超限后目录为空，以及输入/输出命名规则一致；取消观察、<code>done_event</code>、Response关闭、Content-Length预检、成功replace时机和线程结束只能做源码追踪，不能宣称已被该测试文件覆盖。</li>
+<li><strong>可核验产出</strong>：输入/输出Capture触发链、五阶段资源状态表、四项测试证据/未覆盖合同对照表，以及当前实现无法同步证明完全收口的边界说明。</li>
 </ul>
-<p>本日不读取<code>util/artifact_io.py</code>，不学习JSON/JSONL读取、Hash或Manifest。安全落盘不等于可信消费，完整Artifact信任链统一放到Day26。</p>
+<p>本日不读取<code>util/artifact_io.py</code>，不学习JSON/JSONL读取、Hash或Manifest。安全落盘不等于可信消费；基础Artifact准入模型在Day21建立，跨消费者和签名边界在Day26深化。</p>
 <h2 id="day-9" tabindex="-1"><a class="heading-anchor" href="#day-9" aria-label="跳转到本节">#</a>Day 9：请求重试策略</h2>
 <div class="lesson-entry"><a href="%E5%88%86%E9%98%B6%E6%AE%B5%E8%AF%BE%E7%A8%8B/%E7%AC%AC09%E5%A4%A9-%E8%AF%B7%E6%B1%82%E9%87%8D%E8%AF%95%E7%AD%96%E7%95%A5.html">进入第9天课程</a><span class="lesson-status ready">已生成</span></div>
 <ul>
@@ -787,7 +787,7 @@ common -X-&gt; quality</code></pre>
 <ul>
 <li class="task-item"><label><input type="checkbox" data-progress-id="item-7"> <span>已提交Request、Retry和Polling预算关系图。</span></label></li>
 <li class="task-item"><label><input type="checkbox" data-progress-id="item-8"> <span>能解释真实参数与诊断副本为什么必须分离。</span></label></li>
-<li class="task-item"><label><input type="checkbox" data-progress-id="item-9"> <span>能说明Capture、Response和下载文件的关闭或落盘所有者。</span></label></li>
+<li class="task-item"><label><input type="checkbox" data-progress-id="item-9"> <span>能区分取消请求、worker结束、Response/文件关闭、临时文件清理和线程完全结束，并说明当前实现没有<code>join()</code>保证。</span></label></li>
 <li class="task-item"><label><input type="checkbox" data-progress-id="item-10"> <span>能区分单次attempt预算、Retry等待和Polling总deadline。</span></label></li>
 <li class="task-item"><label><input type="checkbox" data-progress-id="item-11"> <span>Day8没有提前把Artifact原语解释成完整信任模型。</span></label></li>
 <li class="task-item"><label><input type="checkbox" data-progress-id="item-12"> <span>已按六维量表完成第2周评分，总分至少9分且所有权、证据映射均不为0分。</span></label></li>
@@ -807,10 +807,10 @@ common -X-&gt; quality</code></pre>
 <h2 id="day-12" tabindex="-1"><a class="heading-anchor" href="#day-12" aria-label="跳转到本节">#</a>Day 12：测试上下文提取与资源清理</h2>
 <div class="lesson-entry"><a href="%E5%88%86%E9%98%B6%E6%AE%B5%E8%AF%BE%E7%A8%8B/%E7%AC%AC12%E5%A4%A9-%E6%B5%8B%E8%AF%95%E4%B8%8A%E4%B8%8B%E6%96%87%E6%8F%90%E5%8F%96%E4%B8%8E%E8%B5%84%E6%BA%90%E6%B8%85%E7%90%86.html">进入第12天课程</a><span class="lesson-status ready">已生成</span></div>
 <ul>
-<li><strong>实现问题</strong>：TestContext如何提取、转换、保存数据并按LIFO清理资源。</li>
+<li><strong>实现问题</strong>：TestContext如何按“提取与缺失/默认处理 → <code>transform</code>转换 → <code>expected_type</code>校验 → 写入Context”的顺序保存数据，并按LIFO清理资源。</li>
 <li><strong>核心入口</strong>：<code>common/test_context.py</code>和cleanup测试。</li>
-<li><strong>离线验证</strong>：运行已有上下文提取与清理测试。</li>
-<li><strong>可核验产出</strong>：数据提取链、转换边界和LIFO清理所有权图。</li>
+<li><strong>离线验证</strong>：运行已有上下文提取与清理测试，验证<code>expected_type</code>只做<code>isinstance</code>校验而不承担转换。</li>
+<li><strong>可核验产出</strong>：四阶段数据写入链、transform/expected_type职责表和LIFO清理所有权图。</li>
 </ul>
 <h2 id="day-13" tabindex="-1"><a class="heading-anchor" href="#day-13" aria-label="跳转到本节">#</a>Day 13：上下文传播与并发隔离</h2>
 <div class="lesson-entry"><a href="%E5%88%86%E9%98%B6%E6%AE%B5%E8%AF%BE%E7%A8%8B/%E7%AC%AC13%E5%A4%A9-%E4%B8%8A%E4%B8%8B%E6%96%87%E4%BC%A0%E6%92%AD%E4%B8%8E%E5%B9%B6%E5%8F%91%E9%9A%94%E7%A6%BB.html">进入第13天课程</a><span class="lesson-status ready">已生成</span></div>
@@ -903,26 +903,29 @@ common -X-&gt; quality</code></pre>
 <hr>
 <h1 id="week-5" tabindex="-1"><a class="heading-anchor" href="#week-5" aria-label="跳转到本节">#</a>第5周：理解Quality归并、语义、指标与Flaky</h1>
 <h2 id="topic-9" tabindex="-1"><a class="heading-anchor" href="#topic-9" aria-label="跳转到本节">#</a>本周目标</h2>
-<p>理解worker事实如何经过完整性归并形成可信P0。P0事实形成后分成两条硬依赖支线：一条建立Semantic并派生Metrics，另一条直接导入Flaky历史并推进State与Governance；课程顺序不等于数据依赖顺序。</p>
-<pre><code class="language-text">P0 → Semantic → Metrics
- └→ Flaky Import → State → Governance</code></pre>
+<p>先建立Artifact基础准入模型，再理解worker事实如何完成提交、表达完整性并形成可由具体消费者判定是否接纳的P0。P0事实形成后分成两条硬依赖支线，但每条支线仍要执行自己的消费者准入策略：一条建立Semantic并派生Metrics，另一条直接导入Flaky历史并推进State与Governance；课程顺序不等于数据依赖顺序。</p>
+<pre><code class="language-text">Manifest最小解析与身份/版本/status/integrity校验
+→ 目标产物bytes与Manifest Hash核对
+→ 当前消费者准入判定
+→ P0 → Semantic → Metrics
+     └→ Flaky Import → State → Governance</code></pre>
 <h2 id="day-21" tabindex="-1"><a class="heading-anchor" href="#day-21" aria-label="跳转到本节">#</a>Day 21：质量事实归并与完整性</h2>
 <div class="lesson-entry"><a href="%E5%88%86%E9%98%B6%E6%AE%B5%E8%AF%BE%E7%A8%8B/%E7%AC%AC21%E5%A4%A9-%E8%B4%A8%E9%87%8F%E4%BA%8B%E5%AE%9E%E5%BD%92%E5%B9%B6%E4%B8%8E%E5%AE%8C%E6%95%B4%E6%80%A7.html">进入第21天课程</a><span class="lesson-status ready">已生成</span></div>
 <ul>
-<li><strong>实现问题</strong>：worker分片如何通过提交清单、Manifest和Aggregator形成可信P0事实。</li>
+<li><strong>实现问题</strong>：Manifest与目标产物如何形成基础准入链，以及worker分片如何通过提交清单和Aggregator完成P0写入；<code>status=complete</code>为什么只表示写入事务完成而不等于完整性通过或发布者可信。</li>
 <li><strong>核心入口</strong>：<code>quality/aggregator.py</code>及分片Manifest模型。</li>
-<li><strong>离线验证</strong>：运行P0归并专项测试并核对分片、提交与最终文件关系。</li>
-<li><strong>可核验产出</strong>：归并链、完整性检查表和缺失值表达规则。</li>
-<li><strong>关系锚点</strong>：读取Day20 worker事实；本日新增submission、Manifest和P0归并；同时向Day22 Semantic支线与Day24 Flaky Import支线输出可信基础事实。</li>
+<li><strong>离线验证</strong>：运行P0归并专项测试并核对分片、提交、最终文件、<code>status</code>、<code>integrity_status</code>和<code>output_hashes</code>关系。</li>
+<li><strong>可核验产出</strong>：Manifest基础准入链、归并链、<code>complete/degraded/failed</code>消费矩阵和缺失值表达规则。</li>
+<li><strong>关系锚点</strong>：读取Day20 worker事实；本日新增submission、Manifest基础准入模型和P0归并；向Day22与Day24输出“已完成提交、等待各消费者按身份/版本/完整性/Hash策略判定”的基础事实。</li>
 </ul>
 <h2 id="day-22" tabindex="-1"><a class="heading-anchor" href="#day-22" aria-label="跳转到本节">#</a>Day 22：语义关系与所有权完整性</h2>
 <div class="lesson-entry"><a href="%E5%88%86%E9%98%B6%E6%AE%B5%E8%AF%BE%E7%A8%8B/%E7%AC%AC22%E5%A4%A9-%E8%AF%AD%E4%B9%89%E5%85%B3%E7%B3%BB%E4%B8%8E%E6%89%80%E6%9C%89%E6%9D%83%E5%AE%8C%E6%95%B4%E6%80%A7.html">进入第22天课程</a><span class="lesson-status ready">已生成</span></div>
 <ul>
-<li><strong>实现问题</strong>：Case、Operation、Request Group和Polling如何形成可追踪的语义关系。</li>
+<li><strong>实现问题</strong>：Case、Operation、Request Group和Polling如何形成可追踪的语义关系，以及当前Semantic为何只能把P0表述为“run_id、status和目标Hash通过”，不能称为“完整性可信P0”。</li>
 <li><strong>核心入口</strong>：Semantic模型、Collector与Aggregator。</li>
-<li><strong>离线验证</strong>：运行Semantic专项测试并读取已有语义Manifest与JSONL夹具。</li>
-<li><strong>可核验产出</strong>：语义实体关系图、所有权完整性表和关系终态说明。</li>
-<li><strong>关系锚点</strong>：读取Day21可信P0事实与Semantic worker分片；本日新增语义关系；只向Day23 Metrics输出可追踪的Case、Operation与Request Group关系，不成为Flaky Import前置。</li>
+<li><strong>离线验证</strong>：运行Semantic专项测试并对照<code>quality/semantic_aggregator.py::_load_p0_evidence</code>，确认它检查run_id、status=complete和request-metrics Hash，但不检查P0版本或integrity_status。</li>
+<li><strong>可核验产出</strong>：语义实体关系图、所有权完整性表、当前P0门禁/未检查项对照表和关系终态说明。</li>
+<li><strong>关系锚点</strong>：读取Day21已完成提交且通过当前有限门禁的P0事实与Semantic worker分片；本日新增语义关系；只向Day23 Metrics输出可追踪的Case、Operation与Request Group关系，不成为Flaky Import前置，也不把该P0升级表述为完整性可信。</li>
 </ul>
 <h2 id="day-23" tabindex="-1"><a class="heading-anchor" href="#day-23" aria-label="跳转到本节">#</a>Day 23：指标来源验证与解释</h2>
 <div class="lesson-entry"><a href="%E5%88%86%E9%98%B6%E6%AE%B5%E8%AF%BE%E7%A8%8B/%E7%AC%AC23%E5%A4%A9-%E6%8C%87%E6%A0%87%E6%9D%A5%E6%BA%90%E9%AA%8C%E8%AF%81%E4%B8%8E%E8%A7%A3%E9%87%8A.html">进入第23天课程</a><span class="lesson-status ready">已生成</span></div>
@@ -940,38 +943,38 @@ common -X-&gt; quality</code></pre>
 <li><strong>核心入口</strong>：Flaky models、importer和repository公开边界。</li>
 <li><strong>离线验证</strong>：查看CLI帮助并运行已有导入与identity测试，数据库只使用测试夹具或临时路径。</li>
 <li><strong>可核验产出</strong>：identity/epoch/Observation关系图和幂等导入链。</li>
-<li><strong>关系锚点</strong>：从Day21形成的可信P0 run、Case、Failure和完整性事实直接读取；不依赖Semantic或Metrics；本日新增可比较身份、epoch和Observation，并向Day25输出可治理历史。</li>
+<li><strong>关系锚点</strong>：从Day21形成并通过Flaky导入准入条件的P0 run、Case、Failure和完整性事实直接读取；不依赖Semantic或Metrics；本日新增可比较身份、epoch和Observation，并向Day25输出可治理历史。</li>
 </ul>
 <h2 id="day-25" tabindex="-1"><a class="heading-anchor" href="#day-25" aria-label="跳转到本节">#</a>Day 25：不稳定用例状态与治理</h2>
 <div class="lesson-entry"><a href="%E5%88%86%E9%98%B6%E6%AE%B5%E8%AF%BE%E7%A8%8B/%E7%AC%AC25%E5%A4%A9-%E4%B8%8D%E7%A8%B3%E5%AE%9A%E7%94%A8%E4%BE%8B%E7%8A%B6%E6%80%81%E4%B8%8E%E6%B2%BB%E7%90%86.html">进入第25天课程</a><span class="lesson-status ready">已生成</span></div>
 <ul>
-<li><strong>实现问题</strong>：检测状态与人工治理状态如何并存，公开CLI如何更新并审计治理信息。</li>
+<li><strong>实现问题</strong>：检测基线与有效治理状态如何按不同转换规则耦合，公开CLI如何更新两列并审计治理信息。</li>
 <li><strong>核心入口</strong>：projection、governance和Flaky CLI。</li>
 <li><strong>离线验证</strong>：运行已有状态机与治理测试，不连接Jenkins持久化数据库。</li>
-<li><strong>可核验产出</strong>：detected_state/current_state双状态图、命令与审计职责表。</li>
-<li><strong>关系锚点</strong>：读取Day24身份与历史样本；本日新增检测状态、人工状态和审计；不替代单轮P0事实。</li>
-<li><strong>周复盘30～45分钟</strong>：在本周主成果中补全两条分支，明确<code>P0 → Semantic → Metrics</code>与<code>P0 → Flaky Import → State → Governance</code>共享可信P0但彼此不串行依赖，并订正至少一个Manifest、identity或状态混淆。</li>
+<li><strong>可核验产出</strong>：detected_state/current_state转换矩阵、命令与审计职责表，明确哪些动作同时改两列、哪些治理动作主要只改current_state。</li>
+<li><strong>关系锚点</strong>：读取Day24身份与历史样本；本日新增检测基线、有效状态、人工裁决、治理阶段和审计；不替代单轮P0事实。</li>
+<li><strong>周复盘30～45分钟</strong>：在本周主成果中补全两条分支，明确<code>P0 → Semantic → Metrics</code>与<code>P0 → Flaky Import → State → Governance</code>共享已完成提交的P0，但分别执行自己的准入策略且彼此不串行依赖；订正至少一个Manifest、identity或双状态混淆。</li>
 </ul>
 <h2 id="week-5-gate" tabindex="-1"><a class="heading-anchor" href="#week-5-gate" aria-label="跳转到本节">#</a>第5周门禁</h2>
 <ul>
 <li class="task-item"><label><input type="checkbox" data-progress-id="item-25"> <span>已在同一主成果中画出P0分叉到Semantic/Metrics与Flaky/State/Governance的证据关系。</span></label></li>
-<li class="task-item"><label><input type="checkbox" data-progress-id="item-26"> <span>能解释分片事实、Manifest和最终归并文件的信任关系。</span></label></li>
+<li class="task-item"><label><input type="checkbox" data-progress-id="item-26"> <span>能区分<code>status=complete</code>、<code>integrity_status</code>、Hash匹配、真实性和消费者准入策略。</span></label></li>
 <li class="task-item"><label><input type="checkbox" data-progress-id="item-27"> <span>能区分原始事实、语义关系和派生指标。</span></label></li>
-<li class="task-item"><label><input type="checkbox" data-progress-id="item-28"> <span>能解释Flaky可比较身份、epoch、检测状态和人工状态。</span></label></li>
+<li class="task-item"><label><input type="checkbox" data-progress-id="item-28"> <span>能解释Flaky可比较身份、epoch、检测基线、有效状态及不同人工动作对两列的更新规则。</span></label></li>
 <li class="task-item"><label><input type="checkbox" data-progress-id="item-29"> <span>Flaky实践只使用帮助、已有测试或隔离数据库。</span></label></li>
 <li class="task-item"><label><input type="checkbox" data-progress-id="item-30"> <span>已按六维量表完成第5周评分，总分至少9分且所有权、证据映射均不为0分。</span></label></li>
 </ul>
 <hr>
-<h1 id="week-6" tabindex="-1"><a class="heading-anchor" href="#week-6" aria-label="跳转到本节">#</a>第6周：理解产物信任、报告、CI和完整实现链</h1>
+<h1 id="week-6" tabindex="-1"><a class="heading-anchor" href="#week-6" aria-label="跳转到本节">#</a>第6周：深化产物信任、报告、CI和完整实现链</h1>
 <h2 id="topic-10" tabindex="-1"><a class="heading-anchor" href="#topic-10" aria-label="跳转到本节">#</a>本周目标</h2>
-<p>完成Artifact信任、Pipeline Reporting、Jenkins编排与现有离线场景跨层追踪，最终用同一轮Quality与Reporting证据完成答辩。</p>
+<p>在Day21基础准入模型之上比较不同消费者的接纳策略，区分Hash完整性与签名/可信分发渠道提供的真实性边界，再完成Pipeline Reporting、Jenkins编排与现有离线场景跨层追踪。</p>
 <h2 id="day-26" tabindex="-1"><a class="heading-anchor" href="#day-26" aria-label="跳转到本节">#</a>Day 26：Artifact读取Hash与Manifest信任</h2>
 <div class="lesson-entry"><a href="%E5%88%86%E9%98%B6%E6%AE%B5%E8%AF%BE%E7%A8%8B/%E7%AC%AC26%E5%A4%A9-Artifact%E8%AF%BB%E5%8F%96Hash%E4%B8%8EManifest%E4%BF%A1%E4%BB%BB.html">进入第26天课程</a><span class="lesson-status ready">已生成</span></div>
 <ul>
-<li><strong>实现问题</strong>：磁盘原始bytes如何经过JSON/JSONL读取、Hash、Manifest与完整输出集合检查后被领域消费者可信使用。</li>
+<li><strong>实现问题</strong>：不同消费者如何复用Day21基础准入模型，并把Manifest链和目标产物链分开；Hash为什么只能证明内容一致，不能独立证明Manifest发布者真实性。</li>
 <li><strong>核心入口</strong>：<code>util/artifact_io.py</code>、Metrics与Flaky消费者。</li>
-<li><strong>离线验证</strong>：运行现有Artifact、Metrics和Flaky信任测试，只读取仓库已有夹具并核对原始bytes Hash。</li>
-<li><strong>可核验产出</strong>：<code>bytes → parse → Hash → Manifest → 领域消费者</code>可信消费链、Hash/签名边界和领域错误职责矩阵。</li>
+<li><strong>离线验证</strong>：运行现有Artifact、Metrics和Flaky信任测试，分别核对Manifest最小解析与字段准入、目标产物bytes Hash、Schema/领域解析顺序和消费者差异。</li>
+<li><strong>可核验产出</strong>：<code>Manifest bytes → 最小解析 → 身份/版本/status/integrity → 外部签名或可信渠道边界</code>与<code>目标bytes → Hash核对 → Schema/领域解析</code>双链、跨消费者矩阵和领域错误职责表。</li>
 <li><strong>Day29材料</strong>：形成Artifact信任边界卡片，后续直接纳入跨层证据说明。</li>
 </ul>
 <h2 id="day-27" tabindex="-1"><a class="heading-anchor" href="#day-27" aria-label="跳转到本节">#</a>Day 27：流水线报告事实与多视图</h2>
@@ -1008,6 +1011,8 @@ common -X-&gt; quality</code></pre>
 <li><strong>实现问题</strong>：如何证明Runner、Quality和Pipeline Summary来自同一轮离线执行，而不是历史产物拼接。</li>
 <li><strong>核心入口</strong>：<code>run_master.py</code>、Quality环境开关、<code>pipeline_reporting</code> CLI及本轮<code>reports/</code>证据。</li>
 <li><strong>学习边界</strong>：不新增功能、不制造失败；Flaky默认关闭，需要学习Flaky时只能使用临时数据库。</li>
+<li><strong>脚本自动检查范围</strong>：必需文件与Allure raw存在、四个Quality run_id一致、Runner非NOT_RUN stage_id与P0 expected_execution_ids均为<code>serial-pool</code>、P0/Semantic/Metrics提交状态、Reporting质量阶段与run_id warning、核心文件时间和JUnit数量。</li>
+<li><strong>人工答辩范围</strong>：Runner target、planned nodeids、final/原始退出码、P0 integrity、Semantic/Metrics上游引用，以及Markdown/JSON关键结论一致性；这些不能宣称由内嵌脚本自动验证。</li>
 <li><strong>答辩范围</strong>：解释Day29调用链、各层所有权、同轮身份、事实优先级和安全边界。</li>
 <li><strong>总复盘</strong>：在同一“同轮证据答辩包”中更新第6周及全课程关系、错误订正和六维最终评分，不再新增独立复盘文件。</li>
 </ul>

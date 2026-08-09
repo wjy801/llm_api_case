@@ -1,18 +1,700 @@
-<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta name='description' content='接口测试框架源码架构与证据链六周课程第12天：TestContext提取与资源清理'><title>第12天｜测试上下文提取与资源清理</title><link rel='stylesheet' href='六周课程页.css'></head><body data-day='12'>
-<aside class='side' id='side'><div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第12天 · 用例级状态与清理</h2><p>第3周 / 流式、上下文、并发与收集</p></div><nav class='nav'><a href='#question'><span class='num'>01</span><span>问题与边界</span></a><a href='#entry'><span class='num'>02</span><span>源码入口</span></a><a href='#scope'><span class='num'>03</span><span>状态作用域</span></a><a href='#extract'><span class='num'>04</span><span>提取合同</span></a><a href='#transform'><span class='num'>05</span><span>类型与转换</span></a><a href='#cleanup'><span class='num'>06</span><span>LIFO清理</span></a><a href='#errors'><span class='num'>07</span><span>错误归并</span></a><a href='#evidence'><span class='num'>08</span><span>测试证据</span></a><a href='#design'><span class='num'>D</span><span>设计选择与边界</span></a><a href='#practice'><span class='num'>09</span><span>离线实践</span></a><a href='#output'><span class='num'>10</span><span>当日产出</span></a><a href='#quiz'><span class='num'>11</span><span>知识自测</span></a><a href='#gate'><span class='num'>12</span><span>退出门禁</span></a></nav><div class='meter'><div class='meter-row'><span>门禁进度</span><span id='gate-text'>0/5</span></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div></aside>
+<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta name='description' content='接口测试框架源码架构与证据链六周课程第12天：TestContext提取与资源清理'><title>第12天｜测试上下文提取与资源清理</title><link rel='stylesheet' href="六周课程页.css"></head><body data-day='12'>
+<aside class='side' id='side'><div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第12天 · 用例级状态与清理</h2><p>第3周 / 流式、上下文、并发与收集</p></div><nav class='nav'><a href='#learning-objectives'><span class='num'>O</span><span>学习目标</span></a><a href='#code-first-walkthrough'><span class='num'>C</span><span>代码先行</span></a><a href='#question'><span class='num'>01</span><span>问题与边界</span></a><a href='#entry'><span class='num'>02</span><span>源码入口</span></a><a href='#scope'><span class='num'>03</span><span>状态作用域</span></a><a href='#extract'><span class='num'>04</span><span>提取合同</span></a><a href='#transform'><span class='num'>05</span><span>转换与类型校验</span></a><a href='#cleanup'><span class='num'>06</span><span>LIFO清理</span></a><a href='#errors'><span class='num'>07</span><span>错误归并</span></a><a href='#evidence'><span class='num'>08</span><span>测试证据</span></a><a href='#design'><span class='num'>D</span><span>设计选择与边界</span></a><a href='#practice'><span class='num'>09</span><span>离线实践</span></a><a href='#output'><span class='num'>10</span><span>当日产出</span></a><a href="#source-code"><span class='num'>S</span><span>关键源码</span></a><a href='#lesson-flow-summary'><span class='num'>F</span><span>课后流转总图</span></a><a href='#quiz'><span class='num'>11</span><span>知识自测</span></a><a href='#gate'><span class='num'>12</span><span>退出门禁</span></a></nav><div class='meter'><div class='meter-row'><span>门禁进度</span><span id='gate-text'>0/5</span></div><div class='meter-track'><div class='meter-value' id='gate-value'></div></div></div></aside>
 <main class='main'><div class='topbar'><div><button class='menu' id='menu'>本课目录</button> 第12天 · 建议学习 1.5～2.5 小时</div><div class='toolbar'><a class='button' href='../接口测试框架六周学习课程.html'>课程大纲</a><a class='button' href='../接口测试框架六周学习课程.html#section-4'>术语表</a><button class='button' id='reset'>重置本课记录</button></div></div><article class='lesson'>
-<header class='hero'><p class='eyebrow'>WEEK 3 · DAY 12</p><h1>TestContext提取、转换与资源清理</h1><p class='hero-lead'>测试上下文不是全局字典，而是一次用例内传递确定值、注册资源清理并在失败路径完成收口的状态容器。</p><div class='pills'><span class='pill'>Case scope</span><span class='pill'>Extract</span><span class='pill'>Transform</span><span class='pill'>LIFO cleanup</span></div><div class='outcome'><strong>当日产出：</strong>一张“响应边界 → 类型化变量 → 后续步骤 → 逆序清理”的用例级生命周期图。</div></header>
-<section id='question' data-section><p class='kicker'>01 · Question</p><h2>为什么上下文既要保存值，也要拥有清理顺序</h2><p class='lead'>跨步骤测试需要复用ID、Header、Cookie等值，同时必须保证中途断言失败后已创建资源仍被释放。TestContext把两类责任限制在单个用例作用域内。</p><div class='callout warn'><strong>本课边界：</strong>只学习提取、转换和cleanup；ContextVar线程传播与并发隔离放到第13天。</div></section>
-<section id='entry' data-section><p class='kicker'>02 · Source entry</p><h2>三个入口构成实现证据</h2><div class='grid3'><div class='card'><h3>实现</h3><p><code>common/test_context.py</code>保存变量、提取规则和cleanup栈。</p></div><div class='card'><h3>业务分类</h3><p><code>module/offline_framework_example/test_context_cleanup.py</code>验证真实loopback流程。</p></div><div class='card'><h3>单元合同</h3><p><code>tests/test_test_context.py</code>保护提取、类型和错误语义。</p></div></div></section>
+<header class='hero'><p class='eyebrow'>WEEK 3 · DAY 12</p><h1>TestContext提取、转换与资源清理</h1><p class='hero-lead'>测试上下文不是全局字典，而是一次用例内完成提取与默认处理、transform转换、expected_type类型校验、确定值写入和资源清理的状态容器。</p><div class='pills'><span class='pill'>Case scope</span><span class='pill'>Extract</span><span class='pill'>Transform</span><span class='pill'>expected_type</span><span class='pill'>LIFO cleanup</span></div><div class='outcome'><strong>当日产出：</strong>一张“提取/缺失与默认处理 → transform转换 → expected_type类型校验 → 写入TestContext → 后续步骤 → 逆序清理”的用例级生命周期图。</div></header>
+<section id="learning-objectives" data-section><p class="kicker">01 · Learning objectives</p><h2>先把一个用例的值与资源责任追到底</h2><div class="grid2"><div class="card"><h3>定位真实Act</h3><p>从离线分类测试中的<code>extract()</code>与<code>cleanup()</code>开始，不从实现文件首行背接口。</p></div><div class="card"><h3>解释值写入顺序</h3><p>能说明缺失/default、transform、expected_type与<code>set()</code>之间的严格先后关系。</p></div><div class="card"><h3>解释资源收口</h3><p>能说明cleanup回调为何入栈、为何LIFO弹出，以及单个失败为何不能阻断后续清理。</p></div><div class="card"><h3>划清证据边界</h3><p>能区分测试断言证明的行为、实现代码显示的机制，以及脱敏和幂等保证的适用范围。</p></div></div></section>
+<section id="code-first-walkthrough" data-section>
+  <p class="kicker">02 · Code-first walkthrough</p><h2>从真实分类测试进入TestContext的两条生命周期</h2>
+  <p class="lead">第一性原理看，TestContext只有两类不可替代的责任：把不稳定响应变成后续步骤可用的确定值，以及把已创建资源的释放责任带到用例终点。先沿真实Act追代码，再给“上下文”“转换”“LIFO”命名。</p>
+  <div class="guided-start">
+    <div class="guided-start__header"><h3>本节真实入口：离线上下文与清理分类测试</h3><p>同一测试文件分别证明值处理合同与失败后的资源收口；它们共享同一个TestContext所有权模型。</p></div>
+    <div class="guided-command"><strong>先运行这个测试入口</strong><code>python -m pytest -q module/offline_framework_example/test_context_cleanup.py</code></div>
+    <div class="guided-rule"><strong>TOC阅读规则</strong>当前瓶颈不是API数量，而是“谁拥有最终值、谁保证资源收口”不清。先看测试Act和断言，再进入<code>extract()</code>、<code>_store_extracted_value()</code>、<code>add_cleanup()</code>与<code>cleanup()</code>。</div>
+    <div class="guided-chain"><span>分类测试Act</span><b>→</b><span>TestContext.extract</span><b>→</b><span>_store_extracted_value</span><b>→</b><span>写入确定值</span><b>→</b><span>add_cleanup</span><b>→</b><span>cleanup收口</span></div>
+  </div>
+
+  <article class="guided-step">
+    <div class="guided-step__title"><span class="guided-step__number">1</span><div><h3>测试先声明值合同，而不是让expected_type偷偷转换</h3><p>观察default、transform、类型校验和“不写入缺失可选值”四个结果。</p></div></div>
+    <div class="guided-code-grid">
+      <div class="guided-source"><span class="guided-source__location">module/offline_framework_example/test_context_cleanup.py::TestContextAndCleanup::test_context_applies_type_and_transform_contracts · 连续源码第92至121行</span><pre><code>task_id = offline_test_context.extract(
+    "task_upper",
+    response,
+    json_path="$.data.task_id",
+    transform=str.upper,
+    expected_type=str,
+)
+count = offline_test_context.extract(
+    "count",
+    response,
+    json_path="$.count",
+    default="2",
+    transform=int,
+    expected_type=int,
+)
+missing = offline_test_context.extract(
+    "optional_missing",
+    response,
+    json_path="$.missing",
+    required=False,
+)
+
+assert task_id == OFFLINE_TASK_ID.upper()
+assert count == 2
+assert offline_test_context.require("count", expected_type=int) == 2
+assert missing is None
+assert not offline_test_context.has("optional_missing")
+
+with pytest.raises(ContextVariableTypeError) as error_info:
+    offline_test_context.require("task_upper", expected_type=int)</code></pre></div>
+      <div class="guided-explanation"><h4>逐步回答六个问题</h4><div class="guided-point"><strong>输入从哪里来</strong><p><code>response</code>来自真实离线请求，提取规则由测试显式传入。</p></div><div class="guided-point"><strong>当前消费什么</strong><p>测试消费<code>extract()</code>返回值和TestContext后续读取结果。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>成功值既返回给局部变量，也写入当前用例的TestContext；可选缺失值不写入。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>测试断言负责确认合同，TestContext负责维护值状态。</p></div><div class="guided-point warning"><strong>分支与易混点</strong><p>default仍要经过transform；expected_type只校验。把它当转换器会掩盖输入错误。</p></div></div>
+    </div>
+  </article>
+
+  <article class="guided-step">
+    <div class="guided-step__title"><span class="guided-step__number">2</span><div><h3><code>extract()</code>只接受一个来源，然后把结果交给统一存储边界</h3><p>来源选择与值合同被拆开，避免JSON、Header、Cookie、Regex各自实现一套默认和类型逻辑。</p></div></div>
+    <div class="guided-code-grid">
+      <div class="guided-source"><span class="guided-source__location">common/test_context.py::TestContext.extract · 连续源码第134至167行</span><pre><code>_validate_variable_name(name)
+source_count = sum(value is not None for value in (json_path, header, cookie, regex))
+if source_count != 1:
+    raise ContextExtractionError(
+        "extract() requires exactly one source: json_path, header, cookie, or regex."
+    )
+
+value = self._extract_value(
+    name,
+    response,
+    json_path=json_path,
+    header=header,
+    cookie=cookie,
+    regex=regex,
+    group=group,
+    source_text=source_text,
+    multiple=multiple,
+)
+return self._store_extracted_value(
+    name,
+    value,
+    required=required,
+    default=default,
+    expected_type=expected_type,
+    transform=transform,
+    allow_none=allow_none,
+    source_description=_format_source_description(
+        json_path=json_path,
+        header=header,
+        cookie=cookie,
+        regex=regex,
+    ),
+    response=response,
+)</code></pre></div>
+      <div class="guided-explanation"><h4>函数边界</h4><div class="guided-point"><strong>输入从哪里来</strong><p>变量名、Response、唯一来源描述和处理选项来自测试调用。</p></div><div class="guided-point"><strong>当前消费什么</strong><p>先消费“来源只能有一个”的结构约束，再调用<code>_extract_value()</code>读取原始值。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>本函数不直接写状态，而把原始值和完整合同交给<code>_store_extracted_value()</code>。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>来源非法时<code>extract()</code>立即报错；值语义由下一层统一收口。</p></div><div class="guided-point warning"><strong>易混点</strong><p>“来源提取成功”不等于“值可写入”，transform和类型校验尚未发生。</p></div></div>
+    </div>
+  </article>
+  <article class="guided-step">
+    <div class="guided-step__title"><span class="guided-step__number">3</span><div><h3><code>_store_extracted_value()</code>把缺失、转换、校验和写入固定成单一路径</h3><p>只有前置合同全部成功，<code>self.set()</code>才会改变用例状态。</p></div></div>
+    <div class="guided-code-grid">
+      <div class="guided-source"><span class="guided-source__location">common/test_context.py::TestContext._store_extracted_value · 连续源码第285至312行</span><pre><code>if value is _NO_VALUE or not _has_extracted_value(value):
+    if default is not _UNSET:
+        value = default
+    elif required:
+        raise ContextExtractionError(
+            f"Failed to extract required context variable {name!r}. "
+            f"Source: {source_description}. Response: {_redact_response_summary(response)}"
+        )
+    else:
+        return None
+
+if value is None and required and not allow_none:
+    raise ContextExtractionError(
+        f"Context variable {name!r} extracted None from {source_description}, but None is not allowed."
+    )
+
+if transform is not None:
+    try:
+        value = transform(value)
+    except Exception as exc:
+        raise ContextExtractionError(
+            f"Failed to transform context variable {name!r} from {source_description}: "
+            f"{type(exc).__name__}: {_redact_text(str(exc))}"
+        ) from exc
+
+_ensure_expected_type(name, value, expected_type)
+self.set(name, value)
+return value</code></pre></div>
+      <div class="guided-explanation"><h4>状态改变发生在哪里</h4><div class="guided-point"><strong>输入从哪里来</strong><p>上一层提供原始值、required/default、transform和expected_type。</p></div><div class="guided-point"><strong>当前消费什么</strong><p>按缺失处理 → None约束 → transform → 类型校验的顺序消费合同。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>仅成功路径调用<code>self.set(name, value)</code>，并返回同一个确定值。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>每个失败点都抛出可定位且脱敏的上下文异常，调用测试负责断言。</p></div><div class="guided-point success"><strong>成功/失败边界</strong><p>可选缺失直接返回None且不写入；转换失败或类型不匹配也不会留下半成品状态。</p></div></div>
+    </div>
+  </article>
+  <article class="guided-step">
+    <div class="guided-step__title"><span class="guided-step__number">4</span><div><h3>测试显式注册资源责任，并主动触发失败后的清理</h3><p>资源创建与cleanup注册靠近，测试才能证明失败不遮挡后续释放。</p></div></div>
+    <div class="guided-code-grid">
+      <div class="guided-source"><span class="guided-source__location">module/offline_framework_example/test_context_cleanup.py::TestContextAndCleanup::test_context_continues_cleanup_and_reports_errors · 连续源码第198至220行</span><pre><code>offline_test_context.add_cleanup(record, "first")
+offline_test_context.add_cleanup(delete_task)
+offline_test_context.add_cleanup(fail_cleanup)
+offline_test_context.add_cleanup(record, "last")
+
+with pytest.raises(ContextCleanupError) as error_info:
+    offline_test_context.cleanup()
+
+error = error_info.value
+assert order == ["last", "fail", "delete", "first"]
+assert len(error.errors) == 1
+assert isinstance(error.errors[0], RuntimeError)
+snapshot = service.state.snapshot()
+assert snapshot["endpoint_call_counts"]["media_delete_calls"] == 1
+assert snapshot["tasks"] == ()
+offline_test_context.cleanup()
+assert order == ["last", "fail", "delete", "first"]
+
+error_text = str(error)
+assert "RuntimeError" in error_text
+assert "1 error(s)" in error_text
+assert "&lt;redacted&gt;" in error_text</code></pre></div>
+      <div class="guided-explanation"><h4>测试拥有证据，不拥有实现</h4><div class="guided-point"><strong>输入从哪里来</strong><p>已创建资源、记录回调、删除回调和故意失败回调来自测试Arrange。</p></div><div class="guided-point"><strong>当前消费什么</strong><p><code>add_cleanup()</code>消费可调用对象与参数；<code>cleanup()</code>消费整个回调栈。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>顺序写入<code>order</code>，资源删除写入服务状态，错误写入<code>ContextCleanupError.errors</code>。</p></div><div class="guided-point"><strong>谁负责收口</strong><p>TestContext负责继续清理和聚合；测试负责验证LIFO、幂等、资源释放与脱敏。</p></div><div class="guided-point warning"><strong>易混点</strong><p>pytest捕获异常不等于吞掉清理失败；异常仍是本课必须审计的最终结果。</p></div></div>
+    </div>
+  </article>
+
+  <article class="guided-step">
+    <div class="guided-step__title"><span class="guided-step__number">5</span><div><h3><code>cleanup()</code>弹空栈后再统一报告错误</h3><p>先完成资源收口，再报告所有失败；重复调用因栈已空而天然幂等。</p></div></div>
+    <div class="guided-code-grid">
+      <div class="guided-source"><span class="guided-source__location">common/test_context.py::TestContext.add_cleanup / cleanup · 连续源码第226至241行</span><pre><code>def add_cleanup(self, callback: Callable[..., Any], *args: Any, **kwargs: Any) -&gt; None:
+    if not callable(callback):
+        raise TypeError(f"cleanup callback must be callable, actual: {callback!r}")
+    self._cleanup_callbacks.append(_CleanupCallback(callback=callback, args=args, kwargs=dict(kwargs)))
+
+def cleanup(self) -&gt; None:
+    errors: list[BaseException] = []
+    while self._cleanup_callbacks:
+        cleanup_callback = self._cleanup_callbacks.pop()
+        try:
+            cleanup_callback.callback(*cleanup_callback.args, **cleanup_callback.kwargs)
+        except BaseException as exc:
+            errors.append(exc)
+
+    if errors:
+        raise ContextCleanupError(errors)</code></pre></div>
+      <div class="guided-explanation"><h4>最终收口</h4><div class="guided-point"><strong>输入从哪里来</strong><p>回调栈由用例执行过程中多次<code>add_cleanup()</code>累积。</p></div><div class="guided-point"><strong>当前消费什么</strong><p><code>pop()</code>逐个消费最后注册的回调及其冻结参数。</p></div><div class="guided-point"><strong>输出写到哪里</strong><p>成功回调作用于外部资源；失败异常先进入局部<code>errors</code>列表。</p></div><div class="guided-point"><strong>谁负责收口</strong><p><code>cleanup()</code>必须清空栈；<code>ContextCleanupError</code>在全部回调结束后统一交还上层。</p></div><div class="guided-point success"><strong>分支</strong><p>无错误正常返回；有错误聚合抛出；栈为空时直接返回，因此重复cleanup不重复释放。</p></div></div>
+    </div>
+  </article>
+  <div class="guided-conclusion"><h3>代码先行结论</h3><ol><li>值生命周期的提交点只有<code>self.set()</code>，此前任何失败都不得污染上下文。</li><li>资源生命周期的提交点是<code>add_cleanup()</code>，此后<code>cleanup()</code>必须把责任栈排空。</li><li>两条链都属于单个测试用例；TestContext不是跨用例共享数据库。</li></ol></div>
+</section>
+<section id='question' data-section><p class='kicker'>01 · Question</p><h2>为什么上下文既要保存值，也要拥有清理顺序</h2><p class='lead'>跨步骤测试需要复用ID、Header、Cookie等值，同时必须保证中途断言失败后已创建资源仍被释放。TestContext把两类责任限制在单个用例作用域内。</p><div class='callout warn'><strong>本课边界：</strong>只学习提取、缺失与默认处理、transform转换、expected_type类型校验、写入TestContext和cleanup；ContextVar线程传播与并发隔离放到第13天。</div></section>
+<section id='entry' data-section><p class='kicker'>02 · Source entry</p><h2>三个入口构成实现证据</h2><div class='grid3'><div class='card'><h3>实现</h3><p><code>common/test_context.py</code>保存变量、提取规则和cleanup栈。</p></div><div class='card'><h3>业务分类</h3><p><code>module/offline_framework_example/test_context_cleanup.py</code>验证真实loopback流程。</p></div><div class='card'><h3>单元合同</h3><p><code>tests/test_test_context.py</code>保护缺失/default、transform、expected_type校验和错误语义。</p></div></div></section>
 <section id='scope' data-section><p class='kicker'>03 · Scope</p><h2>TestContext只属于当前测试用例</h2><div class='flow'><span>fixture创建</span><i>→</i><span>步骤写入变量</span><i>→</i><span>后续步骤读取</span><i>→</i><span>teardown运行cleanup</span></div><p class='lead'>它不能作为跨用例数据库，也不能隐藏共享账号、余额或环境状态。用例结束后变量与资源责任同时结束。</p></section>
-<section id='extract' data-section><p class='kicker'>04 · Extract</p><h2>提取把响应边界转换成稳定输入</h2><div class='table-wrap'><table><thead><tr><th>来源</th><th>用途</th></tr></thead><tbody><tr><td>JSON path</td><td>取得任务ID、结果字段等结构化值。</td></tr><tr><td>Header</td><td>读取请求追踪或分页信息。</td></tr><tr><td>Cookie</td><td>保存当前用例会话返回值。</td></tr><tr><td>Regex</td><td>从受控文本中提取匹配内容。</td></tr></tbody></table></div><p class='lead'>提取失败必须指出变量名、来源和路径，不能把缺失值静默写成空字符串。</p></section>
-<section id='transform' data-section><p class='kicker'>05 · Transform</p><h2>类型和transform是提取后的显式合同</h2><p class='lead'>原始字符串或JSON值可以按声明转换为整数、布尔值或业务需要的结构。转换失败应在提取边界暴露，避免错误值进入后续请求后才产生模糊失败。</p><div class='callout'><strong>顺序：</strong>读取来源 → 判断存在性 → 类型转换 → 自定义transform → 写入上下文。每一步都应保留变量名和失败原因。</div></section>
+<section id='extract' data-section><p class='kicker'>04 · Extract</p><h2>提取把响应边界转换成稳定输入</h2><div class='table-wrap'><table><thead><tr><th>来源</th><th>用途</th></tr></thead><tbody><tr><td>JSON path</td><td>取得任务ID、结果字段等结构化值。</td></tr><tr><td>Header</td><td>读取请求追踪或分页信息。</td></tr><tr><td>Cookie</td><td>保存当前用例会话返回值。</td></tr><tr><td>Regex</td><td>从受控文本中提取匹配内容。</td></tr></tbody></table></div><p class='lead'>提取后先处理缺失语义：有default则把default作为后续输入；required缺失则报出变量名、来源和路径；非required且无default则返回None且不写入上下文。不能把缺失值静默改成空字符串。</p></section>
+<section id='transform' data-section><p class='kicker'>05 · Transform</p><h2>transform负责转换，expected_type只负责校验</h2><p class='lead'>原始字符串或JSON值需要变成整数、布尔值或业务结构时，必须由transform显式转换。expected_type只用isinstance语义检查transform后的结果是否符合声明类型，不会调用目标类型，也不会替代转换器。</p><div class='callout'><strong>严格顺序：</strong>提取/缺失与默认处理 → transform转换 → expected_type类型校验 → 写入TestContext。transform失败、类型不匹配和提取缺失是三类不同错误；只有前三步全部成功后才允许写入。</div></section>
 <section id='cleanup' data-section><p class='kicker'>06 · Cleanup</p><h2>LIFO按依赖图逆序释放资源</h2><div class='flow'><span>创建服务</span><i>→</i><span>创建Client</span><i>→</i><span>创建临时资源</span><i>→</i><span>使用</span><i>→</i><span>资源</span><i>→</i><span>Client</span><i>→</i><span>服务</span></div><p class='lead'>后创建的对象通常依赖先创建对象，因此cleanup栈必须后进先出。LIFO不是偏好，而是依赖关系的逆序。</p></section>
 <section id='errors' data-section><p class='kicker'>07 · Error handling</p><h2>一个cleanup失败不能阻止后续清理</h2><p class='lead'>收口阶段应继续执行剩余cleanup并汇总错误。否则第一个关闭异常会遮挡后续Session、线程或临时资源泄漏。</p><div class='grid2'><div class='card'><h3>业务已失败</h3><p>保留原测试失败，同时附加cleanup错误信息。</p></div><div class='card'><h3>业务已通过</h3><p>cleanup错误仍说明资源合同未完成，不能静默忽略。</p></div></div></section>
-<section id='evidence' data-section><p class='kicker'>08 · Evidence</p><h2>分类测试和单元测试回答不同问题</h2><div class='table-wrap'><table><thead><tr><th>入口</th><th>证明内容</th></tr></thead><tbody><tr><td><code>test_context_cleanup.py</code></td><td>提取值进入后续步骤、类型转换、LIFO和多错误收口在真实loopback链路成立。</td></tr><tr><td><code>tests/test_test_context.py</code></td><td>各提取器、缺失路径和cleanup合同的精确边界。</td></tr></tbody></table></div></section>
-<section id='design' data-section><p class='kicker'>Design decision</p><h2>设计选择与适用边界</h2><div class='table-wrap'><table><thead><tr><th>现方案</th><th>替代方案</th><th>选择理由</th><th>不适用条件</th></tr></thead><tbody><tr><td>每个用例拥有独立<code>TestContext</code>，先提取和转换稳定值，再把清理动作按注册顺序入栈、按LIFO执行。</td><td>使用进程级全局字典保存变量，或按FIFO执行统一teardown。</td><td>用例作用域阻断串值；LIFO与资源依赖图的逆序一致，且单个cleanup失败不会吞掉后续清理事实。</td><td>跨用例只读配置应放入会话级配置对象；需要跨进程共享的可变状态必须使用外部存储和显式一致性协议。</td></tr></tbody></table></div></section>
-<section id='practice' data-section><p class='kicker'>09 · Offline practice</p><h2>运行上下文和清理合同</h2><div class='command'><button class='copy'>复制</button><pre><code>.\.venv\Scripts\python.exe -m pytest module/offline_framework_example/test_context_cleanup.py tests/test_test_context.py -q</code></pre></div><p class='lead'>只访问本机loopback或对象替身。记录提取、转换、LIFO和错误归并各自对应的测试证据。</p></section>
-<section id='output' data-section><p class='kicker'>10 · Output</p><h2>完成变量流和清理栈图</h2><div class='notes'><label>变量来源<textarea data-note='source' placeholder='JSON/Header/Cookie/Regex分别提取什么'></textarea></label><label>类型合同<textarea data-note='type' placeholder='转换和transform的执行顺序'></textarea></label><label>清理栈<textarea data-note='cleanup' placeholder='按创建顺序写出逆序释放'></textarea></label><label>测试证据<textarea data-note='evidence' placeholder='本轮命令、结果和一个cleanup事实'></textarea></label></div></section>
-<section id='quiz' data-section><p class='kicker'>11 · Knowledge check</p><h2>知识自测</h2><div class='quiz' data-answer='b'><strong>1. TestContext的作用域是什么？</strong><label><input type='radio' name='q1' value='a'>全仓库</label><label><input type='radio' name='q1' value='b'>单个测试用例</label><label><input type='radio' name='q1' value='c'>Jenkins永久状态</label></div><div class='quiz' data-answer='c'><strong>2. 提取缺失字段应如何处理？</strong><label><input type='radio' name='q2' value='a'>写空字符串</label><label><input type='radio' name='q2' value='b'>忽略</label><label><input type='radio' name='q2' value='c'>报告变量、来源和路径</label></div><div class='quiz' data-answer='a'><strong>3. cleanup为什么LIFO？</strong><label><input type='radio' name='q3' value='a'>按依赖图逆序释放</label><label><input type='radio' name='q3' value='b'>为了随机</label><label><input type='radio' name='q3' value='c'>pytest限制</label></div><div class='quiz' data-answer='b'><strong>4. 一个cleanup失败后怎么办？</strong><label><input type='radio' name='q4' value='a'>立即停止</label><label><input type='radio' name='q4' value='b'>继续其余清理并汇总错误</label><label><input type='radio' name='q4' value='c'>改写为通过</label></div><div class='quiz' data-answer='c'><strong>5. TestContext能否保存跨用例共享余额？</strong><label><input type='radio' name='q5' value='a'>默认可以</label><label><input type='radio' name='q5' value='b'>串行时可以</label><label><input type='radio' name='q5' value='c'>不能，它不是全局数据库</label></div><button class='primary' id='submit-quiz'>提交答案</button><div class='verdict' id='quiz-summary'>建议达到4/5再进入门禁。</div></section>
-<section id='gate' data-section><p class='kicker'>12 · Exit gate</p><h2>本课门禁</h2><div class='gate-list'><label class='gate'><input type='checkbox' data-gate='map'><span>已完成用例级变量流图。</span></label><label class='gate'><input type='checkbox' data-gate='extract'><span>能解释四类提取来源和缺失语义。</span></label><label class='gate'><input type='checkbox' data-gate='type'><span>能写出类型与transform顺序。</span></label><label class='gate'><input type='checkbox' data-gate='cleanup'><span>能解释LIFO和多错误归并。</span></label><label class='gate'><input type='checkbox' data-gate='evidence'><span>已记录本轮离线测试结果。</span></label></div><div class='notes'><label>门禁成果位置 / 口头记录<textarea data-note='gate-record' placeholder='填写变量流图、清理栈或测试记录的位置；口头验收时记录复述要点'></textarea></label></div><div class='callout good'><strong>验收句：</strong>我能说明TestContext如何在单个用例内传递类型化值，并在任何结束路径按依赖逆序完成资源清理。</div><div class='footer'><div class='footer-links'><a class='button' href='第11天-流式响应与资源生命周期.html'>← 上一课</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a><a class='button' href='第13天-上下文传播与并发隔离.html'>下一课 →</a></div></div></section>
-</article></main><script src='六周课程页.js'></script></body></html>
+<section id='evidence' data-section><p class='kicker'>08 · Evidence</p><h2>分类测试和单元测试回答不同问题</h2><div class='table-wrap'><table><thead><tr><th>入口</th><th>证明内容</th></tr></thead><tbody><tr><td><code>test_context_cleanup.py</code></td><td>提取值进入后续步骤、transform转换结果通过expected_type校验、LIFO和多错误收口在真实loopback链路成立。</td></tr><tr><td><code>tests/test_test_context.py</code></td><td>各提取器、缺失/default、transform先于expected_type、类型不匹配不写入以及cleanup合同的精确边界。</td></tr></tbody></table></div></section>
+<section id='design' data-section><p class='kicker'>Design decision</p><h2>设计选择与适用边界</h2><div class='table-wrap'><table><thead><tr><th>现方案</th><th>替代方案</th><th>选择理由</th><th>不适用条件</th></tr></thead><tbody><tr><td>每个用例拥有独立<code>TestContext</code>，按“提取/默认处理 → transform转换 → expected_type校验 → 写入”形成稳定值，再把清理动作按注册顺序入栈、按LIFO执行。</td><td>使用进程级全局字典保存变量，或按FIFO执行统一teardown。</td><td>用例作用域阻断串值；LIFO与资源依赖图的逆序一致，且单个cleanup失败不会吞掉后续清理事实。</td><td>跨用例只读配置应放入会话级配置对象；需要跨进程共享的可变状态必须使用外部存储和显式一致性协议。</td></tr></tbody></table></div></section>
+<section id='practice' data-section><p class='kicker'>09 · Offline practice</p><h2>运行上下文和清理合同</h2><div class='command'><button class='copy'>复制</button><pre><code>.\.venv\Scripts\python.exe -m pytest module/offline_framework_example/test_context_cleanup.py tests/test_test_context.py -q</code></pre></div><p class='lead'>只访问本机loopback或对象替身。记录缺失/default、transform转换、expected_type只校验不转换、成功写入、LIFO和错误归并各自对应的测试证据。</p></section>
+<section id='output' data-section><p class='kicker'>10 · Output</p><h2>完成变量处理链和清理栈图</h2><div class='notes'><label>变量来源<textarea data-note='source' placeholder='JSON/Header/Cookie/Regex分别提取什么'></textarea></label><label>转换与类型合同<textarea data-note='type' placeholder='提取/缺失与默认处理 → transform转换 → expected_type类型校验 → 写入TestContext；说明expected_type只校验不转换'></textarea></label><label>清理栈<textarea data-note='cleanup' placeholder='按创建顺序写出逆序释放'></textarea></label><label>测试证据<textarea data-note='evidence' placeholder='本轮命令、结果和一个cleanup事实'></textarea></label></div></section>
+<!-- SOURCE_CARDS:DAY12:START -->
+<section id="source-code" class="source-section" data-section aria-labelledby="source-code-title">
+<div class="source-section__header">
+<p class="source-section__kicker">Source Reading · Static Snapshot</p>
+<h2 id="source-code-title">关键源码</h2>
+<p>以下源码由当前工作区直接提取，经教学裁剪、真实行数统计和统一HTML转义后静态写入。本页共128行源码，浏览页面时不会读取仓库文件。</p>
+</div>
+<div class="source-card-list">
+<details class="source-card source-card--required" id="source-card-D12-S1" data-default-open="false" data-source-lines="22">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>提取入口验证来源并委托存储</strong><small>common/test_context.py · 22行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D12-S1">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_test_context.py</code></span>
+<span><strong>测试函数</strong><code>test_default_required_false_transform_and_expected_type</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_test_context.py::test_default_required_false_transform_and_expected_type</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>common/test_context.py::TestContext.extract</code></span>
+<span><strong>真实行数</strong>22</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>extract为什么只允许一个来源，default、transform和expected_type最终由谁处理？</p>
+<p class="source-omission">省略说明：省略extract的来源、default、transform和expected_type参数声明；本卡聚焦来源约束与存储委托。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制提取入口验证来源并委托存储选段1" aria-describedby="source-copy-status-D12-S1-1" aria-controls="source-code-D12-S1-1" data-source-target="source-code-D12-S1-1" data-source-status="source-copy-status-D12-S1-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D12-S1-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D12-S1-1" tabindex="0" aria-label="提取入口验证来源并委托存储，源码第134至139行，选段1"><code class="language-python" data-source-card="D12-S1" data-segment-index="1">        _validate_variable_name(name)
+        source_count = sum(value is not None for value in (json_path, header, cookie, regex))
+        if source_count != 1:
+            raise ContextExtractionError(
+                "extract() requires exactly one source: json_path, header, cookie, or regex."
+            )</code></pre>
+</div>
+<p class="source-omission">省略说明：省略按json_path、header、cookie或regex执行实际提取的参数转发。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制提取入口验证来源并委托存储选段2" aria-describedby="source-copy-status-D12-S1-2" aria-controls="source-code-D12-S1-2" data-source-target="source-code-D12-S1-2" data-source-status="source-copy-status-D12-S1-2">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D12-S1-2" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D12-S1-2" tabindex="0" aria-label="提取入口验证来源并委托存储，源码第152至167行，选段2"><code class="language-python" data-source-card="D12-S1" data-segment-index="2">        return self._store_extracted_value(
+            name,
+            value,
+            required=required,
+            default=default,
+            expected_type=expected_type,
+            transform=transform,
+            allow_none=allow_none,
+            source_description=_format_source_description(
+                json_path=json_path,
+                header=header,
+                cookie=cookie,
+                regex=regex,
+            ),
+            response=response,
+        )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D12-S1" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：extract只负责唯一来源合同与流程编排，default、transform和expected_type交由存储方法处理。机制：先统计四种来源且要求恰好一个，提取后把值及全部策略参数传给_store_extracted_value。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>先验证变量名与唯一来源，执行来源提取，再把值和处理策略委托给_store_extracted_value。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>入口本身只选择来源并委托；最终是否写入Context由存储方法决定。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>extract负责来源合同与调用编排，不把expected_type当作转换器。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>本卡没有展开具体JSONPath、Header、Cookie或Regex提取实现。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_test_context.py::test_default_required_false_transform_and_expected_type</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<section class="source-card source-card--required source-card--expanded" id="source-card-D12-S2" data-default-open="true" data-source-lines="41">
+<div class="source-card__heading">
+<span class="source-importance">必读</span>
+<div><h3>default到Context写入的真实顺序</h3><p>common/test_context.py · 41行</p></div>
+</div>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D12-S2">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_test_context.py</code></span>
+<span><strong>测试函数</strong><code>test_default_required_false_transform_and_expected_type</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_test_context.py::test_default_required_false_transform_and_expected_type</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>common/test_context.py::TestContext._store_extracted_value</code></span>
+<span><strong>真实行数</strong>41</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>缺失值、None、transform、expected_type和set按什么顺序发生？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制default到Context写入的真实顺序选段1" aria-describedby="source-copy-status-D12-S2-1" aria-controls="source-code-D12-S2-1" data-source-target="source-code-D12-S2-1" data-source-status="source-copy-status-D12-S2-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D12-S2-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D12-S2-1" tabindex="0" aria-label="default到Context写入的真实顺序，源码第272至312行，选段1"><code class="language-python" data-source-card="D12-S2" data-segment-index="1">    def _store_extracted_value(
+        self,
+        name: str,
+        value: Any,
+        *,
+        required: bool,
+        default: Any,
+        expected_type: type | tuple[type, ...] | None,
+        transform: Callable[[Any], Any] | None,
+        allow_none: bool,
+        source_description: str,
+        response: requests.Response | None,
+    ) -&gt; Any:
+        if value is _NO_VALUE or not _has_extracted_value(value):
+            if default is not _UNSET:
+                value = default
+            elif required:
+                raise ContextExtractionError(
+                    f"Failed to extract required context variable {name!r}. "
+                    f"Source: {source_description}. Response: {_redact_response_summary(response)}"
+                )
+            else:
+                return None
+
+        if value is None and required and not allow_none:
+            raise ContextExtractionError(
+                f"Context variable {name!r} extracted None from {source_description}, but None is not allowed."
+            )
+
+        if transform is not None:
+            try:
+                value = transform(value)
+            except Exception as exc:
+                raise ContextExtractionError(
+                    f"Failed to transform context variable {name!r} from {source_description}: "
+                    f"{type(exc).__name__}: {_redact_text(str(exc))}"
+                ) from exc
+
+        _ensure_expected_type(name, value, expected_type)
+        self.set(name, value)
+        return value</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D12-S2" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：真实顺序是缺失值处理、None合同、transform、expected_type校验，最后写入Context。机制：无值时先用default或按required报错/返回；转换成功后仅做类型检查，通过才set并返回。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>先处理default/required，再处理None合同，随后transform转换，调用类型校验，最后set并返回。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>只有全部前置合同通过后才把最终值写入TestContext。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>真实顺序是default → transform → expected_type校验 → 写入Context。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>transform可能执行任意用户函数；类型校验不负责转换，也不回滚transform的外部副作用。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_test_context.py::test_default_required_false_transform_and_expected_type</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</section>
+<details class="source-card source-card--required" id="source-card-D12-S3" data-default-open="false" data-source-lines="12">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>expected_type只做isinstance校验</strong><small>common/test_context.py · 12行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D12-S3">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_test_context.py</code></span>
+<span><strong>测试函数</strong><code>test_default_required_false_transform_and_expected_type</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_test_context.py::test_default_required_false_transform_and_expected_type</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>common/test_context.py::_ensure_expected_type</code></span>
+<span><strong>真实行数</strong>12</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>expected_type为空、匹配或不匹配时分别发生什么？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制expected_type只做isinstance校验选段1" aria-describedby="source-copy-status-D12-S3-1" aria-controls="source-code-D12-S3-1" data-source-target="source-code-D12-S3-1" data-source-status="source-copy-status-D12-S3-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D12-S3-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D12-S3-1" tabindex="0" aria-label="expected_type只做isinstance校验，源码第323至334行，选段1"><code class="language-python" data-source-card="D12-S3" data-segment-index="1">def _ensure_expected_type(
+    name: str,
+    value: Any,
+    expected_type: type | tuple[type, ...] | None,
+) -&gt; None:
+    if expected_type is None or isinstance(value, expected_type):
+        return
+    raise ContextVariableTypeError(
+        f"Context variable {name!r} type mismatch. "
+        f"Expected: {_format_expected_type(expected_type)}, "
+        f"actual: {type(value).__name__}, value: {_format_value(name, value)}"
+    )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D12-S3" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：expected_type只校验类型，不执行任何转换。机制：参数为空或isinstance匹配时直接返回；不匹配则抛ContextVariableTypeError，并报告期望类型、实际类型和格式化后的值。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>无类型声明时返回；isinstance匹配时返回；否则抛ContextVariableError。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>只校验值，不创建新值。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>expected_type是校验器而不是转换器。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>isinstance通过不等于值满足更细的领域约束。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_test_context.py::test_default_required_false_transform_and_expected_type</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--support" id="source-card-D12-S4" data-default-open="false" data-source-lines="4">
+<summary class="source-card__summary">
+<span class="source-importance">支撑</span>
+<span><strong>清理回调只入栈不执行</strong><small>common/test_context.py · 4行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D12-S4">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_test_context.py</code></span>
+<span><strong>测试函数</strong><code>test_cleanup_callbacks_run_in_lifo_order_and_cleanup_is_idempotent</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_test_context.py::test_cleanup_callbacks_run_in_lifo_order_and_cleanup_is_idempotent</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>common/test_context.py::TestContext.add_cleanup</code></span>
+<span><strong>真实行数</strong>4</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>注册时保存哪些调用信息，何时才真正执行？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制清理回调只入栈不执行选段1" aria-describedby="source-copy-status-D12-S4-1" aria-controls="source-code-D12-S4-1" data-source-target="source-code-D12-S4-1" data-source-status="source-copy-status-D12-S4-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D12-S4-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D12-S4-1" tabindex="0" aria-label="清理回调只入栈不执行，源码第226至229行，选段1"><code class="language-python" data-source-card="D12-S4" data-segment-index="1">    def add_cleanup(self, callback: Callable[..., Any], *args: Any, **kwargs: Any) -&gt; None:
+        if not callable(callback):
+            raise TypeError(f"cleanup callback must be callable, actual: {callback!r}")
+        self._cleanup_callbacks.append(_CleanupCallback(callback=callback, args=args, kwargs=dict(kwargs)))</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D12-S4" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：add_cleanup只登记清理责任，不立即执行资源释放。机制：先验证callback可调用，再把回调、位置参数和复制后的关键字参数封装并压入清理栈，真正调用留给cleanup。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>校验callback可调用，再保存callback、args和kwargs副本。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>向清理栈追加一项，不执行资源释放。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>资源清理责任被显式登记并延迟到cleanup。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>注册成功不代表回调最终成功。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_test_context.py::test_cleanup_callbacks_run_in_lifo_order_and_cleanup_is_idempotent</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--required" id="source-card-D12-S5" data-default-open="false" data-source-lines="11">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>LIFO清理继续执行并聚合错误</strong><small>common/test_context.py · 11行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D12-S5">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_test_context.py</code></span>
+<span><strong>测试函数</strong><code>test_cleanup_continues_after_failure_and_aggregates_errors</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_test_context.py::test_cleanup_continues_after_failure_and_aggregates_errors</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>common/test_context.py::TestContext.cleanup</code></span>
+<span><strong>真实行数</strong>11</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>一个回调失败后，为什么仍继续弹出其余回调？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制LIFO清理继续执行并聚合错误选段1" aria-describedby="source-copy-status-D12-S5-1" aria-controls="source-code-D12-S5-1" data-source-target="source-code-D12-S5-1" data-source-status="source-copy-status-D12-S5-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D12-S5-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D12-S5-1" tabindex="0" aria-label="LIFO清理继续执行并聚合错误，源码第231至241行，选段1"><code class="language-python" data-source-card="D12-S5" data-segment-index="1">    def cleanup(self) -&gt; None:
+        errors: list[BaseException] = []
+        while self._cleanup_callbacks:
+            cleanup_callback = self._cleanup_callbacks.pop()
+            try:
+                cleanup_callback.callback(*cleanup_callback.args, **cleanup_callback.kwargs)
+            except BaseException as exc:  # noqa: BLE001 - cleanup must continue after any callback failure.
+                errors.append(exc)
+
+        if errors:
+            raise ContextCleanupError(errors)</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D12-S5" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：cleanup按LIFO执行全部回调，单个失败不会阻断后续清理。机制：持续pop栈顶并捕获BaseException，将错误累积；栈清空后若有失败，再统一抛出ContextCleanupError。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>持续pop形成LIFO，捕获每个BaseException并继续，栈耗尽后统一抛ContextCleanupError。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>清空回调栈；成功时幂等，失败时聚合全部已捕获错误。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>清理采用LIFO、失败继续和最终聚合，而不是首错即停。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>聚合错误不代表失败资源已恢复，也不能自动重试清理。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_test_context.py::test_cleanup_continues_after_failure_and_aggregates_errors</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--evidence" id="source-card-D12-T1" data-default-open="false" data-source-lines="16">
+<summary class="source-card__summary">
+<span class="source-importance">测试证据</span>
+<span><strong>证据：transform先于类型校验和写入</strong><small>tests/test_test_context.py · 16行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D12-T1">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_test_context.py</code></span>
+<span><strong>测试函数</strong><code>test_default_required_false_transform_and_expected_type</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_test_context.py::test_default_required_false_transform_and_expected_type</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>tests/test_test_context.py::test_default_required_false_transform_and_expected_type</code></span>
+<span><strong>真实行数</strong>16</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>字符串default如何最终成为Context中的整数？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制证据：transform先于类型校验和写入选段1" aria-describedby="source-copy-status-D12-T1-1" aria-controls="source-code-D12-T1-1" data-source-target="source-code-D12-T1-1" data-source-status="source-copy-status-D12-T1-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D12-T1-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D12-T1-1" tabindex="0" aria-label="证据：transform先于类型校验和写入，源码第260至275行，选段1"><code class="language-python" data-source-card="D12-T1" data-segment-index="1">def test_default_required_false_transform_and_expected_type():
+    context = TestContext()
+    response = make_response({})
+
+    value = context.extract(
+        "count",
+        response,
+        json_path="$.count",
+        required=False,
+        default="2",
+        transform=int,
+        expected_type=int,
+    )
+
+    assert value == 2
+    assert context.get("count", expected_type=int) == 2</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D12-T1" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该成功样例证明字符串default可先转换成整数，再通过类型校验并写入Context。机制：缺失$.count时采用"2"，transform=int得到2，随后返回值和context.get都断言为int 2。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>缺失字段使用字符串default，经int转换并通过expected_type=int后读取为2。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>向Context写入整数count。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>default可以先经transform转换，再接受expected_type校验并写入。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>单个成功样例不覆盖transform异常或类型不匹配路径。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_test_context.py::test_default_required_false_transform_and_expected_type</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--evidence" id="source-card-D12-T2" data-default-open="false" data-source-lines="10">
+<summary class="source-card__summary">
+<span class="source-importance">测试证据</span>
+<span><strong>证据：LIFO且重复cleanup幂等</strong><small>tests/test_test_context.py · 10行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D12-T2">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_test_context.py</code></span>
+<span><strong>测试函数</strong><code>test_cleanup_callbacks_run_in_lifo_order_and_cleanup_is_idempotent</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_test_context.py::test_cleanup_callbacks_run_in_lifo_order_and_cleanup_is_idempotent</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>tests/test_test_context.py::test_cleanup_callbacks_run_in_lifo_order_and_cleanup_is_idempotent</code></span>
+<span><strong>真实行数</strong>10</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>两次cleanup为何只产生一次second、first序列？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制证据：LIFO且重复cleanup幂等选段1" aria-describedby="source-copy-status-D12-T2-1" aria-controls="source-code-D12-T2-1" data-source-target="source-code-D12-T2-1" data-source-status="source-copy-status-D12-T2-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D12-T2-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D12-T2-1" tabindex="0" aria-label="证据：LIFO且重复cleanup幂等，源码第317至326行，选段1"><code class="language-python" data-source-card="D12-T2" data-segment-index="1">def test_cleanup_callbacks_run_in_lifo_order_and_cleanup_is_idempotent():
+    context = TestContext()
+    calls: list[str] = []
+
+    context.add_cleanup(calls.append, "first")
+    context.add_cleanup(calls.append, "second")
+    context.cleanup()
+    context.cleanup()
+
+    assert calls == ["second", "first"]</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D12-T2" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该测试证明成功清理按后进先出，且清空后的重复cleanup不再执行回调。机制：依次注册first、second，两次调用cleanup后调用序列仍只有second、first；它未覆盖失败聚合。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>按first、second注册，连续调用两次cleanup，断言只执行second、first。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>第一次清空栈，第二次无回调可执行。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>当前清理栈满足LIFO并在成功清空后幂等。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不覆盖清理失败时的错误聚合。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_test_context.py::test_cleanup_callbacks_run_in_lifo_order_and_cleanup_is_idempotent</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--evidence" id="source-card-D12-T3" data-default-open="false" data-source-lines="12">
+<summary class="source-card__summary">
+<span class="source-importance">测试证据</span>
+<span><strong>证据：失败后继续并脱敏聚合</strong><small>tests/test_test_context.py · 12行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D12-T3">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_test_context.py</code></span>
+<span><strong>测试函数</strong><code>test_cleanup_continues_after_failure_and_aggregates_errors</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_test_context.py::test_cleanup_continues_after_failure_and_aggregates_errors</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>tests/test_test_context.py::test_cleanup_continues_after_failure_and_aggregates_errors</code></span>
+<span><strong>真实行数</strong>12</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>中间回调失败后，首尾回调与错误消息分别满足什么合同？</p>
+<p class="source-omission">省略说明：省略Context、calls和失败回调定义；保留注册顺序、执行结果与脱敏断言。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制证据：失败后继续并脱敏聚合选段1" aria-describedby="source-copy-status-D12-T3-1" aria-controls="source-code-D12-T3-1" data-source-target="source-code-D12-T3-1" data-source-status="source-copy-status-D12-T3-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D12-T3-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D12-T3-1" tabindex="0" aria-label="证据：失败后继续并脱敏聚合，源码第337至348行，选段1"><code class="language-python" data-source-card="D12-T3" data-segment-index="1">    context.add_cleanup(calls.append, "first")
+    context.add_cleanup(fail)
+    context.add_cleanup(calls.append, "last")
+
+    with pytest.raises(ContextCleanupError) as exc_info:
+        context.cleanup()
+
+    assert calls == ["last", "fail", "first"]
+    assert len(exc_info.value.errors) == 1
+    message = str(exc_info.value)
+    assert "&lt;redacted&gt;" in message or "%3Credacted%3E" in message
+    assert "cleanup-secret" not in message</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D12-T3" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该测试证明中间清理失败后仍执行其余回调，并对聚合错误消息做有限脱敏验证。机制：断言顺序为last、fail、first，错误数为1，消息含脱敏占位且不含指定secret。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>注册first、fail、last，执行cleanup后验证LIFO继续、单错误聚合和secret脱敏。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>触发一个清理错误并观察聚合异常。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>失败不会阻断其余回调，聚合消息不会暴露测试中的secret。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不证明任意异常文本都能被所有脱敏规则覆盖。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_test_context.py::test_cleanup_continues_after_failure_and_aggregates_errors</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+</div>
+</section>
+<!-- SOURCE_CARDS:DAY12:END -->
+<section id="lesson-flow-summary" data-section>
+  <p class="kicker">Flow summary · Function and state</p><h2>课后流转总图：确定值与资源责任在同一用例内收口</h2>
+  <figure class="lesson-flow-map">
+    <figcaption class="flow-map-caption">左侧是函数/职责调用，右侧是值、状态、资源与错误的流向；先看提交点，再看失败分支。</figcaption>
+    <div class="flow-map-legend"><span class="flow-legend-chip function">函数与职责</span><span class="flow-legend-chip data">数据与状态</span><span class="flow-legend-chip branch">成功/失败/跳过</span></div>
+    <div class="flow-map-inputs"><div class="flow-input"><strong>响应输入</strong><span>Response + 唯一提取来源</span></div><div class="flow-input"><strong>值合同</strong><span>required/default/transform/type</span></div><div class="flow-input"><strong>资源输入</strong><span>cleanup callback + 冻结参数</span></div></div>
+    <div class="flow-map-entry" aria-hidden="true">↓</div>
+    <div class="flow-map-spine">
+      <article class="flow-stage"><div class="flow-stage__index">1</div><div class="flow-stage__function"><h3>分类测试Act</h3><p>调用<code>extract()</code>或注册cleanup，并用断言声明最终合同。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>输入与预期被冻结</h3><p>变量名、来源、处理选项、资源回调及期望顺序都由当前用例拥有。</p></div></article>
+      <article class="flow-stage"><div class="flow-stage__index">2</div><div class="flow-stage__function"><h3><code>TestContext.extract()</code></h3><p>验证变量名与唯一来源，提取原始值后委托统一存储函数。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>原始值进入合同管道</h3><p>来源错误立即失败；提取成功仍未写入TestContext。</p></div></article>
+      <article class="flow-stage"><div class="flow-stage__index">3</div><div class="flow-stage__function"><h3><code>_store_extracted_value()</code></h3><p>依次处理缺失/default、None约束、transform、expected_type与<code>set()</code>。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>确定值或明确失败</h3><div class="flow-branch"><div class="flow-branch__path"><strong>成功</strong>值返回并写入当前TestContext。</div><div class="flow-branch__path"><strong>跳过/失败</strong>可选缺失不写入；转换或类型错误抛异常。</div></div></div></article>
+      <article class="flow-stage"><div class="flow-stage__index">4</div><div class="flow-stage__function"><h3><code>add_cleanup()</code></h3><p>把可调用对象及参数追加到当前用例的cleanup栈。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>资源责任后进先出</h3><p>注册顺序保存依赖方向；最后创建或最后依赖的资源优先释放。</p></div></article>
+      <article class="flow-stage"><div class="flow-stage__index">5</div><div class="flow-stage__function"><h3><code>cleanup()</code></h3><p>持续<code>pop()</code>直到栈空，收集全部异常后再统一报告。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>资源与错误同时收口</h3><div class="flow-branch"><div class="flow-branch__path"><strong>无错误</strong>正常返回，重复调用因空栈而无副作用。</div><div class="flow-branch__path"><strong>有错误</strong>其余回调仍执行，最后抛出聚合且脱敏的清理异常。</div></div></div></article>
+    </div>
+    <div class="flow-fact-footer"><strong>守恒事实</strong><p>值只有通过全部合同才进入上下文；已注册的资源责任必须在用例终点被消费；失败可以改变终点类型，不能跳过状态与资源收口。</p></div>
+  </figure>
+</section>
+<section id='quiz' data-section><p class='kicker'>11 · Knowledge check</p><h2>知识自测</h2><div class='quiz' data-answer='b'><strong>1. TestContext的作用域是什么？</strong><label><input type='radio' name='q1' value='a'>全仓库</label><label><input type='radio' name='q1' value='b'>单个测试用例</label><label><input type='radio' name='q1' value='c'>Jenkins永久状态</label></div><div class='quiz' data-answer='c'><strong>2. required字段缺失且未提供default时，提取边界应如何处理？</strong><label><input type='radio' name='q2' value='a'>写空字符串后继续</label><label><input type='radio' name='q2' value='b'>直接写入None</label><label><input type='radio' name='q2' value='c'>报告变量、来源和路径且不写入</label></div><div class='quiz' data-answer='a'><strong>3. 正确的变量处理顺序是什么？</strong><label><input type='radio' name='q3' value='a'>提取/默认处理 → transform → expected_type校验 → 写入</label><label><input type='radio' name='q3' value='b'>expected_type转换 → transform校验 → 写入</label><label><input type='radio' name='q3' value='c'>先写入 → 再转换和校验</label></div><div class='quiz' data-answer='b'><strong>4. expected_type的职责是什么？</strong><label><input type='radio' name='q4' value='a'>调用目标类型完成转换</label><label><input type='radio' name='q4' value='b'>校验transform后的值，不执行转换</label><label><input type='radio' name='q4' value='c'>为缺失字段生成default</label></div><div class='quiz' data-answer='c'><strong>5. 一个cleanup失败后怎么办？</strong><label><input type='radio' name='q5' value='a'>立即停止并忽略后续cleanup</label><label><input type='radio' name='q5' value='b'>把测试结果改写为通过</label><label><input type='radio' name='q5' value='c'>继续其余清理并汇总错误</label></div><button class='primary' id='submit-quiz'>提交答案</button><div class='verdict' id='quiz-summary'>建议达到4/5再进入门禁。</div></section>
+<section id='gate' data-section><p class='kicker'>12 · Exit gate</p><h2>本课门禁</h2><div class='gate-list'><label class='gate'><input type='checkbox' data-gate='map'><span>已完成用例级变量流图。</span></label><label class='gate'><input type='checkbox' data-gate='extract'><span>能解释四类提取来源和缺失语义。</span></label><label class='gate'><input type='checkbox' data-gate='type'><span>能写出“提取/缺失与默认处理 → transform转换 → expected_type类型校验 → 写入TestContext”，并说明expected_type只校验不转换。</span></label><label class='gate'><input type='checkbox' data-gate='cleanup'><span>能解释LIFO和多错误归并。</span></label><label class='gate'><input type='checkbox' data-gate='evidence'><span>已记录本轮离线测试结果。</span></label></div><div class='notes'><label>门禁成果位置 / 口头记录<textarea data-note='gate-record' placeholder='填写变量流图、清理栈或测试记录的位置；口头验收时记录复述要点'></textarea></label></div><div class='callout good'><strong>验收句：</strong>我能说明TestContext如何先处理提取缺失与default，再由transform转换、由expected_type校验且仅在成功后写入，并在任何结束路径继续按依赖逆序完成资源清理。</div><div class='footer'><div class='footer-links'><a class='button' href='第11天-流式响应与资源生命周期.html'>← 上一课</a><a class='button' href='../接口测试框架六周学习课程.html'>返回课程大纲</a><a class='button' href='第13天-上下文传播与并发隔离.html'>下一课 →</a></div></div></section>
+</article></main><script src="六周课程页.js"></script></body></html>

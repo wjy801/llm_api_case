@@ -5,13 +5,14 @@
   <meta name='viewport' content='width=device-width,initial-scale=1'>
   <meta name='description' content='接口测试框架源码架构与证据链六周课程第16天：Runner执行器状态、池级事实、pytest退出码与execution-result机器产物'>
   <title>第16天｜执行器状态与退出码</title>
-  <link rel='stylesheet' href='六周课程页.css'>
+  <link rel='stylesheet' href="六周课程页.css">
 </head>
 <body data-day='16'>
   <aside class='side' id='side'>
     <div class='mark'><small>接口测试框架源码架构与证据链六周课程</small><h2>第16天 · 执行事实不可美化</h2><p>第4周 / Runner与报告事实</p></div>
     <nav class='nav'>
-      <a href='#question'><span class='num'>01</span><span>问题与学习边界</span></a>
+      <a href='#question'><span class='num'>01</span><span>学习目标与边界</span></a>
+      <a href='#code-first-walkthrough'><span class='num'>C</span><span>代码先行精讲</span></a>
       <a href='#entry'><span class='num'>02</span><span>源码入口与对象</span></a>
       <a href='#facts'><span class='num'>03</span><span>四层执行事实</span></a>
       <a href='#pool'><span class='num'>04</span><span>池状态与结果模型</span></a>
@@ -22,6 +23,8 @@
       <a href='#tests'><span class='num'>09</span><span>现有测试证据</span></a>
       <a href='#design'><span class='num'>D</span><span>设计选择与边界</span></a>
       <a href='#practice'><span class='num'>10</span><span>本轮产物实践</span></a>
+      <a href="#source-code"><span class='num'>S</span><span>关键源码</span></a>
+      <a href='#lesson-flow-summary'><span class='num'>F</span><span>全课流转图</span></a>
       <a href='#quiz'><span class='num'>11</span><span>知识自测</span></a>
       <a href='#gate'><span class='num'>12</span><span>学习门禁</span></a>
     </nav>
@@ -40,9 +43,9 @@
       </header>
 
       <section id='question' data-section>
-        <p class='kicker'>01 · First principles</p>
-        <h2>退出码是执行事实的压缩，不是错误文案</h2>
-        <p class='lead'>Runner真正要解决的问题不是“打印什么提示”，而是把多个阶段、多个池的原始结果守恒地压缩成一个进程退出码，同时保留足够的机器证据供后续系统解释。</p>
+        <p class='kicker'>01 · Learning goals</p>
+        <h2>先观察三个结果：池是否执行、pytest返回什么、Runner最终提交什么</h2>
+        <p class='lead'>先不背状态枚举。完成本课后，你应能从一个Runner测试追踪到池结果、最终退出码和<code>execution-result.json</code>，并说明三者为何不能互相替代。</p>
         <div class='grid3'>
           <div class='card'><h3>输入事实</h3><p>pytest参数、权威收集结果、nodeid计划、并发配置和串行标记。</p></div>
           <div class='card'><h3>过程事实</h3><p>每个池是否计划、是否真正执行、原始pytest退出码、起止时间和JUnit路径。</p></div>
@@ -51,8 +54,203 @@
         <div class='callout warn'><strong>TOC约束：</strong>如果只看最终退出码，就丢失了“哪个池执行、哪个池未运行、是否因终止码短路”的关键信息；因此本课的核心约束是事实保真，而不是让结果看起来更简洁。</div>
       </section>
 
+      <section id="code-first-walkthrough" data-section>
+                    <p class="kicker">02 · Code first walkthrough</p>
+                    <h2>从一条Runner测试进入：一次成功执行如何变成机器事实</h2>
+                    <p class="lead">主讲入口不是模拟业务服务，而是Runner自身合同测试。先运行用例，再沿<code>run()</code>、<code>execute_pool()</code>、退出码归并和原子写入逐层追踪。</p>
+                    <div class="guided-start">
+            <div class="guided-start__header">
+            <h3>本节主线：单池成功执行与机器产物提交</h3>
+            <p>只观察测试计划、池级执行事实、最终退出码和提交结果，不提前引入Quality结论。</p>
+            </div>
+            <div class="guided-command">
+            <strong>先运行这个用例</strong><code>python -m pytest -q tests/test_master_service_parallel_serial.py::test_runner_writes_pool_level_execution_facts</code>
+            </div>
+            <div class="guided-rule">
+            <strong>用例定位</strong> 文件：<code>tests/test_master_service_parallel_serial.py</code>；测试函数：<code>test_runner_writes_pool_level_execution_facts</code>；pytest nodeid：<code>tests/test_master_service_parallel_serial.py::test_runner_writes_pool_level_execution_facts</code>。</div>
+            <div class="guided-chain">
+            <span>测试固定收集与pytest结果</span><b>→</b><span>runner.run</span><b>→</b><span>execute_pool</span><b>→</b><span>PoolExecutionResult</span><b>→</b><span>最终退出码</span><b>→</b><span>execution-result.json</span>
+            </div>
+            </div>
+            <article class="guided-step"><div class="guided-step__title">
+      <span class="guided-step__number">1</span><div>
+      <h3>测试先固定输入，再只验收Runner可证明的字段</h3>
+      <p>Input / output / state / ownership / exception boundary.</p>
+      </div>
+      </div>
+      <div class="guided-code-grid">
+                      <div class="guided-source">
+            <span class="guided-source__location">定位tests/test_master_service_parallel_serial.py::test_runner_writes_pool_level_execution_facts</span><pre><code>monkeypatch.setattr(
+                pytest_execution,
+                "collect_test_case_items",
+                lambda path, pytest_args=(): _collection(
+                    CollectedTestCase("test_a.py::test_case", frozenset())
+                ),
+            )
+            monkeypatch.setattr(pytest_execution, "run_pytest", lambda args: 0)
+            payloads = []
+            monkeypatch.setattr(
+                artifacts,
+                "write_execution_result_atomic",
+                lambda payload: payloads.append(payload),
+            )
+            
+            assert run_master.run("tests") == 0
+            payload = payloads[0]
+            assert payload["planned_case_count"] == 1
+            assert payload["pool_results"][0]["stage_id"] == "serial-pool"
+            assert payload["pool_results"][0]["raw_pytest_exit_code"] == 0</code></pre>
+      </div>
+                      <div class="guided-explanation">
+            <h4>怎么读</h4>
+            <div class="guided-point">
+      <p><strong>输入：</strong>一个权威收集到的nodeid，以及pytest原始退出码0。</p>
+            </div>
+      <div class="guided-point">
+      <p><strong>输出：</strong>Runner返回0，同时提交包含计划数、池身份和原始退出码的payload。</p>
+            </div>
+      <div class="guided-point">
+      <p><strong>边界：</strong>该测试没有证明所有异常分支；它证明成功主链不会只留下一个模糊的最终数字。</p>
+            </div>
+      </div>
+                    </div>
+            
+                    </article><article class="guided-step"><div class="guided-step__title">
+      <span class="guided-step__number">2</span><div>
+      <h3>execute_pool()把“计划、执行状态、pytest结果”拆开保存</h3>
+      <p>Input / output / state / ownership / exception boundary.</p>
+      </div>
+      </div>
+      <div class="guided-code-grid">
+                      <div class="guided-source">
+            <span class="guided-source__location">源码定位run_orchestration/pytest_execution.py::execute_pool</span><pre><code>nodeids = tuple(planned_nodeids)
+            junit_path = extract_junit_path(pytest_args)
+            if not nodeids:
+                return PoolExecutionResult(
+                    stage_id=stage_id,
+                    planned_nodeids=(),
+                    status=PoolExecutionStatus.NOT_RUN,
+                    junit_path=junit_path,
+                )
+            
+            started_at = datetime.now(UTC)
+            try:
+                exit_code = run_pytest([*nodeids, *effective_args])
+            except Exception as error:
+                return PoolExecutionResult(
+                    stage_id=stage_id,
+                    planned_nodeids=nodeids,
+                    status=PoolExecutionStatus.ERROR,
+                    exception_type=type(error).__name__,
+                    junit_path=junit_path,
+                )
+            finally:
+                if allure_lifecycle is not None:
+                    allure_lifecycle.merge_pool(stage_id)</code></pre>
+      </div>
+                      <div class="guided-explanation">
+            <h4>关键函数合同</h4>
+            <div class="guided-point">
+      <p><strong>输入：</strong><code>stage_id</code>、计划nodeids、pytest参数和可选Allure生命周期。</p>
+            </div>
+      <div class="guided-point">
+      <p><strong>状态：</strong>空计划是<code>NOT_RUN</code>；pytest调用正常返回是<code>COMPLETED</code>；执行器抛出普通异常是<code>ERROR</code>。</p>
+            </div>
+      <div class="guided-point">
+      <p><strong>所有权：</strong>本函数拥有单个池的计时和结果封装；Allure合并放在<code>finally</code>，但报告生成不属于它。</p>
+            </div>
+      <div class="guided-point">
+      <p><strong>误区：</strong><code>COMPLETED</code>只表示pytest调用完成，原始退出码仍可能为1。</p>
+            </div>
+      </div>
+                    </div>
+            
+                    </article><article class="guided-step"><div class="guided-step__title">
+      <span class="guided-step__number">3</span><div>
+      <h3>_final_exit_code()先处理执行器错误，再归并pytest退出码</h3>
+      <p>Input / output / state / ownership / exception boundary.</p>
+      </div>
+      </div>
+      <div class="guided-code-grid">
+                      <div class="guided-source">
+            <span class="guided-source__location">源码定位run_orchestration/runner.py::_final_exit_coderun_orchestration/pytest_execution.py::merge_exit_codes</span><pre><code>if any(
+                result.status is PoolExecutionStatus.ERROR
+                for result in pool_results
+            ):
+                return PYTEST_EXIT_TESTS_FAILED
+            
+            return merge_exit_codes([
+                result.raw_pytest_exit_code
+                for result in pool_results
+                if result.raw_pytest_exit_code is not None
+            ])
+            
+            # merge_exit_codes内部：
+            # 2/3/4/5终止码优先；其次任何失败或其他非零归一为1；全0才返回0。</code></pre>
+      </div>
+                      <div class="guided-explanation">
+            <h4>为什么分两层</h4>
+            <div class="guided-point">
+      <p><strong>Runner错误：</strong>池没有得到pytest原始退出码，只能保存<code>ERROR + exception_type</code>并返回失败。</p>
+            </div>
+      <div class="guided-point">
+      <p><strong>pytest事实：</strong>若pytest确实返回，则保留2、3、4、5等终止语义，不用最后一个池覆盖前面的严重结果。</p>
+            </div>
+      <div class="guided-point">
+      <p><strong>异常边界：</strong>Quality收尾失败采取fail-open，不反向改写已经确定的pytest退出事实。</p>
+            </div>
+      </div>
+                    </div>
+            
+                    </article><article class="guided-step"><div class="guided-step__title">
+      <span class="guided-step__number">4</span><div>
+      <h3>_write_execution_result()提交字段；原子写失败不能制造假成功</h3>
+      <p>Input / output / state / ownership / exception boundary.</p>
+      </div>
+      </div>
+      <div class="guided-code-grid">
+                      <div class="guided-source">
+            <span class="guided-source__location">源码定位run_orchestration/runner.py::_write_execution_resultrun_orchestration/artifacts.py::write_execution_result_atomic</span><pre><code>payload = {
+                "planned_nodeids": [case.nodeid for case in collection.cases],
+                "collection_exit_code": collection.raw_pytest_exit_code,
+                "pool_results": [...],
+                "final_exit_code": final_exit_code,
+            }
+            try:
+                artifacts.write_execution_result_atomic(payload)
+            except Exception:
+                if final_exit_code in PYTEST_TERMINATING_EXIT_CODES:
+                    return final_exit_code
+                return PYTEST_EXIT_TESTS_FAILED
+            
+            # write_execution_result_atomic：临时文件写入、flush、fsync，最后os.replace。</code></pre>
+      </div>
+                      <div class="guided-explanation">
+            <h4>提交语义</h4>
+            <div class="guided-point">
+      <p><strong>数据：</strong>收集事实、池级事实和最终退出码同时写入，避免消费者只看其中一层。</p>
+            </div>
+      <div class="guided-point">
+      <p><strong>所有权：</strong>Runner构造payload；<code>artifacts</code>只负责文件提交，不解释字段。</p>
+            </div>
+      <div class="guided-point">
+      <p><strong>失败策略：</strong>原本成功但机器产物写失败时返回1；若已有pytest终止码则保留终止码。这样不会把“证据没写成”报告为成功。</p>
+            </div>
+      </div>
+                    </div>
+                    </article><div class="callout">
+            <strong>代码后复盘：</strong>下面原有的执行事实、状态机和职责边界章节，改用上述四个函数作为索引阅读；术语只用于命名你已经在代码中看到的状态变化。</div>
+                  <div class="guided-conclusion">
+            <h3>代码后复盘顺序</h3>
+            <ol>
+            <li>先用测试确认Runner实际提交哪些字段。</li>
+            <li>再用<code>execute_pool()</code>区分池状态与pytest退出码。</li>
+            <li>最后阅读原有章节中的四层事实、停止策略和职责边界。</li>
+            </ol>
+            </div></section>
+
       <section id='entry' data-section>
-        <p class='kicker'>02 · Source entry</p>
+        <p class='kicker'>03 · Code review</p>
         <h2>从四个文件建立实现地图</h2>
         <div class='table-wrap'><table><thead><tr><th>入口</th><th>所有权</th><th>本课关注点</th></tr></thead><tbody>
           <tr><td><code>run_orchestration/runner.py</code></td><td>编排一次完整Runner运行</td><td><code>run()</code>、<code>_final_exit_code()</code>、<code>_write_execution_result()</code></td></tr>
@@ -189,6 +387,681 @@ finally {
         <div class='notes'><label>阶段状态图<textarea data-note='state' placeholder='参数 → 收集 → 分池 → 池执行 → 退出码归并 → 原子提交'></textarea></label><label>池结果核验<textarea data-note='pools' placeholder='逐池记录stage_id、status、raw exit、nodeid数量和JUnit路径'></textarea></label><label>退出码决策表<textarea data-note='exit' placeholder='记录0～5、ERROR状态和未知非零值的归并规则'></textarea></label><label>本轮证据<textarea data-note='evidence' placeholder='命令、执行时间、planned count、pool状态、final_exit_code'></textarea></label></div>
       </section>
 
+<!-- SOURCE_CARDS:DAY16:START -->
+<section id="source-code" class="source-section" data-section aria-labelledby="source-code-title">
+<div class="source-section__header">
+<p class="source-section__kicker">Source Reading · Static Snapshot</p>
+<h2 id="source-code-title">关键源码</h2>
+<p>以下源码由当前工作区直接提取，经教学裁剪、真实行数统计和统一HTML转义后静态写入。本页共155行源码，浏览页面时不会读取仓库文件。</p>
+</div>
+<div class="source-card-list">
+<details class="source-card source-card--required" id="source-card-D16-S1" data-default-open="false" data-source-lines="10">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>池执行结果保留计划与原始退出事实</strong><small>run_orchestration/pytest_execution.py · 10行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D16-S1">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_runner_writes_pool_level_execution_facts</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_runner_writes_pool_level_execution_facts</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/pytest_execution.py::PoolExecutionResult</code></span>
+<span><strong>真实行数</strong>10</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>planned_nodeids、status、raw exit、时间和异常类型为何必须同时存在？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制池执行结果保留计划与原始退出事实选段1" aria-describedby="source-copy-status-D16-S1-1" aria-controls="source-code-D16-S1-1" data-source-target="source-code-D16-S1-1" data-source-status="source-copy-status-D16-S1-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D16-S1-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D16-S1-1" tabindex="0" aria-label="池执行结果保留计划与原始退出事实，源码第92至101行，选段1"><code class="language-python" data-source-card="D16-S1" data-segment-index="1">@dataclass(frozen=True)
+class PoolExecutionResult:
+    stage_id: str
+    planned_nodeids: tuple[str, ...]
+    status: PoolExecutionStatus
+    raw_pytest_exit_code: int | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    exception_type: str | None = None
+    junit_path: Path | None = None</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D16-S1" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该结果必须并列保存计划、执行阶段和pytest原始事实，COMPLETED不等于测试通过。机制：冻结数据类分别记录nodeid、status、raw exit、时间、异常类型与JUnit路径，但不计算最终进程码。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>数据类冻结保存单个执行池的计划与结果事实。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>只承载池级事实，不计算最终进程退出码。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>池状态与pytest原始退出码是两个独立字段。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>COMPLETED不等于测试通过，NOT_RUN也不等于收集失败。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_master_service_parallel_serial.py::test_runner_writes_pool_level_execution_facts</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<section class="source-card source-card--required source-card--expanded" id="source-card-D16-S2" data-default-open="true" data-source-lines="42">
+<div class="source-card__heading">
+<span class="source-importance">必读</span>
+<div><h3>执行池状态、原始退出码与异常路径</h3><p>run_orchestration/pytest_execution.py · 42行</p></div>
+</div>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D16-S2">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_runner_writes_pool_level_execution_facts</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_runner_writes_pool_level_execution_facts</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/pytest_execution.py::execute_pool</code></span>
+<span><strong>真实行数</strong>42</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>空池、pytest正常返回和Runner调用异常分别生成什么status与raw exit？</p>
+<p class="source-omission">省略说明：省略方法签名；从计划nodeid冻结和空池判断开始。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制执行池状态、原始退出码与异常路径选段1" aria-describedby="source-copy-status-D16-S2-1" aria-controls="source-code-D16-S2-1" data-source-target="source-code-D16-S2-1" data-source-status="source-copy-status-D16-S2-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D16-S2-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D16-S2-1" tabindex="0" aria-label="执行池状态、原始退出码与异常路径，源码第326至367行，选段1"><code class="language-python" data-source-card="D16-S2" data-segment-index="1">    nodeids = tuple(planned_nodeids)
+    junit_path = extract_junit_path(pytest_args)
+    if not nodeids:
+        return PoolExecutionResult(
+            stage_id=stage_id,
+            planned_nodeids=(),
+            status=PoolExecutionStatus.NOT_RUN,
+            junit_path=junit_path,
+        )
+
+    started_at = datetime.now(UTC)
+    effective_args = (
+        allure_lifecycle.pool_args(stage_id, pytest_args)
+        if allure_lifecycle is not None
+        else list(pytest_args)
+    )
+    try:
+        args = [*nodeids, *effective_args]
+        with _runner_managed_allure_environment():
+            exit_code = run_pytest(args)
+    except Exception as error:
+        return PoolExecutionResult(
+            stage_id=stage_id,
+            planned_nodeids=nodeids,
+            status=PoolExecutionStatus.ERROR,
+            started_at=started_at,
+            completed_at=datetime.now(UTC),
+            exception_type=type(error).__name__,
+            junit_path=junit_path,
+        )
+    finally:
+        if allure_lifecycle is not None:
+            allure_lifecycle.merge_pool(stage_id)
+    return PoolExecutionResult(
+        stage_id=stage_id,
+        planned_nodeids=nodeids,
+        status=PoolExecutionStatus.COMPLETED,
+        raw_pytest_exit_code=exit_code,
+        started_at=started_at,
+        completed_at=datetime.now(UTC),
+        junit_path=junit_path,
+    )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D16-S2" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：空池是NOT_RUN且无raw exit，正常调用是COMPLETED并保留任意pytest返回码，Runner调用异常才是ERROR且无raw exit。机制：非空池在try中执行pytest，Exception转ERROR，finally仍合并Allure池。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>空池返回NOT_RUN；非空池执行pytest，Exception转ERROR，finally合并Allure池，正常返回COMPLETED与原始退出码。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>执行一个pytest池并产生PoolExecutionResult。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>池状态描述Runner执行阶段，raw_pytest_exit_code保留pytest返回事实。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>ERROR路径没有raw pytest退出码；COMPLETED仍可能携带1到5等非零退出码。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_master_service_parallel_serial.py::test_runner_writes_pool_level_execution_facts</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</section>
+<details class="source-card source-card--required" id="source-card-D16-S3" data-default-open="false" data-source-lines="11">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>多池退出码合并优先级</strong><small>run_orchestration/pytest_execution.py · 11行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D16-S3">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_terminating_parallel_exit_stops_serial_pool</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_terminating_parallel_exit_stops_serial_pool</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/pytest_execution.py::merge_exit_codes</code></span>
+<span><strong>真实行数</strong>11</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>终止码、测试失败和其他非零退出码按什么优先级合并？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制多池退出码合并优先级选段1" aria-describedby="source-copy-status-D16-S3-1" aria-controls="source-code-D16-S3-1" data-source-target="source-code-D16-S3-1" data-source-status="source-copy-status-D16-S3-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D16-S3-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D16-S3-1" tabindex="0" aria-label="多池退出码合并优先级，源码第370至380行，选段1"><code class="language-python" data-source-card="D16-S3" data-segment-index="1">def merge_exit_codes(exit_codes: Sequence[int]) -&gt; int:
+    if not exit_codes:
+        return 0
+    for exit_code in exit_codes:
+        if exit_code in PYTEST_TERMINATING_EXIT_CODES:
+            return exit_code
+    if any(exit_code == PYTEST_EXIT_TESTS_FAILED for exit_code in exit_codes):
+        return PYTEST_EXIT_TESTS_FAILED
+    if any(exit_code != PYTEST_EXIT_OK for exit_code in exit_codes):
+        return PYTEST_EXIT_TESTS_FAILED
+    return PYTEST_EXIT_OK</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D16-S3" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：合并优先保留序列中首个2、3、4、5终止码，其次任何1或其他非零都归为1，空序列或全0才为0。机制：函数分三层扫描判断，而不是采用最后一个池的退出码。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>先返回2/3/4/5终止码，再处理1和其他非零，全部成功才返回0。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>只计算合并值。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>最终合并不是简单取最后一个池退出码。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>写execution-result失败仍可能再次改变最终进程码。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_master_service_parallel_serial.py::test_terminating_parallel_exit_stops_serial_pool</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--support" id="source-card-D16-S4" data-default-open="false" data-source-lines="2">
+<summary class="source-card__summary">
+<span class="source-importance">支撑</span>
+<span><strong>终止码阻断后续池</strong><small>run_orchestration/pytest_execution.py · 2行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D16-S4">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_terminating_parallel_exit_stops_serial_pool</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_terminating_parallel_exit_stops_serial_pool</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/pytest_execution.py::should_stop_after_exit_code</code></span>
+<span><strong>真实行数</strong>2</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>哪些pytest退出码会阻断serial池？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制终止码阻断后续池选段1" aria-describedby="source-copy-status-D16-S4-1" aria-controls="source-code-D16-S4-1" data-source-target="source-code-D16-S4-1" data-source-status="source-copy-status-D16-S4-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D16-S4-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D16-S4-1" tabindex="0" aria-label="终止码阻断后续池，源码第383至384行，选段1"><code class="language-python" data-source-card="D16-S4" data-segment-index="1">def should_stop_after_exit_code(exit_code: int | None) -&gt; bool:
+    return exit_code in PYTEST_TERMINATING_EXIT_CODES</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D16-S4" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：只有pytest原始退出码2、3、4、5会阻断后续serial池，普通测试失败1不会。机制：函数仅判断raw exit是否属于终止集合；NOT_RUN结果的创建仍由Runner调度层负责。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>判断原始退出码是否属于终止集合。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>只返回布尔值。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>2/3/4/5与普通测试失败1具有不同调度语义。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>函数不创建NOT_RUN结果，由Runner负责。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_master_service_parallel_serial.py::test_terminating_parallel_exit_stops_serial_pool</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--required" id="source-card-D16-S5" data-default-open="false" data-source-lines="15">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>Runner错误状态优先于原始池码合并</strong><small>run_orchestration/runner.py · 15行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D16-S5">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_runner_exception_stops_following_pool_and_returns_nonzero</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_runner_exception_stops_following_pool_and_returns_nonzero</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/runner.py::_final_exit_code</code></span>
+<span><strong>真实行数</strong>15</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>为什么PoolExecutionStatus.ERROR会直接映射为1？</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制Runner错误状态优先于原始池码合并选段1" aria-describedby="source-copy-status-D16-S5-1" aria-controls="source-code-D16-S5-1" data-source-target="source-code-D16-S5-1" data-source-status="source-copy-status-D16-S5-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D16-S5-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D16-S5-1" tabindex="0" aria-label="Runner错误状态优先于原始池码合并，源码第227至241行，选段1"><code class="language-python" data-source-card="D16-S5" data-segment-index="1">def _final_exit_code(
+    pool_results: Sequence[pytest_execution.PoolExecutionResult],
+) -&gt; int:
+    if any(
+        result.status is pytest_execution.PoolExecutionStatus.ERROR
+        for result in pool_results
+    ):
+        return pytest_execution.PYTEST_EXIT_TESTS_FAILED
+    return pytest_execution.merge_exit_codes(
+        [
+            result.raw_pytest_exit_code
+            for result in pool_results
+            if result.raw_pytest_exit_code is not None
+        ]
+    )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D16-S5" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：任一池为ERROR时Runner候选退出码直接是1，不能拿其他池的raw exit掩盖调用异常。机制：先检查池状态，再仅对非None的pytest原始码做优先级合并；写机器产物仍可能再次修正结果。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>先检查任一池ERROR，再合并存在的raw pytest退出码。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>计算执行池层面的候选最终退出码。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Runner调用异常与pytest正常返回非零是不同事实。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>这仍不是绝对最终码，execution-result写盘失败可能把0改成1。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_master_service_parallel_serial.py::test_runner_exception_stops_following_pool_and_returns_nonzero</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--required" id="source-card-D16-S6" data-default-open="false" data-source-lines="29">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>execution-result写入与最终退出码修正</strong><small>run_orchestration/runner.py · 29行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D16-S6">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_execution_result_write_failure_never_creates_false_success</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_execution_result_write_failure_never_creates_false_success</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/runner.py::_write_execution_result</code></span>
+<span><strong>真实行数</strong>29</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>写盘失败时为什么0会变1，而2/3/4/5保持原值？</p>
+<p class="source-omission">省略说明：省略方法签名；保留机器事实核心字段。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制execution-result写入与最终退出码修正选段1" aria-describedby="source-copy-status-D16-S6-1" aria-controls="source-code-D16-S6-1" data-source-target="source-code-D16-S6-1" data-source-status="source-copy-status-D16-S6-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D16-S6-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D16-S6-1" tabindex="0" aria-label="execution-result写入与最终退出码修正，源码第252至264行，选段1"><code class="language-python" data-source-card="D16-S6" data-segment-index="1">    payload = {
+        "schema_version": artifacts.RUNNER_EXECUTION_SCHEMA_VERSION,
+        "test_target": str(test_path),
+        "selection_args": list(argument_plan.selection_args),
+        "planned_case_count": len(collection.cases),
+        "planned_nodeids": [case.nodeid for case in collection.cases],
+        "collection_exit_code": collection.raw_pytest_exit_code,
+        "pool_results": [
+            {
+                "stage_id": result.stage_id,
+                "planned_nodeids": list(result.planned_nodeids),
+                "status": result.status.value,
+                "raw_pytest_exit_code": result.raw_pytest_exit_code,</code></pre>
+</div>
+<p class="source-omission">省略说明：省略池时间、异常类型和JUnit路径字段；下一代码块保留final_exit_code与写盘失败分支。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制execution-result写入与最终退出码修正选段2" aria-describedby="source-copy-status-D16-S6-2" aria-controls="source-code-D16-S6-2" data-source-target="source-code-D16-S6-2" data-source-status="source-copy-status-D16-S6-2">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D16-S6-2" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D16-S6-2" tabindex="0" aria-label="execution-result写入与最终退出码修正，源码第282至297行，选段2"><code class="language-python" data-source-card="D16-S6" data-segment-index="2">            for result in pool_results
+        ],
+        "final_exit_code": final_exit_code,
+    }
+    try:
+        artifacts.write_execution_result_atomic(payload)
+    except Exception as error:
+        print(
+            f"Runner execution result write failed: "
+            f"{type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        if final_exit_code in pytest_execution.PYTEST_TERMINATING_EXIT_CODES:
+            return final_exit_code
+        return pytest_execution.PYTEST_EXIT_TESTS_FAILED
+    return final_exit_code</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D16-S6" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：execution-result写盘失败不能制造假成功，所以0改为1，而2、3、4、5终止码保持不变。机制：先组装计划、池状态和raw exit等机器事实并原子写入；捕获Exception后保留终止码，其余统一返回1。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>构造计划和池级事实，原子写入；失败时报告错误，保留终止码，否则返回测试失败1。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>写execution-result.json；写入失败可能修正进程码。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>execution-result是Runner机器事实，且不能允许写盘失败制造假成功。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>写盘成功不证明测试通过，也不等于Quality完成。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_master_service_parallel_serial.py::test_execution_result_write_failure_never_creates_false_success</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--required" id="source-card-D16-S7" data-default-open="false" data-source-lines="22">
+<summary class="source-card__summary">
+<span class="source-importance">必读</span>
+<span><strong>执行事实先写入，Quality随后失败开放收尾</strong><small>run_orchestration/runner.py · 22行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D16-S7">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_quality_finalization_failure_does_not_override_pytest_exit</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_quality_finalization_failure_does_not_override_pytest_exit</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>run_orchestration/runner.py::run</code></span>
+<span><strong>真实行数</strong>22</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>execution-result、返回值与Quality finalize按什么顺序发生？</p>
+<p class="source-omission">省略说明：省略收集、分池和执行主体；保留候选退出码、机器事实写入与finally收尾。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制执行事实先写入，Quality随后失败开放收尾选段1" aria-describedby="source-copy-status-D16-S7-1" aria-controls="source-code-D16-S7-1" data-source-target="source-code-D16-S7-1" data-source-status="source-copy-status-D16-S7-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D16-S7-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D16-S7-1" tabindex="0" aria-label="执行事实先写入，Quality随后失败开放收尾，源码第180至193行，选段1"><code class="language-python" data-source-card="D16-S7" data-segment-index="1">        final_exit_code = _final_exit_code(pool_results)
+        if any(
+            result.status is pytest_execution.PoolExecutionStatus.ERROR
+            for result in pool_results
+        ):
+            final_status = quality_lifecycle.RunLifecycleStatus.PARTIAL
+        final_exit_code = _write_execution_result(
+            test_path=test_path,
+            argument_plan=argument_plan,
+            collection=collection,
+            pool_results=tuple(pool_results),
+            final_exit_code=final_exit_code,
+        )
+        return final_exit_code</code></pre>
+</div>
+<p class="source-omission">省略说明：省略Runner中断和普通异常处理；下一代码块保留Allure与Quality finally收尾。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制执行事实先写入，Quality随后失败开放收尾选段2" aria-describedby="source-copy-status-D16-S7-2" aria-controls="source-code-D16-S7-2" data-source-target="source-code-D16-S7-2" data-source-status="source-copy-status-D16-S7-2">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D16-S7-2" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D16-S7-2" tabindex="0" aria-label="执行事实先写入，Quality随后失败开放收尾，源码第204至211行，选段2"><code class="language-python" data-source-card="D16-S7" data-segment-index="2">    finally:
+        allure_lifecycle.finalize()
+        quality_run_lifecycle.finalize(
+            start_time=quality_start_time,
+            expected_case_count=len(case_nodeids),
+            pool_results=tuple(pool_results),
+            status=final_status,
+        )</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D16-S7" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：Runner先确定退出码并提交execution-result，再在真正返回前执行Allure与Quality收尾。机制：return前调用写盘函数，finally随后运行两个生命周期；Quality finalize内部吞掉Exception，因此不能改写已算出的pytest事实。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>先计算并写Runner机器事实，再准备return；finally执行Allure与Quality收尾。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>Quality收尾发生在Runner返回前，但其内部Exception被报告并吞掉。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Quality finalize失败不会重写已计算且已写入的pytest执行事实。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>Quality失败没有写入稳定机器状态，只通过警告文本报告。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_master_service_parallel_serial.py::test_quality_finalization_failure_does_not_override_pytest_exit</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--evidence" id="source-card-D16-T1" data-default-open="false" data-source-lines="7">
+<summary class="source-card__summary">
+<span class="source-importance">测试证据</span>
+<span><strong>证据：机器产物保留计划数量与池原始退出事实</strong><small>tests/test_master_service_parallel_serial.py · 7行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D16-T1">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_runner_writes_pool_level_execution_facts</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_runner_writes_pool_level_execution_facts</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>tests/test_master_service_parallel_serial.py::test_runner_writes_pool_level_execution_facts</code></span>
+<span><strong>真实行数</strong>7</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>哪些字段证明全局计划数量、池身份与原始退出码？</p>
+<p class="source-omission">省略说明：省略收集与写入桩；保留执行和关键payload断言。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制证据：机器产物保留计划数量与池原始退出事实选段1" aria-describedby="source-copy-status-D16-T1-1" aria-controls="source-code-D16-T1-1" data-source-target="source-code-D16-T1-1" data-source-status="source-copy-status-D16-T1-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D16-T1-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D16-T1-1" tabindex="0" aria-label="证据：机器产物保留计划数量与池原始退出事实，源码第424至430行，选段1"><code class="language-python" data-source-card="D16-T1" data-segment-index="1">    assert run_master.run("tests") == 0
+    payload = payloads[0]
+    assert payload["schema_version"] == "runner-execution.v1"
+    assert payload["planned_case_count"] == 1
+    assert payload["final_exit_code"] == 0
+    assert payload["pool_results"][0]["stage_id"] == "serial-pool"
+    assert payload["pool_results"][0]["raw_pytest_exit_code"] == 0</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D16-T1" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该测试只证明机器产物含全局计划数、最终码、首池stage_id和raw exit。机制：Runner返回0后检查schema、planned_case_count、final_exit_code及池字段；未断言池内nodeid、status或写盘失败。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>运行Runner并断言schema、计划数、最终码、stage和raw exit。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>捕获execution-result payload。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Runner机器产物包含全局planned_case_count、池stage_id与原始pytest退出码。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>该片段未断言池内planned_nodeids或status，也不覆盖写盘失败。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_master_service_parallel_serial.py::test_runner_writes_pool_level_execution_facts</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--evidence" id="source-card-D16-T2" data-default-open="false" data-source-lines="3">
+<summary class="source-card__summary">
+<span class="source-importance">测试证据</span>
+<span><strong>证据：终止码停止serial池</strong><small>tests/test_master_service_parallel_serial.py · 3行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D16-T2">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_terminating_parallel_exit_stops_serial_pool</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_terminating_parallel_exit_stops_serial_pool</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>tests/test_master_service_parallel_serial.py::test_terminating_parallel_exit_stops_serial_pool</code></span>
+<span><strong>真实行数</strong>3</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>如何证明serial池没有启动？</p>
+<p class="source-omission">省略说明：省略收集与pytest桩；保留最终码、调用次数和parallel nodeid断言。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制证据：终止码停止serial池选段1" aria-describedby="source-copy-status-D16-T2-1" aria-controls="source-code-D16-T2-1" data-source-target="source-code-D16-T2-1" data-source-status="source-copy-status-D16-T2-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D16-T2-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D16-T2-1" tabindex="0" aria-label="证据：终止码停止serial池，源码第403至405行，选段1"><code class="language-python" data-source-card="D16-T2" data-segment-index="1">    assert run_master.run("tests", numprocesses="2") == terminating_exit
+    assert len(calls) == 1
+    assert "test_a.py::test_parallel" in calls[0]</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D16-T2" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该测试证明2、3、4、5各自保持为最终码，并阻止serial池启动。机制：参数化parallel池终止码后，断言Runner返回同一码、pytest仅调用一次且该次参数包含parallel节点；不覆盖退出码1。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>参数化2/3/4/5并断言pytest只调用一次。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>模拟parallel池返回终止码。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>终止码保持并阻断后续池。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不覆盖普通测试失败1。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_master_service_parallel_serial.py::test_terminating_parallel_exit_stops_serial_pool</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--evidence" id="source-card-D16-T3" data-default-open="false" data-source-lines="7">
+<summary class="source-card__summary">
+<span class="source-importance">测试证据</span>
+<span><strong>证据：Quality失败不覆盖pytest退出码</strong><small>tests/test_master_service_parallel_serial.py · 7行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D16-T3">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_quality_finalization_failure_does_not_override_pytest_exit</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_quality_finalization_failure_does_not_override_pytest_exit</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>tests/test_master_service_parallel_serial.py::test_quality_finalization_failure_does_not_override_pytest_exit</code></span>
+<span><strong>真实行数</strong>7</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>Quality finalize抛OSError后为何仍返回0？</p>
+<p class="source-omission">省略说明：省略Quality启用、收集和pytest成功桩；保留finalize失败桩与最终断言。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制证据：Quality失败不覆盖pytest退出码选段1" aria-describedby="source-copy-status-D16-T3-1" aria-controls="source-code-D16-T3-1" data-source-target="source-code-D16-T3-1" data-source-status="source-copy-status-D16-T3-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D16-T3-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D16-T3-1" tabindex="0" aria-label="证据：Quality失败不覆盖pytest退出码，源码第445至451行，选段1"><code class="language-python" data-source-card="D16-T3" data-segment-index="1">    monkeypatch.setattr(
+        quality_pipeline,
+        "finalize_quality_run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("quality unavailable")),
+    )
+
+    assert run_master.run("tests") == 0</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D16-T3" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该测试只证明Quality收尾抛OSError时，pytest成功码0仍被Runner返回。机制：把finalize_quality_run替换为抛错函数后断言run结果为0；未检查警告、execution-result或稳定Quality状态。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>让Quality收尾抛错，断言Runner返回pytest成功码。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>模拟Quality收尾抛错；测试只观察Runner返回码。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>Quality收尾Exception未覆盖Runner返回的pytest成功码。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>该测试未捕获警告文本，也未检查execution-result内容或稳定Quality状态产物。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_master_service_parallel_serial.py::test_quality_finalization_failure_does_not_override_pytest_exit</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+<details class="source-card source-card--evidence" id="source-card-D16-T4" data-default-open="false" data-source-lines="7">
+<summary class="source-card__summary">
+<span class="source-importance">测试证据</span>
+<span><strong>证据：写盘失败不制造假成功</strong><small>tests/test_master_service_parallel_serial.py · 7行</small></span>
+</summary>
+<div class="source-card__body">
+<div class="source-example source-example--related" data-source-example="D16-T4">
+<p class="source-example__label">本段讲解用例 · 关联测试入口</p>
+<div class="source-example__grid">
+<span><strong>用例文件</strong><code>tests/test_master_service_parallel_serial.py</code></span>
+<span><strong>测试函数</strong><code>test_execution_result_write_failure_never_creates_false_success</code></span>
+<span><strong>pytest nodeid</strong><code>tests/test_master_service_parallel_serial.py::test_execution_result_write_failure_never_creates_false_success</code></span>
+</div>
+<p class="source-example__note">该测试来自本卡关联测试清单，便于定位可运行场景；它不等同于完整覆盖本卡阅读答案。</p>
+</div>
+<div class="source-meta">
+<span><strong>源码定位</strong><code>tests/test_master_service_parallel_serial.py::test_execution_result_write_failure_never_creates_false_success</code></span>
+<span><strong>真实行数</strong>7</span>
+<span><strong>定位方式</strong>python_symbol</span>
+</div>
+<p class="source-reading"><strong>阅读问题</strong>pytest 0与4在写盘失败后分别变成什么？</p>
+<p class="source-omission">省略说明：省略收集与pytest退出码桩；保留写盘失败桩和参数化结果断言。</p>
+<div class="source-code-wrap">
+<button class="source-copy" type="button" aria-label="复制证据：写盘失败不制造假成功选段1" aria-describedby="source-copy-status-D16-T4-1" aria-controls="source-code-D16-T4-1" data-source-target="source-code-D16-T4-1" data-source-status="source-copy-status-D16-T4-1">复制源码</button>
+<span class="source-copy-status" id="source-copy-status-D16-T4-1" role="status" aria-live="polite"></span>
+<pre class="source-code" id="source-code-D16-T4-1" tabindex="0" aria-label="证据：写盘失败不制造假成功，源码第468至474行，选段1"><code class="language-python" data-source-card="D16-T4" data-segment-index="1">    monkeypatch.setattr(
+        artifacts,
+        "write_execution_result_atomic",
+        lambda payload: (_ for _ in ()).throw(OSError("disk unavailable")),
+    )
+
+    assert run_master.run("tests") == expected</code></pre>
+</div>
+<section class="source-answer" data-source-answer="D16-T4" aria-label="阅读答案">
+<div class="source-answer__heading"><strong>阅读答案</strong>
+<p>结论：该测试证明机器产物不可写时，pytest成功0会降为1，而终止码4仍保持4。机制：参数化原始退出码并让原子写函数抛OSError，再直接断言Runner结果；未覆盖其他写盘故障时机。</p></div>
+<div class="source-explanation-grid">
+<div class="source-order"><strong>源码执行依据</strong><p>让原子写入抛OSError，断言0转1而4保持4。</p></div>
+<div class="source-state"><strong>状态结果</strong><p>模拟Runner机器产物不可写。</p></div>
+<div class="source-proof"><strong>证据结论</strong><p>最终进程码还受execution-result提交是否成功影响。</p></div>
+<div class="source-limit"><strong>答案边界</strong><p>不覆盖其他文件系统故障时机。</p></div>
+</div>
+</section>
+<div class="source-test"><strong>关联测试</strong><ul>
+<li><code>tests/test_master_service_parallel_serial.py::test_execution_result_write_failure_never_creates_false_success</code></li>
+</ul></div>
+<div class="source-related"><strong>关联定位</strong><ul>
+<li>无额外源码定位。</li>
+</ul></div>
+</div>
+</details>
+</div>
+</section>
+<!-- SOURCE_CARDS:DAY16:END -->
+      <section id="lesson-flow-summary" data-section>
+        <p class="kicker">Flow summary · Functions, facts and artifact state</p>
+        <h2>第16天总图：Runner如何压缩退出码，同时保留可审计事实</h2>
+        <div class="lesson-flow-map">
+          <p class="flow-map-caption">左侧是执行函数或职责，右侧是该阶段新增或改变的数据。最终退出码不能替代池级事实和机器产物。</p>
+          <div class="flow-map-legend"><span class="flow-legend function">函数 / 职责</span><span class="flow-legend data">数据 / 状态</span><span class="flow-legend control">控制分支</span><span class="flow-legend fact">可消费事实</span></div>
+          <div class="flow-map-inputs"><div class="flow-input control"><strong>Runner输入</strong><p>test target、pytest参数、并发配置、serial marker。</p></div><div class="flow-input data"><strong>权威计划</strong><p>收集退出码、planned nodeids、并行池与串行池。</p></div><div class="flow-input fact"><strong>消费者</strong><p>Shell读取进程码；审计与流水线读取execution-result。</p></div></div>
+          <div class="flow-map-entry">↓</div>
+          <div class="flow-map-spine">
+            <div class="flow-stage"><span class="flow-stage__index">1</span><div class="flow-stage__function"><h3><code>partition_pytest_args()</code> / <code>collect_test_case_items()</code></h3><p>划分参数，再由pytest完成唯一权威收集。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>收集事实</h3><p><code>CollectionResult.cases</code>、收集原始退出码和collect-only画像。</p></div></div>
+            <div class="flow-stage"><span class="flow-stage__index">2</span><div class="flow-stage__function"><h3><code>scheduling.split_test_cases()</code></h3><p>按marker生成parallel与serial计划，不执行测试。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>池计划</h3><p>每个池拥有自己的planned nodeids；空池仍是明确事实。</p></div></div>
+            <div class="flow-stage"><span class="flow-stage__index">3</span><div class="flow-stage__function"><h3><code>execute_pool()</code></h3><p>调用pytest、计时、捕获普通执行器异常并触发Allure池合并。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>池级Runner事实</h3><p><code>NOT_RUN / COMPLETED / ERROR</code>、raw exit、时间、exception type、JUnit路径。</p></div></div>
+            <div class="flow-stage"><span class="flow-stage__index">4</span><div class="flow-stage__function"><h3><code>QualityRunLifecycle.finalize()</code></h3><p>基于已执行池触发可选Quality收尾；普通异常失败开放。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>Quality事实边界</h3><p>Quality可产生P0/Semantic产物，但不得覆盖pytest原始退出事实。</p></div></div>
+            <div class="flow-stage"><span class="flow-stage__index">5</span><div class="flow-stage__function"><h3><code>_final_exit_code()</code> / <code>merge_exit_codes()</code></h3><p>先处理Runner ERROR，再按终止码优先级归并pytest退出码。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>进程决策</h3><p>得到单个<code>final_exit_code</code>；它服务Shell控制流，不承载全部证据。</p></div></div>
+            <div class="flow-stage"><span class="flow-stage__index">6</span><div class="flow-stage__function"><h3><code>_write_execution_result()</code> / 原子替换</h3><p>组装收集、池和最终退出事实，临时写入后替换正式文件。</p></div><div class="flow-stage__arrow">→</div><div class="flow-stage__data"><h3>产物状态</h3><p><code>reports/execution-result.json</code>成功提交；提交失败时成功码转为1，终止码仍保留。</p></div></div>
+          </div>
+          <div class="flow-fact-footer"><strong>最终守恒关系</strong><p>Runner事实回答执行发生了什么；Quality事实回答采集与归并得到什么；进程码回答Shell下一步怎么走；机器产物状态回答本轮事实是否提交。</p></div>
+        </div>
+      </section>
       <section id='quiz' data-section>
         <p class='kicker'>11 · Knowledge check</p>
         <h2>知识自测</h2>
@@ -216,6 +1089,6 @@ finally {
       </section>
     </article>
   </main>
-  <script src='六周课程页.js'></script>
+  <script src="六周课程页.js"></script>
 </body>
 </html>

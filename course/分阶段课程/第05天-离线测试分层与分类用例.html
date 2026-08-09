@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="接口测试框架源码架构与证据链六周课程第5天：离线测试分层、周复盘与分类用例">
   <title>第05天｜离线测试分层与分类用例</title>
+  <link rel="stylesheet" href="六周课程页.css">
   <style>
     :root {
       color-scheme: light;
@@ -273,15 +274,17 @@
       <div class="course-mark"><small>接口测试框架源码架构与证据链六周课程 · 第1周</small><h2>第05天</h2><p>离线测试分层与分类用例</p></div>
       <nav class="nav-list" id="nav-list">
         <a href="#learning-goals"><span class="nav-number">01</span><span>目标与周总结</span></a>
-        <a href="#three-layers"><span class="nav-number">02</span><span>离线测试三层</span></a>
-        <a href="#selection-rule"><span class="nav-number">03</span><span>最低成本决策</span></a>
-        <a href="#loopback-gate"><span class="nav-number">04</span><span>Loopback门禁</span></a>
+        <a href="#code-first-walkthrough"><span class="nav-number">02</span><span>代码先行精讲</span></a>
+        <a href="#three-layers"><span class="nav-number">03</span><span>三层验证模型</span></a>
+        <a href="#selection-rule"><span class="nav-number">04</span><span>最低成本决策</span></a>
         <a href="#classification-atlas"><span class="nav-number">05</span><span>分类用例地图</span></a>
         <a href="#golden-boundary"><span class="nav-number">06</span><span>分类与黄金路径</span></a>
-        <a href="#reading-route"><span class="nav-number">07</span><span>阅读路线播放器</span></a>
-        <a href="#offline-lab"><span class="nav-number">08</span><span>离线实践</span></a>
+        <a href="#reading-route"><span class="nav-number">07</span><span>阅读路线</span></a>
+        <a href="#offline-lab"><span class="nav-number">08</span><span>模块实践</span></a>
         <a href="#constraint-exercise"><span class="nav-number">09</span><span>层级选择练习</span></a>
         <a href="#design-boundary"><span class="nav-number">D</span><span>设计选择与边界</span></a>
+        <a href="#source-code"><span class="nav-number">S</span><span>关键源码</span></a>
+        <a href="#lesson-flow-summary"><span class="nav-number">F</span><span>课后流转总图</span></a>
         <a href="#knowledge-check"><span class="nav-number">10</span><span>综合自测</span></a>
         <a href="#weekly-review"><span class="nav-number">R</span><span>30～45分钟周复盘</span></a>
         <a href="#week-gate"><span class="nav-number">11</span><span>第1周门禁</span></a>
@@ -296,262 +299,466 @@
         <header class="hero" id="top">
           <p class="eyebrow">Week 1 · Day 5</p>
           <h1>离线测试分层与分类用例</h1>
-          <p class="hero-lead">第1周最后一天，不再增加新的框架组件。今天建立一套选择测试层级的方法：既让故障尽可能快、准地暴露，又用必要的真实HTTP生命周期证明组件能够组合。</p>
+          <p class="hero-lead">第1周最后一天，不再增加新的框架组件。今天从一条真实Polling分类用例进入代码，再复盘怎样用单元合同、能力分类与黄金路径控制反馈成本。</p>
           <div class="hero-meta"><span class="pill">建议用时 130～160分钟</span><span class="pill">难度：进阶入门</span><span class="pill">实践：全离线回归</span><span class="pill">里程碑：第1周门禁</span></div>
-          <div class="hero-outcome"><strong>本课结果：</strong>你将能为一个框架变化选择单元模拟、loopback门禁或业务分类层，并解释为什么分类反例不能塞入黄金路径、离线模块也不是第二套框架。</div>
+          <div class="hero-outcome"><strong>本课结果：</strong>你将能沿Test → Task → BaseRequest → Polling状态机 → Assertions追踪普通module过程，并为变化选择最低成本的验证层。</div>
         </header>
 
         <section id="learning-goals" data-section>
           <p class="section-kicker">01 · 目标与周总结</p>
-          <h2>把已经学会的内容组织成验证策略</h2>
-          <p class="section-lead">框架能力越多，越不能只靠一条“全都跑一遍”的用例。测试分层让不同故障在最适合的位置暴露。</p>
+          <h2>先跟通一个能力分类，再命名测试分层</h2>
+          <p class="section-lead">本课不解释离线载体如何启动，只把它当作稳定可执行的普通module用例。学习重点是调用链、状态分支与证据归属。</p>
           <div class="objective-grid">
-            <div class="objective-card"><span class="objective-index">1</span><div><h3>区分三层证明力</h3><p>单元模拟、loopback服务门禁、业务分类与黄金路径分别证明什么。</p></div></div>
-            <div class="objective-card"><span class="objective-index">2</span><div><h3>选择最低成本层</h3><p>从目标故障出发，而不是默认启动完整服务或完整Runner。</p></div></div>
-            <div class="objective-card"><span class="objective-index">3</span><div><h3>建立分类索引</h3><p>知道七个业务文件各自保护的能力与禁止吸收的反例。</p></div></div>
-            <div class="objective-card"><span class="objective-index">4</span><div><h3>通过第1周门禁</h3><p>能画架构、判断变化位置、运行离线集合并解释黄金边界。</p></div></div>
+            <div class="objective-card"><span class="objective-index">1</span><div><h3>跟踪真实入口</h3><p>从规范pytest nodeid进入Polling分类用例，不从实现文件第一行开始。</p></div></div>
+            <div class="objective-card"><span class="objective-index">2</span><div><h3>拆解五个职责点</h3><p>识别测试Act、Task薄封装、BaseRequest入口、状态评估与终态分支。</p></div></div>
+            <div class="objective-card"><span class="objective-index">3</span><div><h3>选择最低成本层</h3><p>把算法合同、能力分类与黄金路径放回各自最容易暴露目标故障的位置。</p></div></div>
+            <div class="objective-card"><span class="objective-index">4</span><div><h3>完成周门禁</h3><p>能画出普通module函数与数据流，并说明失败后应回到哪个分类缩小根因。</p></div></div>
+          </div>
+          <div class="week-flow"><div class="flow-node">项目边界</div><div class="flow-node">四件套调用</div><div class="flow-node">模块扩展</div><div class="flow-node">生命周期证据</div><div class="flow-node">分层验证</div></div>
+          <div class="callout green"><strong>今天的控制点</strong>先写“要暴露的目标故障”，再选择测试层；如果目标无法对应到一个明确函数或状态分支，测试范围仍然过宽。</div>
+        </section>
+
+        <section id="code-first-walkthrough" data-section>
+          <p class="section-kicker">02 · Code First Walkthrough</p>
+          <h2>从Polling分类用例沿普通module主线进入状态机</h2>
+          <p class="section-lead">下面只追踪测试真正调用的Task、继承的BaseRequest与Polling状态分支。用例准备过程保持在选段外，不把稳定载体的创建细节带入本课。</p>
+          <div class="guided-start">
+            <div class="guided-start__header"><h3>真实测试入口：完整成功迁移</h3><p>先看Act和最终断言，再逐层进入负责路径拼接、轮询会话、状态评估与终态收口的函数。</p></div>
+            <div class="guided-command"><strong>先运行这个用例</strong><code>python -m pytest -q module/offline_framework_example/test_polling.py::TestPolling::test_polling_reaches_success_with_complete_transitions</code></div>
+            <div class="guided-rule"><strong>定位信息</strong>用例文件：<code>module/offline_framework_example/test_polling.py</code>；类方法：<code>TestPolling.test_polling_reaches_success_with_complete_transitions</code>。Arrange只提供<code>request</code>、<code>task_id</code>与策略，本节从Act开始。</div>
+            <div class="guided-chain" aria-label="第5天代码阅读顺序"><span>Test Act</span><b>→</b><span>Task能力</span><b>→</b><span>BaseRequest.poll_get</span><b>→</b><span>状态评估</span><b>→</b><span>断言收口</span></div>
           </div>
 
-          <h3>第1周五天形成一条能力链</h3>
-          <div class="week-flow">
-            <div class="flow-node">项目边界</div><div class="flow-node">四件套调用</div><div class="flow-node">模块扩展</div><div class="flow-node">生命周期与证据</div><div class="flow-node">分层验证策略</div>
-          </div>
-          <div class="callout green"><strong>今天的控制点</strong>每次新增测试前先写一句“它要暴露什么故障”。如果这句话无法唯一指向一个分类或层级，测试目标还没有被定义清楚。</div>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">1</span><div><h3>测试把目标压缩为“Polling成功并返回终态Response”</h3><p>连续选段从Act开始，到Response合同断言结束；准备代码与后续运行事实断言不在本段展开。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">module/offline_framework_example/test_polling.py::TestPolling.test_polling_reaches_success_with_complete_transitions · 连续选段</span><pre><code>        response = self.task.poll_media_generation_result(
+            request,
+            task_id,
+            poll_interval=0.01,
+            poll_timeout=1,
+            polling_policy=OFFLINE_POLLING_POLICY,
+            retry_policy=OFFLINE_RETRY_POLICY,
+        )
+
+        self.assertions.assert_status_code(response, 200)
+        self.assertions.assert_task_id(response, OFFLINE_TASK_ID)
+        self.assertions.assert_task_status(response, "succeeded")
+        assert (
+            self.assertions.assert_schema(
+                response,
+                OFFLINE_POLLING_SUCCESS_SCHEMA,
+            )
+            is response
+        )</code></pre></div><div class="guided-explanation"><h4>先确定测试在证明什么</h4><div class="guided-point"><strong>输入与消费</strong><p>Arrange交给Act一个模块Request、任务ID、轮询间隔、总超时以及Polling/Retry策略；测试本身不解释策略实现。</p></div><div class="guided-point success"><strong>输出与收口</strong><p>Task必须返回最终<code>Response</code>，Assertions负责状态码、任务ID、终态和Schema收口。</p></div><div class="guided-point warning"><strong>分支与易混点</strong><p>这是成功分类用例，不代表failure、unknown、timeout也应塞进同一方法；那些分支由同文件的兄弟用例分别保护。</p></div></div></div>
+          </article>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">2</span><div><h3><code>poll_media_generation_result()</code>只翻译领域输入</h3><p>连续源码显示Task如何把任务ID变成模块路径，并把策略原样交给Request能力。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">common/task_capabilities/media_generation.py::MediaGenerationTaskCapability.poll_media_generation_result · 连续选段</span><pre><code>    def poll_media_generation_result(
+        self,
+        request_client: BaseRequest,
+        task_id: str,
+        *,
+        poll_interval: float = 2,
+        poll_timeout: float | None = None,
+        polling_policy: PollingPolicy = DEFAULT_MEDIA_POLLING_POLICY,
+        retry_policy: RetryPolicy | None = None,
+    ) -&gt; requests.Response:
+        with operation_scope(
+            RuntimeOperationKind.POLLING,
+            name="media_generation_polling",
+            role=RuntimeTrafficRole.WORKLOAD,
+        ):
+            return request_client.poll_get(
+                self.media_task_path_template.format(task_id=task_id),
+                poll_interval=poll_interval,
+                poll_timeout=poll_timeout,
+                polling_policy=polling_policy,
+                retry_policy=retry_policy,
+            )</code></pre></div><div class="guided-explanation"><h4>Task不是Polling算法所有者</h4><div class="guided-point"><strong>输入与消费</strong><p>它消费领域对象<code>task_id</code>和调用者策略，只负责路径格式化与运行时operation语义。</p></div><div class="guided-point success"><strong>输出与收口</strong><p><code>request_client.poll_get()</code>返回什么，Task就把同一个Response交回测试；Task不解析业务状态。</p></div><div class="guided-point warning"><strong>边界与易混点</strong><p>不要把状态循环写进模块Task；否则每个模块都会复制deadline、异常与状态迁移规则。</p></div></div></div>
+          </article>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">3</span><div><h3><code>BaseRequest.poll_get()</code>建立一次Polling会话</h3><p>连续源码覆盖参数门禁、总timeout、运行事实开始以及成功/异常收口。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">common/base_request.py::BaseRequest.poll_get · 连续选段</span><pre><code>    @download_links_from_poll_get
+    def poll_get(
+        self,
+        path: str,
+        *,
+        poll_interval: float = 2,
+        poll_timeout: float | None = None,
+        polling_policy: PollingPolicy,
+        retry_policy: RetryPolicy | None = None,
+        **kwargs: Any,
+    ) -&gt; requests.Response:
+        if poll_interval &lt;= 0:
+            raise ValueError("poll_interval must be greater than 0")
+
+        timeout = self.config.timeout if poll_timeout is None else poll_timeout
+        if timeout &lt;= 0:
+            raise ValueError("poll_timeout must be greater than 0")
+
+        metadata = self._runtime_observer.normalize_metadata(
+            kwargs,
+            kind=RuntimeOperationKind.POLLING,
+            default_name="polling",
+        )
+        polling = self._runtime_observer.start_polling(metadata)
+        try:
+            response = self._poll_get_with_policy(
+                path,
+                poll_interval=poll_interval,
+                timeout=timeout,
+                polling_policy=polling_policy,
+                retry_policy=retry_policy,
+                runtime_polling=polling,
+                **kwargs,
+            )
+        except BaseException as error:
+            polling.finish_error(error)
+            raise
+        polling.finish_success()
+        return response</code></pre></div><div class="guided-explanation"><h4>公共入口统一会话边界</h4><div class="guided-point"><strong>输入与消费</strong><p>它消费模块路径、时间参数与两类策略；非法间隔或超时在发送前立即失败。</p></div><div class="guided-point success"><strong>状态与收口</strong><p>运行观察先开始；内部循环成功则<code>finish_success()</code>，任意异常则<code>finish_error(error)</code>后原样重抛。</p></div><div class="guided-point warning"><strong>易混点</strong><p>Retry处理一次逻辑GET内部的传输attempt；Polling处理多个业务状态GET，两者不是同一个循环。</p></div></div></div>
+          </article>
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">4</span><div><h3><code>_poll_get_with_policy()</code>发送、评估并记录每次状态迁移</h3><p>连续选段展示主循环前半段：一次GET可能先由Retry挽救，随后Response才进入Polling状态评估。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">common/base_request.py::BaseRequest._poll_get_with_policy · 连续选段</span><pre><code>        started_at = self.retry_executor.monotonic()
+        deadline = started_at + timeout
+        transitions: list[PollingTransition] = []
+        last_response: requests.Response | None = None
+        last_status: Any = None
+        last_logger: ApiCallLogger | None = None
+        attempt_index = 0
+
+        while True:
+            attempt_index += 1
+            try:
+                last_response, last_logger = self._request_without_attach(
+                    "GET",
+                    path,
+                    step_name=POLL_GET_REQUEST_STEP_NAME,
+                    response_step_name=POLL_GET_RESPONSE_STEP_NAME,
+                    retry_policy=retry_policy,
+                    protocol="polling",
+                    polling_policy=polling_policy,
+                    deadline=deadline,
+                    **kwargs,
+                )
+            except RetryDeadlineExceeded as error:
+                raise PollingTimeoutError(
+                    path=path,
+                    timeout=timeout,
+                    last_status=last_status,
+                    last_response=(
+                        error.last_response
+                        if error.last_response is not None
+                        else last_response
+                    ),
+                    transitions=transitions,
+                ) from error
+            try:
+                evaluation = evaluate_polling_response(last_response, polling_policy)
+            except Exception:
+                last_logger.attach_success(last_response)
+                raise
+
+            last_status = evaluation.raw_status
+            if runtime_polling is not None:
+                runtime_polling.observe_state(evaluation.state.value)
+            observed_at = self.retry_executor.monotonic()
+            transitions.append(
+                PollingTransition(
+                    attempt_index=attempt_index,
+                    elapsed_seconds=round(observed_at - started_at, 3),
+                    state=evaluation.state,
+                    raw_status=evaluation.raw_status,
+                    response_status_code=last_response.status_code,
+                )
+            )</code></pre></div><div class="guided-explanation"><h4>每轮产出两类事实</h4><div class="guided-point"><strong>输入与消费</strong><p>循环消费路径、deadline和策略；<code>_request_without_attach()</code>负责一次逻辑GET，<code>evaluate_polling_response()</code>负责业务状态分类。</p></div><div class="guided-point success"><strong>输出与状态</strong><p>每轮写入<code>last_response</code>、<code>last_status</code>与<code>PollingTransition</code>，运行观察同步记录pending/success等状态。</p></div><div class="guided-point warning"><strong>失败与易混点</strong><p>传输Retry耗尽deadline会转换为PollingTimeoutError；状态评估异常则先保留最后Response证据再重抛。</p></div></div></div>
+          </article>
+
+          <article class="guided-step">
+            <div class="guided-step__title"><span class="guided-step__number">5</span><div><h3>终态分支决定返回Response还是抛领域异常</h3><p>以下连续选段从deadline检查开始，覆盖success、failure、unknown与继续等待四条路径。</p></div></div>
+            <div class="guided-code-grid"><div class="guided-source"><span class="guided-source__location">common/base_request.py::BaseRequest._poll_get_with_policy · 后续连续选段</span><pre><code>            remaining = deadline - observed_at
+            if remaining &lt;= 0:
+                self._attach_polling_transitions(last_logger, transitions)
+                last_logger.attach_success(last_response)
+                raise PollingTimeoutError(
+                    path=path,
+                    timeout=timeout,
+                    last_status=last_status,
+                    last_response=last_response,
+                    transitions=transitions,
+                )
+
+            if evaluation.state is PollingState.SUCCESS:
+                self._attach_polling_transitions(last_logger, transitions)
+                last_logger.attach_success(last_response)
+                return last_response
+
+            if evaluation.state is PollingState.FAILURE:
+                self._attach_polling_transitions(last_logger, transitions)
+                last_logger.attach_success(last_response)
+                raise PollingFailedError(
+                    path=path,
+                    last_status=last_status,
+                    last_response=last_response,
+                    transitions=transitions,
+                    error_value=evaluation.error_value,
+                )
+
+            if evaluation.state is PollingState.UNKNOWN:
+                self._attach_polling_transitions(last_logger, transitions)
+                last_logger.attach_success(last_response)
+                raise PollingUnknownStateError(
+                    path=path,
+                    last_status=last_status,
+                    last_response=last_response,
+                    transitions=transitions,
+                )
+
+            sleep_seconds = min(poll_interval, remaining)</code></pre></div><div class="guided-explanation"><h4>谁负责最终收口</h4><div class="guided-point success"><strong>成功</strong><p>SUCCESS附加完整迁移证据并返回最后Response，回到测试的Assertions。</p></div><div class="guided-point warning"><strong>失败与降级</strong><p>FAILURE、UNKNOWN、TIMEOUT都携带最后状态、Response与迁移序列抛出；PENDING只计算不越过deadline的等待时间。</p></div><div class="guided-point"><strong>初学者易混点</strong><p>HTTP 200不等于Polling成功；真正终态由<code>PollingPolicy</code>对响应JSON的评估结果决定。</p></div></div></div>
+          </article>
+
+          <div class="guided-conclusion"><h3>现在再谈“测试分层”</h3><p>这条分类用例把故障域限定在Polling：Task只翻译领域输入，BaseRequest统一循环与异常，Assertions只验证最终合同。后续概念章节据此解释为什么局部反例不应先进入黄金路径。</p></div>
         </section>
 
         <section id="three-layers" data-section>
-          <p class="section-kicker">02 · 离线测试三层</p>
-          <h2>层级越高组合越真实，定位成本也越高</h2>
-          <p class="section-lead">点击金字塔。三层不是成熟度排名，而是三种不同证明工具；上层不能替代下层，下层也无法证明上层组合。</p>
-
-          <div class="pyramid-shell">
-            <div class="pyramid-board" role="tablist" aria-label="离线测试三层">
-              <button class="layer-button l3" type="button" data-layer="business" role="tab" aria-selected="false"><strong>L3 业务分类与黄金路径</strong><span>真实四件套与请求生命周期</span></button>
-              <button class="layer-button l2" type="button" data-layer="loopback" role="tab" aria-selected="false"><strong>L2 Loopback基础设施门禁</strong><span>真实本地HTTP协议与服务生命周期</span></button>
-              <button class="layer-button l1 active" type="button" data-layer="unit" role="tab" aria-selected="true"><strong>L1 单元级故障模拟</strong><span>无网络、精确算法分支与异常</span></button>
-            </div>
-            <div class="layer-detail" id="layer-detail" role="tabpanel" aria-live="polite"></div>
-          </div>
-
-          <div class="snapshot-grid" style="margin-top:20px">
-            <div class="snapshot-card"><h3>当前快照</h3><p>9个确定性服务场景、18项基础设施门禁、23条业务用例；业务分类分布为3/4/4/4/4/3，另有1条黄金路径。</p></div>
-            <div class="snapshot-card"><h3>长期合同</h3><p>数量会变化。稳定原则是职责互斥、黄金路径只保留成功主链，以及Runner最终计划满足并发池与串行池集合守恒。</p></div>
-          </div>
+          <p class="section-kicker">03 · 三层验证模型</p><h2>证明范围越大，反馈与归因成本越高</h2>
+          <p class="section-lead">三层不是成熟度排名，而是不同故障域的分工。点击查看每层消费什么输入、产出什么证据以及不能证明什么。</p>
+          <div class="pyramid-shell"><div class="pyramid-board" role="tablist" aria-label="测试验证三层">
+            <button class="layer-button l3" type="button" data-layer="business" role="tab" aria-selected="false"><strong>L3 黄金路径</strong><span>多个成熟能力稳定组合</span></button>
+            <button class="layer-button l2" type="button" data-layer="module" role="tab" aria-selected="false"><strong>L2 能力分类</strong><span>普通module主线与单一故障域</span></button>
+            <button class="layer-button l1 active" type="button" data-layer="unit" role="tab" aria-selected="true"><strong>L1 单元合同</strong><span>纯函数、算法分支与错误语义</span></button>
+          </div><div class="layer-detail" id="layer-detail" role="tabpanel" aria-live="polite"></div></div>
+          <div class="callout blue" style="margin-top:20px"><strong>从刚才代码回看</strong><code>evaluate_polling_response()</code>适合L1精确穷举状态；<code>test_polling_reaches_success_with_complete_transitions</code>属于L2；完整创建、轮询、上下文与清理组合才属于L3。</div>
         </section>
 
         <section id="selection-rule" data-section>
-          <p class="section-kicker">03 · 最低成本决策</p>
-          <h2>选择能暴露目标故障的最低成本层级</h2>
-          <p class="section-lead">“最低成本”不是最少代码，而是在足够证明力下，拥有最快反馈与最清晰归因。</p>
-
-          <div class="decision-rule">
-            <strong>三问决策</strong>
-            <div class="decision-steps">
-              <div class="decision-step"><b>1. 只涉及纯算法分支吗？</b><span>是：用FakeResponse、SequenceTransport、SleepRecorder等单元模拟。</span></div>
-              <div class="decision-step"><b>2. 必须经过真实HTTP协议吗？</b><span>是：先用loopback基础设施门禁证明服务合同与生命周期。</span></div>
-              <div class="decision-step"><b>3. 必须证明四件套组合吗？</b><span>是：进入对应业务分类；稳定成功组合才考虑黄金路径。</span></div>
-            </div>
-          </div>
-
-          <h3>层级选得过高的因果链</h3>
-          <div class="cause-flow">
-            <div class="flow-node">一个算法反例</div><div class="flow-node">塞入完整业务流</div><div class="flow-node">依赖与证据增多</div><div class="flow-node">失败归因变慢</div><div class="flow-node">维护成本放大</div>
-          </div>
-
-          <div class="callout red"><strong>反方向也不成立</strong>FakeResponse能精确制造异常，但不能证明真实Session、Middleware、HTTP服务器、线程与文件资源会正确协作。需要真实生命周期时必须升级层级。</div>
+          <p class="section-kicker">04 · 最低成本决策</p><h2>选择足以暴露目标故障的最低层</h2>
+          <div class="decision-rule"><strong>三问决策</strong><div class="decision-steps">
+            <div class="decision-step"><b>1. 只涉及状态映射或时间计算吗？</b><span>优先单元合同，直接制造输入并断言返回值或异常。</span></div>
+            <div class="decision-step"><b>2. 必须经过Task → Request → BaseRequest吗？</b><span>进入对应能力分类，验证普通module过程与运行事实。</span></div>
+            <div class="decision-step"><b>3. 必须证明多个成熟能力共同工作吗？</b><span>才进入黄金路径，并只保留稳定成功主链。</span></div>
+          </div></div>
+          <div class="cause-flow"><div class="flow-node">局部故障</div><div class="flow-node">误放完整组合</div><div class="flow-node">依赖与证据增多</div><div class="flow-node">根因空间扩大</div><div class="flow-node">反馈变慢</div></div>
+          <div class="callout red"><strong>TOC判断</strong>当前约束不是测试数量，而是局部故障被高组合用例包裹。先缩小故障域，才能提高整套回归的有效吞吐。</div>
         </section>
 
-        <section id="loopback-gate" data-section>
-          <p class="section-kicker">04 · Loopback基础设施门禁</p>
-          <h2>确定性本地服务本身也需要独立验收</h2>
-          <p class="section-lead">L2测试的对象是离线服务合同，不是业务四件套。因此它可以直接使用关闭系统代理的本地Session，把服务与框架客户端解耦验证。</p>
-
+        <section id="module-contract-gate" data-section>
+          <p class="section-kicker">补充 · 普通module合同</p><h2>能力分类仍然复用同一公共实现</h2>
           <div class="guardrail-grid">
-            <div class="guardrail-card"><span class="guardrail-icon">1</span><div><h3>只绑定127.0.0.1随机端口</h3><p>守卫拒绝非合同目标，所有收到的请求都记录为IPv4 loopback。</p></div></div>
-            <div class="guardrail-card"><span class="guardrail-icon">2</span><div><h3>状态按服务实例隔离</h3><p>两个实例的调用计数、任务和线程生命周期互不污染。</p></div></div>
-            <div class="guardrail-card"><span class="guardrail-icon">3</span><div><h3>时序由锁、计数器和Event控制</h3><p>不使用随机sleep制造先后关系，失败可以稳定复现。</p></div></div>
-            <div class="guardrail-card"><span class="guardrail-icon">4</span><div><h3>协议与资源合同固定</h3><p>状态序列、Header、Cookie、JSON错误、PNG长度和哈希都有门禁。</p></div></div>
-            <div class="guardrail-card"><span class="guardrail-icon">5</span><div><h3>启动失败与重复停止安全</h3><p>测试异常、start失败和多次stop都不能遗留服务线程。</p></div></div>
-            <div class="guardrail-card"><span class="guardrail-icon">6</span><div><h3>不读取真实业务目标完成请求</h3><p>离线请求使用本轮服务URL和离线Key，不连接真实付费接口。</p></div></div>
+            <div class="guardrail-card"><span class="guardrail-icon">1</span><div><h3>Test定义目标</h3><p>Act与断言围绕一个主要故障域，不把无关能力加入归因空间。</p></div></div>
+            <div class="guardrail-card"><span class="guardrail-icon">2</span><div><h3>Task翻译领域输入</h3><p>模块层只组织payload、ID和路径，不复制公共状态机。</p></div></div>
+            <div class="guardrail-card"><span class="guardrail-icon">3</span><div><h3>BaseRequest拥有机制</h3><p>请求、Retry、Polling、Middleware与运行事实继续走公共实现。</p></div></div>
+            <div class="guardrail-card"><span class="guardrail-icon">4</span><div><h3>Assertions收口证据</h3><p>只断言测试目标需要的Response、状态、异常与运行事实。</p></div></div>
           </div>
-
-          <div class="scenario-strip" aria-label="九个离线场景">
-            <div class="scenario-item"><b>DEFAULT</b>稳定成功</div><div class="scenario-item"><b>GET 503→200</b>瞬时故障</div><div class="scenario-item"><b>GET 429→200</b>Retry-After</div><div class="scenario-item"><b>POST 503→200</b>幂等写</div><div class="scenario-item"><b>POLL SUCCESS</b>重试后成功</div><div class="scenario-item"><b>POLL FAILURE</b>业务失败</div><div class="scenario-item"><b>POLL UNKNOWN</b>未知状态</div><div class="scenario-item"><b>POLL TIMEOUT</b>总deadline</div><div class="scenario-item"><b>OVERSIZED</b>捕获超限</div>
-          </div>
-          <div class="callout amber" style="margin-top:20px"><strong>边界说明</strong>L2中的原生Session是测试本地服务协议的探针；L3业务用例不得照搬这种方式绕过BaseRequest。测试对象不同，所以允许的入口也不同。</div>
         </section>
 
         <section id="classification-atlas" data-section>
-          <p class="section-kicker">05 · 分类用例地图</p>
-          <h2>每个文件只保护一个主要故障域</h2>
-          <p class="section-lead">点击文件查看允许职责、当前用例和禁止扩张方向。分类边界让失败文件名本身就提供第一层归因。</p>
-
-          <div class="atlas-shell">
-            <div class="atlas-tabs" role="tablist" aria-label="业务分类用例">
-              <button class="atlas-button active" type="button" data-category="request" role="tab" aria-selected="true"><b>Request Pipeline</b>3条</button>
-              <button class="atlas-button" type="button" data-category="retry" role="tab" aria-selected="false"><b>Retry</b>4条</button>
-              <button class="atlas-button" type="button" data-category="polling" role="tab" aria-selected="false"><b>Polling</b>4条</button>
-              <button class="atlas-button" type="button" data-category="context" role="tab" aria-selected="false"><b>Context Cleanup</b>4条</button>
-              <button class="atlas-button" type="button" data-category="capture" role="tab" aria-selected="false"><b>Capture Assertions</b>4条</button>
-              <button class="atlas-button" type="button" data-category="concurrency" role="tab" aria-selected="false"><b>Concurrency</b>3条</button>
-              <button class="atlas-button" type="button" data-category="golden" role="tab" aria-selected="false"><b>Full Flow</b>1条</button>
-            </div>
-            <div class="atlas-detail" id="atlas-detail" role="tabpanel" aria-live="polite"></div>
-          </div>
+          <p class="section-kicker">05 · 分类用例地图</p><h2>每个文件只保护一个主要故障域</h2>
+          <div class="atlas-layout"><div class="atlas-buttons" role="tablist" aria-label="分类用例">
+            <button class="atlas-button active" type="button" data-category="request">Request</button><button class="atlas-button" type="button" data-category="retry">Retry</button><button class="atlas-button" type="button" data-category="polling">Polling</button><button class="atlas-button" type="button" data-category="context">Context</button><button class="atlas-button" type="button" data-category="capture">Capture</button><button class="atlas-button" type="button" data-category="concurrency">Concurrency</button><button class="atlas-button" type="button" data-category="golden">Golden</button>
+          </div><div class="atlas-detail" id="atlas-detail" aria-live="polite"></div></div>
+          <div class="callout amber"><strong>分类边界</strong>一个用例可以经过公共Request、Middleware与Runtime Hooks，但它的主要断言只能服务一个故障目标；否则失败后无法确定应由哪个能力所有者修复。</div>
         </section>
 
         <section id="golden-boundary" data-section>
-          <p class="section-kicker">06 · 分类与黄金路径</p>
-          <h2>一个负责精确暴露故障，一个负责证明稳定组合</h2>
-          <p class="section-lead">黄金路径不是“最全用例”，而是最稳定的成功主链。异常排列越多，越会削弱它作为健康信号的价值。</p>
-
-          <div class="comparison">
-            <div class="comparison-card classified"><h3>分类用例</h3><p>回答“某一能力失效时，能否精确定位”。</p><ul><li>一个主要故障域</li><li>包含成功与互斥反例</li><li>边界和异常优先完整</li><li>失败后直接定位分类</li></ul></div>
-            <div class="not-equal">≠</div>
-            <div class="comparison-card golden"><h3>黄金路径</h3><p>回答“多个已验证能力能否在稳定成功主链中组合”。</p><ul><li>只有1条稳定nodeid</li><li>组合创建、轮询、上下文、并发、捕获与清理</li><li>不吸收互斥异常</li><li>提供框架整体健康信号</li></ul></div>
-          </div>
-
-          <div class="routing-flow">
-            <div class="routing-node"><b>能力失效需精确定位？</b><span>进入对应分类文件</span></div><div class="routing-node"><b>多个能力稳定成功组合？</b><span>评估加入黄金主链</span></div><div class="routing-node"><b>与成功主链互斥？</b><span>必须留在分类用例</span></div>
-          </div>
-
-          <h3>这些反例不进入黄金路径</h3>
-          <div class="path-stack"><span class="path-chip">Polling failure</span><span class="path-chip">unknown</span><span class="path-chip">timeout</span><span class="path-chip">非幂等POST禁止重试</span><span class="path-chip">Capture超限</span><span class="path-chip">cleanup多错误</span><span class="path-chip">Header泄漏</span></div>
-          <div class="callout blue" style="margin-top:20px"><strong>离线模块不是第二套框架</strong>它没有复制BaseRequest、Retry、Polling、Capture或Runtime Hooks，而是用确定性服务、场景和fixture驱动同一套公共实现。它是框架的离线业务试验场，不是平行实现。</div>
+          <p class="section-kicker">06 · 分类与黄金路径</p><h2>黄金路径证明组合，不负责穷举反例</h2>
+          <div class="boundary-grid"><div class="boundary-card"><h3>分类用例</h3><ul><li>一个主要能力与少量直接协作者</li><li>包含成功或明确失败分支</li><li>失败后能快速指向函数与状态</li></ul></div><div class="boundary-card"><h3>黄金路径</h3><ul><li>串联已经稳定的能力</li><li>只保护代表性的成功主链</li><li>失败时回到分类用例缩小根因</li></ul></div></div>
+          <div class="callout green"><strong>回看入口</strong>今天选择Polling分类而非完整黄金路径，因为目标是理解状态循环与终态分支，不需要让Context、Capture和资源清理同时参与归因。</div>
         </section>
 
         <section id="reading-route" data-section>
-          <p class="section-kicker">07 · 阅读路线播放器</p>
-          <h2>从测试工具走到完整黄金路径</h2>
-          <p class="section-lead">按顺序点击。每一步只回答“它负责暴露什么故障”，不要在今天深挖Retry或Polling算法。</p>
-
-          <div class="reading-stepper" role="tablist" aria-label="第5天阅读顺序">
-            <button class="reading-button active" type="button" data-reading="0"><b>1</b>Mock Helpers</button><button class="reading-button" type="button" data-reading="1"><b>2</b>Service Gate</button><button class="reading-button" type="button" data-reading="2"><b>3</b>Request</button><button class="reading-button" type="button" data-reading="3"><b>4</b>Retry</button><button class="reading-button" type="button" data-reading="4"><b>5</b>Polling</button><button class="reading-button" type="button" data-reading="5"><b>6</b>Context</button><button class="reading-button" type="button" data-reading="6"><b>7</b>Capture</button><button class="reading-button" type="button" data-reading="7"><b>8</b>Concurrency</button><button class="reading-button" type="button" data-reading="8"><b>9</b>Full Flow</button>
-          </div>
-          <div class="reading-detail" id="reading-detail" role="tabpanel" aria-live="polite"></div>
-
-          <div class="callout green" style="margin-top:20px"><strong>阅读完成标准</strong>你不需要记住所有断言，只需要为9个入口各写一句“它能暴露什么故障，以及它不能替代哪一层”。</div>
+          <p class="section-kicker">07 · 阅读路线</p><h2>从断言反推实现，而不是顺序翻文件</h2>
+          <div class="reading-player"><div class="reading-tabs"><button class="reading-button active" type="button" data-reading="0">1 测试Act</button><button class="reading-button" type="button" data-reading="1">2 Task薄层</button><button class="reading-button" type="button" data-reading="2">3 公共循环</button><button class="reading-button" type="button" data-reading="3">4 终态分支</button></div><div class="reading-detail" id="reading-detail" aria-live="polite"></div></div>
         </section>
 
         <section id="offline-lab" data-section>
-          <p class="section-kicker">08 · 离线实践</p>
-          <h2>先验收服务，再运行全部业务分类</h2>
-          <p class="section-lead">两条命令分别验证L2与L3。不要合并成一个模糊结果；分开运行才能判断故障发生在服务基础设施还是框架业务组合。</p>
-
-          <div class="lab-grid">
-            <div class="lab-card"><h3>步骤1：Loopback基础设施门禁</h3><p>当前快照应收集18项，验证协议、实例隔离、并发计数、线程回收和网络边界。</p><div class="command-card"><button class="copy-button" type="button">复制</button><pre><code>.\.venv\Scripts\python.exe -m pytest `
-  tests/test_offline_service.py -q</code></pre></div></div>
-            <div class="lab-card"><h3>步骤2：业务分类与黄金路径</h3><p>当前快照应收集23条，分布为3/4/4/4/4/3/1；数量是快照，职责边界才是合同。</p><div class="command-card"><button class="copy-button" type="button">复制</button><pre><code>.\.venv\Scripts\python.exe -m pytest `
-  module/offline_framework_example -q</code></pre></div></div>
+          <p class="section-kicker">08 · 模块实践</p><h2>只运行普通module用例并记录证据</h2>
+          <div class="command-stack">
+            <div class="command-card"><button class="copy-button" type="button">复制</button><pre><code>python -m pytest -q module/offline_framework_example/test_request_pipeline.py</code></pre></div>
+            <div class="command-card"><button class="copy-button" type="button">复制</button><pre><code>python -m pytest -q module/offline_framework_example/test_polling.py::TestPolling::test_polling_reaches_success_with_complete_transitions</code></pre></div>
+            <div class="command-card"><button class="copy-button" type="button">复制</button><pre><code>python -m pytest -q module/offline_framework_example/test_full_framework_flow.py::TestFullFrameworkFlow::test_offline_async_media_flow</code></pre></div>
           </div>
-
-          <h3>为每个分类写一句故障说明</h3>
-          <div class="note-grid">
-            <div class="note-field"><label for="note-request">Request Pipeline暴露什么故障？</label><textarea id="note-request" data-note="request" placeholder="Middleware、runtime metadata、Header/payload不变性……"></textarea></div>
-            <div class="note-field"><label for="note-retry">Retry暴露什么故障？</label><textarea id="note-retry" data-note="retry" placeholder="资格、Retry-After、幂等性……"></textarea></div>
-            <div class="note-field"><label for="note-polling">Polling暴露什么故障？</label><textarea id="note-polling" data-note="polling" placeholder="状态转换、失败、未知、deadline……"></textarea></div>
-            <div class="note-field"><label for="note-context">Context Cleanup暴露什么故障？</label><textarea id="note-context" data-note="context" placeholder="提取、转换、LIFO、多错误……"></textarea></div>
-            <div class="note-field"><label for="note-capture">Capture Assertions暴露什么故障？</label><textarea id="note-capture" data-note="capture" placeholder="输入/输出边界、超限、Schema诊断……"></textarea></div>
-            <div class="note-field"><label for="note-concurrency">Concurrency暴露什么故障？</label><textarea id="note-concurrency" data-note="concurrency" placeholder="ContextVar、Session和Header隔离……"></textarea></div>
-            <div class="note-field"><label for="note-golden">Full Flow证明什么组合？</label><textarea id="note-golden" data-note="golden" placeholder="稳定成功主链中的能力组合……"></textarea></div>
-            <div class="note-field"><label for="note-exclusions">哪些反例必须留在分类用例？</label><textarea id="note-exclusions" data-note="exclusions" placeholder="列出至少4个与成功主链互斥的反例"></textarea></div>
-          </div>
-          <p class="save-state" id="save-state">观察记录保存在浏览器本地。</p>
+          <div class="note-grid"><label class="note-field"><span>本轮运行结果</span><textarea data-note="run-result" placeholder="记录nodeid、通过/失败、首个失败断言与耗时"></textarea></label><label class="note-field"><span>分类边界</span><textarea data-note="exclusions" placeholder="写出哪些反例应留在分类用例，不进入黄金路径"></textarea></label></div><p class="save-state" id="save-state">观察记录保存在浏览器本地。</p>
         </section>
 
         <section id="constraint-exercise" data-section>
-          <p class="section-kicker">09 · TOC层级选择练习</p>
-          <h2>不要用最完整的测试解决最局部的问题</h2>
-          <p class="section-lead">为每个变化选择能暴露目标故障的最低成本层级或分类。选择后再解释为什么更低层证明力不足。</p>
-
-          <div class="toc-focus"><strong>当前系统约束</strong><p>反馈速度和故障归因被“过度集成测试”限制。解除约束的方法不是减少保护，而是把算法、基础设施、业务组合放回各自最有效的验证层。</p></div>
+          <p class="section-kicker">09 · TOC层级选择练习</p><h2>不要用最完整的测试解决最局部的问题</h2>
+          <div class="toc-focus"><strong>核心约束</strong><p>如果目标故障只能在大量协作者同时运行时才被看到，定位吞吐就会被最慢的组合测试限制。先把问题放到最低充分层。</p></div>
           <div class="layer-exercise">
-            <div class="exercise-row" data-answer="unit"><span>验证Retry backoff计算与sleep调用次数</span><select aria-label="Retry算法层级"><option value="">请选择</option><option value="unit">L1 单元故障模拟</option><option value="loopback">L2 Loopback门禁</option><option value="retry">L3 Retry分类</option><option value="golden">L3 黄金路径</option></select><span class="exercise-result"></span></div>
-            <div class="exercise-row" data-answer="loopback"><span>验证服务启动20次后没有线程泄漏</span><select aria-label="服务线程层级"><option value="">请选择</option><option value="unit">L1 单元故障模拟</option><option value="loopback">L2 Loopback门禁</option><option value="concurrency">L3 Concurrency分类</option><option value="golden">L3 黄金路径</option></select><span class="exercise-result"></span></div>
-            <div class="exercise-row" data-answer="retry"><span>验证真实Request对带幂等键POST进行重试</span><select aria-label="幂等POST层级"><option value="">请选择</option><option value="unit">L1 单元故障模拟</option><option value="loopback">L2 Loopback门禁</option><option value="retry">L3 Retry分类</option><option value="golden">L3 黄金路径</option></select><span class="exercise-result"></span></div>
-            <div class="exercise-row" data-answer="polling"><span>验证Polling遇到paused时抛未知状态异常</span><select aria-label="未知状态分类"><option value="">请选择</option><option value="unit">L1 单元故障模拟</option><option value="polling">L3 Polling分类</option><option value="context">L3 Context分类</option><option value="golden">L3 黄金路径</option></select><span class="exercise-result"></span></div>
-            <div class="exercise-row" data-answer="concurrency"><span>验证两个worker的单次Header互不泄漏</span><select aria-label="Header隔离分类"><option value="">请选择</option><option value="loopback">L2 Loopback门禁</option><option value="request">L3 Request分类</option><option value="concurrency">L3 Concurrency分类</option><option value="golden">L3 黄金路径</option></select><span class="exercise-result"></span></div>
-            <div class="exercise-row" data-answer="golden"><span>验证创建、轮询、上下文、并发审计、捕获和幂等清理能稳定组合</span><select aria-label="稳定组合层级"><option value="">请选择</option><option value="unit">L1 单元故障模拟</option><option value="loopback">L2 Loopback门禁</option><option value="capture">L3 Capture分类</option><option value="golden">L3 黄金路径</option></select><span class="exercise-result"></span></div>
-            <button class="primary-button" id="check-layers" type="button">检查选择</button>
-            <div class="exercise-feedback" id="layer-feedback" aria-live="polite"></div>
+            <div class="exercise-row" data-answer="unit"><span>验证Polling状态字符串到枚举的映射</span><select><option value="">请选择</option><option value="unit">L1 单元合同</option><option value="module">L2 能力分类</option><option value="golden">L3 黄金路径</option></select></div>
+            <div class="exercise-row" data-answer="request"><span>验证模块payload经Request后保持不变</span><select><option value="">请选择</option><option value="unit">L1 单元合同</option><option value="request">L2 Request分类</option><option value="golden">L3 黄金路径</option></select></div>
+            <div class="exercise-row" data-answer="retry"><span>验证带幂等条件的POST是否进入Retry</span><select><option value="">请选择</option><option value="unit">L1 单元合同</option><option value="retry">L2 Retry分类</option><option value="golden">L3 黄金路径</option></select></div>
+            <div class="exercise-row" data-answer="polling"><span>验证unknown状态抛出领域异常</span><select><option value="">请选择</option><option value="unit">L1 单元合同</option><option value="polling">L2 Polling分类</option><option value="golden">L3 黄金路径</option></select></div>
+            <div class="exercise-row" data-answer="concurrency"><span>验证两个worker的请求级Header互不泄漏</span><select><option value="">请选择</option><option value="request">L2 Request分类</option><option value="concurrency">L2 Concurrency分类</option><option value="golden">L3 黄金路径</option></select></div>
+            <div class="exercise-row" data-answer="golden"><span>验证创建、轮询、上下文、捕获与清理稳定组合</span><select><option value="">请选择</option><option value="polling">L2 Polling分类</option><option value="capture">L2 Capture分类</option><option value="golden">L3 黄金路径</option></select></div>
+            <button class="primary-button" id="check-layers" type="button">检查选择</button><div class="exercise-feedback" id="layer-feedback" aria-live="polite"></div>
           </div>
         </section>
 
         <section id="design-boundary" data-section>
-          <p class="section-kicker">Design Choice · Boundary</p>
-          <h2>设计选择与适用边界：让故障在最低成本层先暴露</h2>
+          <p class="section-kicker">Design Choice · Boundary</p><h2>设计选择与适用边界：让故障在最低成本层先暴露</h2>
           <div class="objective-grid">
-            <div class="objective-card"><span class="objective-index">现</span><div><strong>当前方案</strong><p>服务级测试验收loopback基础设施，能力级测试验证单一机制，分类级用例保护故障域，黄金路径证明稳定组合。</p></div></div>
-            <div class="objective-card"><span class="objective-index">替</span><div><strong>替代方案</strong><p>所有变化都塞进一条端到端黄金用例，或按文件随意增加测试而不声明证明目标。</p></div></div>
-            <div class="objective-card"><span class="objective-index">因</span><div><strong>选择理由</strong><p>最低成本层能更快定位根因；分类用例保留反例精度；黄金路径只承担稳定组合，避免一处失败同时否定全部能力。</p></div></div>
-            <div class="objective-card"><span class="objective-index">界</span><div><strong>不适用条件</strong><p>新能力合同仍在探索、尚无稳定故障分类时，不应机械补齐所有层；先建立最小确定性证据，再随风险与复用扩大分层。</p></div></div>
+            <div class="objective-card"><span class="objective-index">现</span><div><strong>当前方案</strong><p>单元合同保护算法，能力分类保护普通module故障域，黄金路径保护成熟能力组合。</p></div></div>
+            <div class="objective-card"><span class="objective-index">替</span><div><strong>替代方案</strong><p>所有变化都塞进一条端到端用例，或只按文件位置增加测试而不声明证明目标。</p></div></div>
+            <div class="objective-card"><span class="objective-index">因</span><div><strong>选择理由</strong><p>较低层反馈更快、失败归因更窄；较高层只承担无法由低层证明的组合风险。</p></div></div>
+            <div class="objective-card"><span class="objective-index">界</span><div><strong>不适用条件</strong><p>新能力合同尚未稳定时，先建立最小可执行证据，不机械补齐所有层。</p></div></div>
           </div>
+        </section>
+
+<!-- SOURCE_CARDS:DAY5:START -->
+<section id="source-code" class="source-section" data-section aria-labelledby="source-code-title">
+<div class="source-section__header">
+<p class="source-section__kicker">Source Reading · Static Snapshot</p>
+<h2 id="source-code-title">关键源码</h2>
+<p>请先完成上面的代码先行精讲，再用三张静态源码卡复核测试入口、Task翻译与公共Polling循环。所有选段来自当前工作区。</p>
+</div>
+<div class="source-card-list">
+<details class="source-card source-card--evidence" id="source-card-D05-S1" data-default-open="true" data-source-lines="19">
+<summary class="source-card__summary"><span class="source-importance">测试证据</span><span><strong>Polling分类用例的Act与Response合同</strong><small>module/offline_framework_example/test_polling.py · 19行</small></span></summary>
+<div class="source-card__body"><div class="source-example source-example--related"><p class="source-example__label">本段讲解用例 · 真实入口</p><div class="source-example__grid"><span><strong>用例文件</strong><code>module/offline_framework_example/test_polling.py</code></span><span><strong>类方法</strong><code>TestPolling.test_polling_reaches_success_with_complete_transitions</code></span><span><strong>pytest nodeid</strong><code>module/offline_framework_example/test_polling.py::TestPolling::test_polling_reaches_success_with_complete_transitions</code></span></div></div>
+<div class="source-meta"><span><strong>源码定位</strong><code>test_polling.py:62</code></span><span><strong>连续选段</strong>Act到Response合同断言</span></div>
+<p class="source-reading"><strong>阅读问题</strong>测试把哪些输入交给Task，最终由谁收口？</p>
+<pre class="source-code"><code class="language-python">        response = self.task.poll_media_generation_result(
+            request,
+            task_id,
+            poll_interval=0.01,
+            poll_timeout=1,
+            polling_policy=OFFLINE_POLLING_POLICY,
+            retry_policy=OFFLINE_RETRY_POLICY,
+        )
+
+        self.assertions.assert_status_code(response, 200)
+        self.assertions.assert_task_id(response, OFFLINE_TASK_ID)
+        self.assertions.assert_task_status(response, "succeeded")
+        assert (
+            self.assertions.assert_schema(
+                response,
+                OFFLINE_POLLING_SUCCESS_SCHEMA,
+            )
+            is response
+        )</code></pre>
+<section class="source-answer" aria-label="阅读答案"><div class="source-answer__heading"><strong>阅读答案</strong><p>测试把模块Request、任务ID和两类策略交给Task；Task返回最终Response后，Assertions验证HTTP与领域合同。该选段不证明失败分支。</p></div><div class="source-explanation-grid"><div class="source-order"><strong>执行依据</strong><p>Act只调用一个Task方法。</p></div><div class="source-state"><strong>状态结果</strong><p>成功终点是Response。</p></div><div class="source-proof"><strong>证据结论</strong><p>该分类保护Polling成功主路径。</p></div><div class="source-limit"><strong>答案边界</strong><p>failure、unknown、timeout由兄弟用例保护。</p></div></div></section></div></details>
+<details class="source-card source-card--required" id="source-card-D05-S2" data-default-open="false" data-source-lines="22">
+<summary class="source-card__summary"><span class="source-importance">必读</span><span><strong>Task把领域ID翻译为Polling路径</strong><small>common/task_capabilities/media_generation.py · 22行</small></span></summary>
+<div class="source-card__body"><div class="source-example source-example--related"><p class="source-example__label">关联测试入口</p><div class="source-example__grid"><span><strong>pytest nodeid</strong><code>module/offline_framework_example/test_polling.py::TestPolling::test_polling_reaches_success_with_complete_transitions</code></span></div></div>
+<div class="source-meta"><span><strong>源码定位</strong><code>MediaGenerationTaskCapability.poll_media_generation_result</code></span><span><strong>连续选段</strong>第70～91行</span></div>
+<p class="source-reading"><strong>阅读问题</strong>Task消费什么，哪些规则继续由BaseRequest负责？</p>
+<pre class="source-code"><code class="language-python">    def poll_media_generation_result(
+        self,
+        request_client: BaseRequest,
+        task_id: str,
+        *,
+        poll_interval: float = 2,
+        poll_timeout: float | None = None,
+        polling_policy: PollingPolicy = DEFAULT_MEDIA_POLLING_POLICY,
+        retry_policy: RetryPolicy | None = None,
+    ) -&gt; requests.Response:
+        with operation_scope(
+            RuntimeOperationKind.POLLING,
+            name="media_generation_polling",
+            role=RuntimeTrafficRole.WORKLOAD,
+        ):
+            return request_client.poll_get(
+                self.media_task_path_template.format(task_id=task_id),
+                poll_interval=poll_interval,
+                poll_timeout=poll_timeout,
+                polling_policy=polling_policy,
+                retry_policy=retry_policy,
+            )</code></pre>
+<section class="source-answer" aria-label="阅读答案"><div class="source-answer__heading"><strong>阅读答案</strong><p>Task只消费任务ID并格式化路径；deadline、状态评估、等待与异常都继续由<code>BaseRequest.poll_get()</code>负责。</p></div><div class="source-explanation-grid"><div class="source-order"><strong>执行依据</strong><p>路径模板消费task_id。</p></div><div class="source-state"><strong>状态结果</strong><p>策略不在Task内展开。</p></div><div class="source-proof"><strong>证据结论</strong><p>Task是领域翻译层。</p></div><div class="source-limit"><strong>答案边界</strong><p>本段不展示循环实现。</p></div></div></section></div></details>
+<details class="source-card source-card--required" id="source-card-D05-S3" data-default-open="false" data-source-lines="48">
+<summary class="source-card__summary"><span class="source-importance">必读</span><span><strong>公共Polling循环与终态分支</strong><small>common/base_request.py · 有序教学选段</small></span></summary>
+<div class="source-card__body"><div class="source-example source-example--related"><p class="source-example__label">关联测试入口</p><div class="source-example__grid"><span><strong>pytest nodeid</strong><code>module/offline_framework_example/test_polling.py::TestPolling::test_polling_reaches_success_with_complete_transitions</code></span></div></div>
+<div class="source-meta"><span><strong>源码定位</strong><code>BaseRequest._poll_get_with_policy</code></span><span><strong>定位方式</strong>有序教学选段；分为“评估记录”和“终态分支”两个连续块</span></div>
+<p class="source-reading"><strong>阅读问题</strong>一次Response怎样变成transition，谁决定返回或抛错？</p>
+<pre class="source-code"><code class="language-python">        while True:
+            attempt_index += 1
+            try:
+                last_response, last_logger = self._request_without_attach(
+                    "GET",
+                    path,
+                    step_name=POLL_GET_REQUEST_STEP_NAME,
+                    response_step_name=POLL_GET_RESPONSE_STEP_NAME,
+                    retry_policy=retry_policy,
+                    protocol="polling",
+                    polling_policy=polling_policy,
+                    deadline=deadline,
+                    **kwargs,
+                )</code></pre>
+<p class="source-reading"><strong>有序教学选段</strong>此处省略<code>RetryDeadlineExceeded</code>转换为<code>PollingTimeoutError</code>的连续分支；下一块从状态评估继续。</p>
+<pre class="source-code"><code class="language-python">            try:
+                evaluation = evaluate_polling_response(last_response, polling_policy)
+            except Exception:
+                last_logger.attach_success(last_response)
+                raise
+
+            last_status = evaluation.raw_status
+            if runtime_polling is not None:
+                runtime_polling.observe_state(evaluation.state.value)
+            observed_at = self.retry_executor.monotonic()
+            transitions.append(
+                PollingTransition(
+                    attempt_index=attempt_index,
+                    elapsed_seconds=round(observed_at - started_at, 3),
+                    state=evaluation.state,
+                    raw_status=evaluation.raw_status,
+                    response_status_code=last_response.status_code,
+                )
+            )</code></pre>
+<p class="source-reading"><strong>有序教学选段</strong>此处省略deadline耗尽的连续超时分支；下一块只复核SUCCESS与FAILURE终态。</p>
+<pre class="source-code"><code class="language-python">            if evaluation.state is PollingState.SUCCESS:
+                self._attach_polling_transitions(last_logger, transitions)
+                last_logger.attach_success(last_response)
+                return last_response
+
+            if evaluation.state is PollingState.FAILURE:
+                self._attach_polling_transitions(last_logger, transitions)
+                last_logger.attach_success(last_response)
+                raise PollingFailedError(
+                    path=path,
+                    last_status=last_status,
+                    last_response=last_response,
+                    transitions=transitions,
+                    error_value=evaluation.error_value,
+                )</code></pre>
+<section class="source-answer" aria-label="阅读答案"><div class="source-answer__heading"><strong>阅读答案</strong><p>状态评估产出<code>PollingEvaluation</code>，循环把它固化为transition；SUCCESS返回Response，失败状态携带最后Response与迁移证据抛出领域异常。</p></div><div class="source-explanation-grid"><div class="source-order"><strong>执行依据</strong><p>每轮先请求再评估。</p></div><div class="source-state"><strong>状态结果</strong><p>transition累积状态证据。</p></div><div class="source-proof"><strong>证据结论</strong><p>BaseRequest拥有循环和终态。</p></div><div class="source-limit"><strong>答案边界</strong><p>选段未重复展示timeout与unknown，精讲步骤5已覆盖。</p></div></div></section></div></details>
+</div>
+</section>
+<!-- SOURCE_CARDS:DAY5:END -->
+
+        <section id="lesson-flow-summary" data-section>
+          <p class="section-kicker">课后总结 · 函数与证据流</p><h2>Polling分类用例如何从输入走到终态证据</h2>
+          <div class="lesson-flow-map"><div class="flow-stage-list">
+            <article class="flow-stage"><div class="flow-stage__index">1</div><div class="flow-stage__function"><h3><code>test_polling_reaches_success_with_complete_transitions()</code></h3><p>Act把request、task_id、时间参数与两类策略交给Task。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>测试目标被限定</h3><p>目标是得到终态Response并验证状态码、任务ID、succeeded与Schema；其他失败分支由兄弟分类用例负责。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">2</div><div class="flow-stage__function"><h3><code>poll_media_generation_result()</code></h3><p>Task格式化任务路径并建立Polling operation语义。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>领域输入变为请求输入</h3><p><code>task_id</code>变成路径；interval、timeout、PollingPolicy与RetryPolicy原样进入<code>BaseRequest.poll_get()</code>。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">3</div><div class="flow-stage__function"><h3><code>BaseRequest.poll_get()</code></h3><p>校验时间参数，启动Polling观察并调用内部循环。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>会话状态建立</h3><p>成功写<code>finish_success()</code>并返回Response；任意异常写<code>finish_error(error)</code>后保持原异常语义。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">4</div><div class="flow-stage__function"><h3><code>_poll_get_with_policy()</code> + <code>evaluate_polling_response()</code></h3><p>循环发送逻辑GET，评估JSON业务状态并追加transition。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>Response变为状态证据</h3><p>每轮形成raw_status、PollingState、HTTP状态码与elapsed；传输Retry只影响单轮GET内部attempt。</p></div></article>
+            <article class="flow-stage"><div class="flow-stage__index">5</div><div class="flow-stage__function"><h3>终态分支 → Assertions</h3><p>SUCCESS返回，FAILURE/UNKNOWN/TIMEOUT抛带迁移证据的领域异常，PENDING继续等待。</p></div><div class="flow-stage__arrow" aria-hidden="true">→</div><div class="flow-stage__data"><h3>门禁终点</h3><div class="flow-outcomes"><div class="flow-outcome success"><strong>成功</strong>最终Response回到测试并由Assertions收口。</div><div class="flow-outcome error"><strong>失败</strong>分类异常保留最后Response和迁移序列，测试应在对应兄弟用例断言。</div></div></div></article>
+          </div><div class="flow-fact-footer"><strong>最小记忆单元</strong><p>Test定义证明目标，Task翻译领域输入，BaseRequest拥有循环，PollingPolicy决定状态，Assertions只收口可观察合同。</p></div></div>
         </section>
 
         <section id="knowledge-check" data-section>
-          <p class="section-kicker">10 · 第1周综合自测</p>
-          <h2>用框架边界解释测试策略</h2>
-          <p class="section-lead">建议达到5/6再进入周门禁。这组题会连接前四课，而不仅是今天的文件分类。</p>
+          <p class="section-kicker">10 · 第1周综合自测</p><h2>用真实函数边界解释测试策略</h2>
           <div class="quiz-list">
-            <fieldset class="quiz-card" data-answer="b"><legend>1. 选择离线验证层级的首要原则是什么？</legend><div class="quiz-options"><label><input type="radio" name="q1" value="a">始终选择最完整的黄金路径</label><label><input type="radio" name="q1" value="b">选择能暴露目标故障的最低成本层级</label><label><input type="radio" name="q1" value="c">哪个文件最短就选哪个</label></div><div class="quiz-explanation">正确答案是B。证明力足够后，反馈速度和归因清晰度优先。</div></fieldset>
-            <fieldset class="quiz-card" data-answer="c"><legend>2. L1的SequenceTransport最适合证明什么？</legend><div class="quiz-options"><label><input type="radio" name="q2" value="a">真实HTTP服务器线程回收</label><label><input type="radio" name="q2" value="b">四件套端到端组合</label><label><input type="radio" name="q2" value="c">确定响应/异常序列下的单一算法分支与调用事实</label></div><div class="quiz-explanation">正确答案是C。它记录调用并按序返回Response或异常，不启动网络。</div></fieldset>
-            <fieldset class="quiz-card" data-answer="a"><legend>3. 为什么test_offline_service可以直接使用本地requests.Session？</legend><div class="quiz-options"><label><input type="radio" name="q3" value="a">它测试的是离线服务基础设施合同，需要与业务BaseRequest解耦</label><label><input type="radio" name="q3" value="b">业务用例都应该绕过框架</label><label><input type="radio" name="q3" value="c">BaseRequest不能访问loopback</label></div><div class="quiz-explanation">正确答案是A。L3业务分类仍必须使用框架公开入口。</div></fieldset>
-            <fieldset class="quiz-card" data-answer="b"><legend>4. 哪个场景不应加入黄金路径？</legend><div class="quiz-options"><label><input type="radio" name="q4" value="a">创建后成功轮询并清理资源</label><label><input type="radio" name="q4" value="b">Polling failure、unknown与timeout全部排列</label><label><input type="radio" name="q4" value="c">稳定成功时验证输出捕获</label></div><div class="quiz-explanation">正确答案是B。与成功主链互斥的状态留在Polling分类。</div></fieldset>
-            <fieldset class="quiz-card" data-answer="c"><legend>5. 为什么离线模块不是第二套框架？</legend><div class="quiz-options"><label><input type="radio" name="q5" value="a">因为它没有任何测试代码</label><label><input type="radio" name="q5" value="b">因为它连接真实生产接口</label><label><input type="radio" name="q5" value="c">它用确定性服务驱动同一套公共Request、Retry、Polling、Capture与Hooks实现</label></div><div class="quiz-explanation">正确答案是C。离线层提供场景与边界，不复制核心机制。</div></fieldset>
-            <fieldset class="quiz-card" data-answer="a"><legend>6. 新增一个只验证Header不变性的业务反例，应优先放哪里？</legend><div class="quiz-options"><label><input type="radio" name="q6" value="a">职责匹配的Request Pipeline分类</label><label><input type="radio" name="q6" value="b">黄金路径</label><label><input type="radio" name="q6" value="c">Pipeline Summary</label></div><div class="quiz-explanation">正确答案是A。先归入现有单一职责分类，再判断是否需要稳定成功步骤。</div></fieldset>
-          </div>
-          <button class="primary-button" id="submit-quiz" type="button" style="margin-top:16px">提交综合自测</button>
-          <div class="quiz-summary" id="quiz-summary" aria-live="polite">尚未提交。</div>
+            <fieldset class="quiz-card" data-answer="b"><legend>1. Polling分类用例的Act从哪里开始？</legend><div class="quiz-options"><label><input type="radio" name="q1" value="a">从实现文件第一行开始</label><label><input type="radio" name="q1" value="b">从<code>self.task.poll_media_generation_result(...)</code>开始</label><label><input type="radio" name="q1" value="c">从最终Schema定义开始</label></div></fieldset>
+            <fieldset class="quiz-card" data-answer="c"><legend>2. Task在本链路中的主要职责是什么？</legend><div class="quiz-options"><label><input type="radio" name="q2" value="a">拥有deadline循环</label><label><input type="radio" name="q2" value="b">决定所有终态异常</label><label><input type="radio" name="q2" value="c">把task_id翻译成路径并转交策略</label></div></fieldset>
+            <fieldset class="quiz-card" data-answer="a"><legend>3. HTTP 200为什么不必然代表Polling成功？</legend><div class="quiz-options"><label><input type="radio" name="q3" value="a">业务状态仍需由PollingPolicy评估</label><label><input type="radio" name="q3" value="b">因为Task会丢弃Response</label><label><input type="radio" name="q3" value="c">因为Assertions会固定失败</label></div></fieldset>
+            <fieldset class="quiz-card" data-answer="b"><legend>4. 哪个问题最适合先放在能力分类层？</legend><div class="quiz-options"><label><input type="radio" name="q4" value="a">所有成熟能力能否共同完成黄金主链</label><label><input type="radio" name="q4" value="b">unknown状态是否抛出PollingUnknownStateError</label><label><input type="radio" name="q4" value="c">整个Runner并发计划是否守恒</label></div></fieldset>
+            <fieldset class="quiz-card" data-answer="c"><legend>5. 黄金路径失败后最有效的下一步是什么？</legend><div class="quiz-options"><label><input type="radio" name="q5" value="a">继续向黄金路径加入更多断言</label><label><input type="radio" name="q5" value="b">删除所有分类用例</label><label><input type="radio" name="q5" value="c">依据失败事实回到更窄的能力分类复核</label></div></fieldset>
+          </div><button class="primary-button" id="submit-quiz" type="button" style="margin-top:16px">提交综合自测</button><div class="quiz-summary" id="quiz-summary" aria-live="polite">尚未提交。</div>
         </section>
 
         <section id="weekly-review" data-section>
-          <p class="section-kicker">Weekly Review · 30～45分钟</p>
-          <h2>第1周复盘：复用主成果并完成六维0～2评分</h2>
-          <p class="section-lead">复盘不是再看一遍页面，而是把五天内容压缩为可迁移关系，并用错误订正暴露仍未打通的因果链。</p>
-          <div class="callout amber"><strong>固定时盒：30～45分钟</strong>先在本周主成果中完成一次综合更新，再按实际证据评分；不得用“感觉掌握”代替成果位置或口头验收记录。</div>
-          <div class="note-grid">
-            <label class="note-field"><span>综合复盘增量（复用本周主成果）</span><textarea data-record="review-map" placeholder="在同一成果中补充跨日关系、一处错误订正、一处相邻迁移和必要术语变化"></textarea></label>
-            <label class="note-field"><span>2. 错误订正表</span><textarea data-record="review-correction" placeholder="至少记录一个原判断、反证、根因和修正后的规则"></textarea></label>
-            <label class="note-field"><span>3. 相邻场景迁移</span><textarea data-record="review-transfer" placeholder="把黄金路径迁移到另一个现有离线分类场景，写出保留项与变化项"></textarea></label>
-            <label class="note-field"><span>4. 术语关系更新</span><textarea data-record="review-terms" placeholder="补充统一术语表中的所属层、不等同于和相邻术语关系"></textarea></label>
-          </div>
-          <h3>六维评分（每项0～2分）</h3>
-          <div class="objective-grid">
-            <div class="objective-card"><span class="objective-index">位</span><div><label><strong>源码定位</strong><select data-score="source" style="width:100%;margin-top:8px;padding:8px"><option value="">请选择</option><option value="0">0｜无法找到入口或实现</option><option value="1">1｜可按材料找到</option><option value="2">2｜可从测试或公开入口独立追踪</option></select></label></div></div>
-            <div class="objective-card"><span class="objective-index">链</span><div><label><strong>调用链与状态</strong><select data-score="chain" style="width:100%;margin-top:8px;padding:8px"><option value="">请选择</option><option value="0">0｜只能复述名词</option><option value="1">1｜能说明主路径</option><option value="2">2｜能解释分支、终态和终止责任</option></select></label></div></div>
-            <div class="objective-card"><span class="objective-index">权</span><div><label><strong>所有权</strong><select data-score="ownership" style="width:100%;margin-top:8px;padding:8px"><option value="">请选择</option><option value="0">0｜状态和资源归属混乱</option><option value="1">1｜能列出主要所有者</option><option value="2">2｜能解释转移、清理和禁止越权</option></select></label></div></div>
-            <div class="objective-card"><span class="objective-index">证</span><div><label><strong>证据映射</strong><select data-score="evidence" style="width:100%;margin-top:8px;padding:8px"><option value="">请选择</option><option value="0">0｜只记录测试通过</option><option value="1">1｜能指出一个测试或产物</option><option value="2">2｜能说明证据证明及不能证明什么</option></select></label></div></div>
-            <div class="objective-card"><span class="objective-index">界</span><div><label><strong>设计边界</strong><select data-score="boundary" style="width:100%;margin-top:8px;padding:8px"><option value="">请选择</option><option value="0">0｜无法说明选择原因</option><option value="1">1｜能复述当前设计理由</option><option value="2">2｜能比较替代方案和不适用条件</option></select></label></div></div>
-            <div class="objective-card"><span class="objective-index">迁</span><div><label><strong>迁移能力</strong><select data-score="transfer" style="width:100%;margin-top:8px;padding:8px"><option value="">请选择</option><option value="0">0｜只能填写原模板</option><option value="1">1｜能在提示下迁移</option><option value="2">2｜能独立映射到相邻现有场景</option></select></label></div></div>
-          </div>
-          <p><strong>当前总分：<span data-score-total>未完成/12</span></strong></p>
-          <div class="quiz-summary" data-score-result>请完成六个维度评分；每项只能选择0、1或2分。</div>
+          <p class="section-kicker">Review · 30～45分钟</p><h2>把第1周主成果更新为函数与证据图</h2><p class="section-lead">不新增平行文档，只在本周主成果中补上“测试入口 → 关键函数 → 状态/异常 → 断言”的映射。</p>
+          <div class="note-grid"><label class="note-field"><span>本周主成果更新（必填）</span><textarea data-record="review-map" placeholder="记录文件路径或口头复盘：Polling链、关键分支、分类边界与一次订正"></textarea></label></div><p data-record-status="review-map" style="color:var(--amber);font-size:13px">尚未记录复盘增量。</p>
         </section>
 
         <section id="week-gate" data-section>
-          <p class="section-kicker">11 · 第1周门禁</p>
-          <h2>完成这些任务，再进入请求内核</h2>
-          <p class="section-lead">第2周会深入BaseRequest、Middleware、Retry、Polling和并发隔离。若第1周边界尚不稳定，继续深入只会增加名词负担。</p>
-
-          <div class="week-gate">
-            <div class="week-gate-head"><h3>Week 1 · Framework Map</h3><p>以下核心能力、一次综合复盘更新、六维评分和成果记录全部完成，才算真正通过。</p></div>
-            <div class="exit-list">
-              <label class="exit-item"><input type="checkbox" data-gate="diagram"><span>不看文档画出Test → Task → Request → BaseRequest → Response → Assertions调用关系。</span></label>
-              <label class="exit-item"><input type="checkbox" data-gate="changes"><span>能给出至少5个需求，并判断它们应修改模块层、common、Runner、Quality还是Reporting。</span></label>
-              <label class="exit-item"><input type="checkbox" data-gate="classification"><span>能解释三层离线测试、分类用例与黄金路径各自的证明内容和不可替代性。</span></label>
-              <label class="exit-item"><input type="checkbox" data-gate="one-framework"><span>能解释离线模块为何复用同一公共实现，而不是第二套框架。</span></label>
-              <label class="exit-item"><input type="checkbox" data-gate="run"><span>已独立运行单条黄金nodeid、18项基础设施门禁和全部离线业务模块。</span></label>
-              <label class="exit-item"><input type="checkbox" data-gate="review" data-gate-requires-record="review-map"><span>已在本周主成果中完成一次综合复盘更新，不新增四份独立产出。</span></label>
-              <label class="exit-item"><input type="checkbox" data-gate="score" data-gate-requires-score="pass"><span>六维评分达到9/12，且所有权、证据映射均不为0分。</span></label>
-              <label class="exit-item"><input type="checkbox" data-gate="record" data-gate-requires-record="gate-evidence"><span>已填写可复查的成果位置或口头讲解记录。</span></label>
-            </div>
-          </div>
-
-          <div class="note-grid"><label class="note-field"><span>成果位置或口头记录（必填）</span><textarea data-record="gate-evidence" placeholder="列出第1周图表/订正表路径，或口头复盘时间、听众、追问与订正"></textarea></label></div>
-          <p data-record-status="gate-evidence" style="color:var(--amber);font-size:13px">尚未记录；仅勾选复选框不能通过门禁。</p>
-
-          <div class="callout green" style="margin-top:20px"><strong>第1周最终产出</strong>一张框架层级图、一张四件套调用图、一份模块蓝图、一张生命周期/证据图，以及一份“故障目标 → 最低成本验证层”索引。</div>
-          <div class="lesson-footer"><div class="footer-links"><a class="outline-button" href="第04天-测试生命周期断言与报告步骤.html">← 上一课</a><a class="outline-button" href="../接口测试框架六周学习课程.html">返回课程大纲</a><a class="outline-button" href="第06天-基础请求与请求上下文.html">下一课：基础请求与请求上下文 →</a></div></div>
+          <p class="section-kicker">11 · 第1周门禁</p><h2>能从真实入口独立追踪普通module主线</h2>
+          <div class="exit-list"><label class="exit-item"><input type="checkbox" data-gate="entry"><span>能写出本课真实nodeid并指出Act。</span></label><label class="exit-item"><input type="checkbox" data-gate="chain"><span>能画出Test → Task → BaseRequest → Polling状态机 → Assertions。</span></label><label class="exit-item"><input type="checkbox" data-gate="branches"><span>能解释SUCCESS、FAILURE、UNKNOWN、TIMEOUT与PENDING分支。</span></label><label class="exit-item"><input type="checkbox" data-gate="classification"><span>能为局部故障选择单元合同、能力分类或黄金路径。</span></label><label class="exit-item"><input type="checkbox" data-gate="review" data-gate-requires-record="review-map"><span>已在本周主成果中完成复盘更新。</span></label><label class="exit-item"><input type="checkbox" data-gate="record" data-gate-requires-record="gate-evidence"><span>已填写可复查的成果位置或口头讲解记录。</span></label></div>
+          <div class="note-grid"><label class="note-field"><span>成果位置或口头记录（必填）</span><textarea data-record="gate-evidence" placeholder="列出图表/订正记录路径，或口头讲解时间、听众追问与订正"></textarea></label></div><p data-record-status="gate-evidence" style="color:var(--amber);font-size:13px">尚未记录；仅勾选复选框不能通过门禁。</p>
+          <div class="callout green"><strong>第1周最终产出</strong>一张从真实测试入口出发的框架调用图，以及一份“目标故障 → 最低充分验证层 → 证据断言”的索引。</div><div class="lesson-footer"><div class="footer-links"><a class="outline-button" href="第04天-测试生命周期断言与报告步骤.html">← 上一课</a><a class="outline-button" href="../接口测试框架六周学习课程.html">返回课程大纲</a><a class="outline-button" href="第06天-基础请求与请求上下文.html">下一课 →</a></div></div>
         </section>
       </article>
     </main>
@@ -562,55 +769,26 @@
       const storagePrefix = "api-case-course-v2-day05-";
 
       const layerDetails = {
-        unit: {
-          title: "L1 单元级故障模拟",
-          summary: "不启动网络，通过可编排Response、异常、时钟和日志替身，精确验证一个算法分支与错误语义。",
-          location: "tests/ + tests/mock_helpers.py",
-          proves: "Retry/Polling/SSE/日志等单一分支、调用次数、等待与异常",
-          cannot: "不能证明真实Session、HTTP服务器、线程或Middleware组合",
-          cost: "反馈最快，归因最精确",
-          tools: ["make_response", "SequenceTransport", "SleepRecorder", "FakeApiCallLogger", "FakeStreamResponse", "polling_responses"],
-        },
-        loopback: {
-          title: "L2 Loopback基础设施门禁",
-          summary: "启动127.0.0.1随机端口服务，用真实本地HTTP验证协议、实例隔离、并发计数、线程回收和网络边界。",
-          location: "tests/test_offline_service.py",
-          proves: "离线服务可作为稳定测试基础设施，合同和生命周期确定",
-          cannot: "不直接证明模块四件套与BaseRequest组合正确",
-          cost: "真实HTTP，成本中等",
-          tools: ["OfflineService", "requests.Session", "RLock/Event", "固定Header/Cookie", "9个Scenario", "18项门禁"],
-        },
-        business: {
-          title: "L3 业务分类与黄金路径",
-          summary: "使用离线服务、模块四件套和公共Request执行真实业务生命周期；分类精确保护能力，黄金路径验证稳定成功组合。",
-          location: "module/offline_framework_example/test_*.py",
-          proves: "Request、Middleware、Retry、Polling、Context、Capture、并发和清理的业务组合",
-          cannot: "不适合穷举所有纯算法排列，也不能替代服务自身门禁",
-          cost: "组合最真实，定位成本最高",
-          tools: ["四件套", "yield fixtures", "runtime hooks", "分类文件", "稳定黄金nodeid", "23条业务用例"],
-        },
+        unit: { title: "L1 单元合同", summary: "直接构造输入，验证纯函数、算法分支、时间计算与异常语义。", location: "tests/ 中对应公共能力测试", proves: "目标函数的确定性输入输出", cannot: "不能证明普通module调用链已经正确组合", cost: "反馈最快，归因最窄", tools: ["Response替身", "策略输入", "可控时钟", "异常断言"] },
+        module: { title: "L2 能力分类", summary: "沿Test → Task → Request/BaseRequest → Assertions验证一个主要故障域。", location: "module/offline_framework_example/test_*.py", proves: "普通module过程、运行事实与领域异常", cannot: "不证明所有成熟能力能够共同工作", cost: "反馈适中，保留真实调用链", tools: ["模块四件套", "公共Request", "Runtime Hooks", "分类断言"] },
+        business: { title: "L3 黄金路径", summary: "组合多个已经由分类用例保护的成熟能力，只验证代表性成功主链。", location: "module/offline_framework_example/test_full_framework_flow.py", proves: "跨能力稳定组合", cannot: "不适合穷举局部反例", cost: "组合最广，失败归因成本最高", tools: ["创建", "Polling", "Context", "Capture", "Cleanup"] },
       };
 
       const categories = {
-        request: { file: "test_request_pipeline.py", count: 3, scope: "Request、Middleware、payload和Header不变性", tests: ["默认Middleware与runtime metadata", "敏感Header不改变业务请求", "Middleware不修改原始payload"], forbid: "Retry资格、Polling终态与并发Session隔离" },
-        retry: { file: "test_retry.py", count: 4, scope: "重试资格、等待、Retry-After和瞬时失败挽救", tests: ["GET 503后恢复", "遵守Retry-After", "带幂等键POST可重试", "非幂等POST不重试"], forbid: "Polling业务状态、Context提取与Capture文件" },
-        polling: { file: "test_polling.py", count: 4, scope: "状态转换、成功、业务失败、未知状态和总deadline", tests: ["完整成功迁移", "业务failure异常", "unknown拒绝", "总deadline强制执行"], forbid: "Context、Capture、并发所有权和全部Retry算法排列" },
-        context: { file: "test_context_cleanup.py", count: 4, scope: "变量提取、类型/转换、LIFO清理和多错误归并", tests: ["JSON/Header/Cookie/Regex提取", "类型与transform合同", "LIFO清理", "继续清理并报告多错误"], forbid: "网络Retry、Polling状态与媒体捕获" },
-        capture: { file: "test_capture_assertions.py", count: 4, scope: "输入/输出Artifact边界、超限fail-open、Schema路径与脱敏诊断", tests: ["输出捕获与合同", "输入仅loopback", "超限不覆盖业务响应", "Schema双路径和脱敏"], forbid: "并发Session所有权、Header隔离和Retry资格" },
-        concurrency: { file: "test_concurrency_context.py", count: 3, scope: "ContextVar传播、Session独立和请求级Header隔离", tests: ["submit_with_context保留case所有权", "并发Request使用独立Session", "单次Header不在线程间泄漏"], forbid: "完整黄金业务链、Polling所有终态和Capture边界" },
-        golden: { file: "test_full_framework_flow.py", count: 1, scope: "多个已分类能力的稳定成功主链", tests: ["创建与重试轮询成功", "上下文提取与并发审计", "输出捕获与runtime metadata", "幂等资源清理"], forbid: "failure、unknown、timeout、非幂等POST、Capture超限、cleanup多错误、Header泄漏" },
+        request: { file: "test_request_pipeline.py", count: 3, scope: "Request、Middleware与payload/Header不变性", tests: ["默认中间件与运行元数据", "敏感Header保持业务值", "原始payload不被修改"], forbid: "不吸收Retry资格或Polling终态" },
+        retry: { file: "test_retry.py", count: 4, scope: "重试资格、等待与瞬时失败恢复", tests: ["GET恢复", "Retry-After", "幂等POST", "非幂等POST"], forbid: "不吸收业务状态机" },
+        polling: { file: "test_polling.py", count: 4, scope: "状态转换、成功、失败、未知与deadline", tests: ["完整成功迁移", "业务失败", "未知状态", "总超时"], forbid: "不吸收Context与Capture" },
+        context: { file: "test_context_cleanup.py", count: 4, scope: "变量提取、类型转换与清理", tests: ["多来源提取", "类型合同", "LIFO清理", "多错误归并"], forbid: "不吸收Retry和Polling" },
+        capture: { file: "test_capture_assertions.py", count: 4, scope: "输入输出证据与断言边界", tests: ["输出捕获", "输入边界", "超限不覆盖业务", "Schema与脱敏"], forbid: "不吸收并发所有权" },
+        concurrency: { file: "test_concurrency_context.py", count: 3, scope: "上下文传播、Session与Header隔离", tests: ["case所有权", "独立Session", "请求Header隔离"], forbid: "不吸收完整黄金主链" },
+        golden: { file: "test_full_framework_flow.py", count: 1, scope: "成熟能力的代表性成功组合", tests: ["创建与轮询", "上下文与并发", "捕获与清理"], forbid: "不吸收failure、unknown、timeout等局部反例" },
       };
 
       const readingItems = [
-        { title: "1. tests/mock_helpers.py", goal: "认识无网络的可编排替身：Response、异常序列、sleep记录器、Fake Logger和Fake Stream。", question: "它怎样让一个算法分支确定发生？" },
-        { title: "2. tests/test_offline_service.py", goal: "确认本地服务协议、实例隔离、并发、线程和loopback边界本身可信。", question: "为什么这里允许直接使用本地Session？" },
-        { title: "3. test_request_pipeline.py", goal: "观察真实Request如何经过默认Middleware，同时保持Header和payload业务语义不变。", question: "中间件修改了什么，又必须不修改什么？" },
-        { title: "4. test_retry.py", goal: "把可重试资格、等待与幂等性反例留在单一分类。", question: "为什么非幂等POST反例不进入黄金路径？" },
-        { title: "5. test_polling.py", goal: "区分成功、failure、unknown和deadline，并观察状态迁移证据。", question: "哪三类终态与黄金成功主链互斥？" },
-        { title: "6. test_context_cleanup.py", goal: "理解提取、转换、LIFO与清理错误聚合，不引入网络噪声。", question: "为什么cleanup多错误需要专门分类？" },
-        { title: "7. test_capture_assertions.py", goal: "观察输入/输出捕获边界、超限fail-open与Schema脱敏诊断。", question: "Artifact失败为什么不能覆盖业务Response？" },
-        { title: "8. test_concurrency_context.py", goal: "确认逻辑上下文传播，但Session和单次Header保持线程隔离。", question: "哪些状态可以传播，哪些资源必须独立？" },
-        { title: "9. test_full_framework_flow.py", goal: "最后读取稳定成功组合，识别它复用了哪些已分类证明。", question: "删掉互斥异常后，黄金路径还证明了什么？" },
+        { title: "先读测试Act与断言", goal: "确定输入、输出与证明目标。", question: "如果本测试失败，最小根因空间是什么？" },
+        { title: "再读Task薄层", goal: "确认领域输入怎样变成路径和策略参数。", question: "Task是否越权拥有循环或状态评估？" },
+        { title: "进入公共循环", goal: "追踪deadline、Response、Evaluation与Transition。", question: "Retry attempt与Polling轮次如何区分？" },
+        { title: "最后核对终态分支", goal: "确认返回、抛错、继续等待分别由谁收口。", question: "每个异常携带哪些可复查证据？" },
       ];
 
       function renderLayer(name) {
