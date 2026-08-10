@@ -69,14 +69,14 @@ _DOUBAO_SEEDANCE_2_5_PAYLOADS: dict[str, dict[str, Any]] = {
                 "type": "image_url",
                 "role": "first_frame",
                 "image_url": {
-                    "url": "https://moxing-resource.oss-cn-wulanchabu.aliyuncs.com/image/zk_test/timg2.jpg?x-oss-credential=LTAI5t619WW5a6g8EuLS8tLF%2F20260807%2Fcn-wulanchabu%2Foss%2Faliyun_v4_request&x-oss-date=20260807T165538Z&x-oss-expires=3600&x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-signature=0362662c8a13490582de6ebd80197fe49e304636ba2a8ebb0035ee7547159d4f"
+                    "url": "https://arkdocs.tos-cn-beijing.volces.com/images/video-generation/seedance2.5_30s_input.png"
                 },
             },
             {
                 "type": "image_url",
                 "role": "last_frame",
                 "image_url": {
-                    "url": "https://moxing-resource.oss-cn-wulanchabu.aliyuncs.com/image/zk_test/timg2.jpg?x-oss-credential=LTAI5t619WW5a6g8EuLS8tLF%2F20260807%2Fcn-wulanchabu%2Foss%2Faliyun_v4_request&x-oss-date=20260807T165538Z&x-oss-expires=3600&x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-signature=0362662c8a13490582de6ebd80197fe49e304636ba2a8ebb0035ee7547159d4f"
+                    "url": "https://arkdocs.tos-cn-beijing.volces.com/images/video-generation/seedance2.5_30s_input.png"
                 },
             },
         ],
