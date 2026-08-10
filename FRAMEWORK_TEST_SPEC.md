@@ -12,6 +12,10 @@
 
 框架坚持代码式用例，不引入 YAML、Excel 或隐式 DSL。测试数据使用 Python 类型表达。
 
+静态测试输入统一在对应 `test_*.py` 文件开头、导入语句之后声明，例如模型 ID、提示词、媒体 URL、时长、分辨率、比例和功能开关。模块 `Task` 只保留抽象出的公共业务模板、字段映射和流程组合，并用简短注释说明模板目的及调用方责任，不保存某条用例专用的变量值。
+
+该规则只适用于执行前已经确定的静态输入。request ID、task ID、asset ID 等运行时产生的数据仍通过局部变量、fixture 或 `TestContext` 传递，禁止改成模块全局共享变量。
+
 ## 2. 用例执行与质量数据链路
 
 ```text
@@ -46,9 +50,9 @@ test_*.py
 | 执行编排层 | `run_master.py`、`run_orchestration/` | 稳定入口、pytest 调度、产物和质量阶段顺序 | 在业务用例中导入内部 stage |
 | 报告数据源层 | `pipeline_reporting/sources.py`、`quality_sources.py` | 核心事实常驻、质量事实按需加载 | 用陈旧质量产物推断本轮已启用 |
 | 模块请求层 | `module/<模块>/request.py` | 模块路径、请求参数、中性 runtime metadata | 写业务流程和复杂断言 |
-| 模块任务层 | `module/<模块>/task.py` | payload builder、业务动作组合 | 重复实现 BaseTask 已有能力 |
+| 模块任务层 | `module/<模块>/task.py` | 参数化公共 payload 模板、字段映射和业务动作组合；注释说明模板语义与调用方责任 | 保存模型 ID、提示词等用例专用变量；重复实现 BaseTask 已有能力 |
 | 模块断言层 | `module/<模块>/assertions.py` | 模块专用断言和字段解析 | 发请求、修改共享状态 |
-| 用例层 | `module/<模块>/test_*.py` | 场景编排和最终断言 | 硬编码域名、Key、复制底层请求代码 |
+| 用例层 | `module/<模块>/test_*.py` | 文件开头声明静态测试变量，场景中显式传给 Task，并完成编排和最终断言 | 硬编码域名、Key、复制底层请求代码；用全局变量保存运行时 ID |
 | 框架单测 | `tests/` | 离线验证框架、质量模块和 Jenkinsfile | 默认执行真实付费接口 |
 
 不同业务模块的 `task.py` 不互相引用。真正跨模块的能力下沉到 `common/` 或 `util/`，并增加 `tests/` 离线回归。
@@ -88,9 +92,8 @@ module/
 ```text
 module/example_model/
 ├─ response_schemas.py    # 响应字段较多时维护 JSON Schema
-├─ payloads.py            # payload 很多且 task.py 过大时拆分
-├─ conftest.py            # 只服务该模块的 fixture
-└─ test_data.py           # 复用的 Python 测试数据；不要放密钥
+├─ payloads.py            # 公共参数化模板很多且 task.py 过大时拆分
+└─ conftest.py            # 只服务该模块的 fixture
 ```
 
 规则：
@@ -100,6 +103,8 @@ module/example_model/
 - 测试类以 `Test` 开头，测试方法以 `test_` 开头。
 - 不要为单个常量创建目录或文件；达到职责拆分需要时再增加可选文件。
 - `data/`、JSON、YAML、Excel 不作为默认用例数据入口。
+- 模型 ID、提示词、媒体 URL 和生成参数等静态变量统一声明在使用它们的 `test_*.py` 文件开头，不放入 `task.py` 或单独的 `test_data.py`。
+- 多个测试文件确需共享同一稳定枚举时，先判断它是否属于公共领域合同；只有属于公共合同的符号才允许进入领域模块，单纯为复用测试数据不得下沉。
 
 ## 5. 新模块完整文件模板
 
@@ -205,9 +210,6 @@ from common import BaseTask, allure_step
 from module.example_model.request import ExampleModelRequest
 
 
-DEFAULT_EXAMPLE_MODEL_ID = "example-model"
-
-
 class ExampleModelTask(BaseTask):
     @allure_step("创建 Example 模型任务")
     def create_example_generation(
@@ -219,18 +221,22 @@ class ExampleModelTask(BaseTask):
 
     @staticmethod
     def build_generation_payload(
-        model_id: str = DEFAULT_EXAMPLE_MODEL_ID,
+        *,
+        model_id: str,
+        prompt: str,
     ) -> dict[str, Any]:
+        # 公共模板只负责接口字段映射；具体测试值由 test_*.py 显式传入。
         return {
             "model": model_id,
-            "prompt": "用于接口自动化验证的最小提示词",
+            "prompt": prompt,
         }
 ```
 
 要求：
 
-- Task 表达业务动作，测试方法只负责场景编排和断言。
-- payload builder 返回新字典，不能复用并修改模块级可变对象。
+- Task 表达抽象出的公共业务动作和参数化模板，测试方法负责提供静态变量、场景编排和断言。
+- payload builder 返回新字典，不能复用并修改模块级可变对象；builder 参数应显式接收测试值，不在 Task 中定义某条用例的模型 ID、提示词、URL、时长或开关。
+- 公共模板必须添加简短注释，说明模板负责的字段映射、稳定合同或调用方必须提供的值；注释解释设计意图，不逐行翻译代码。
 - 现有媒体/账单流程继续复用 `BaseTask` 兼容入口或对应 task capability；新领域逻辑进入模块 Task，不再向 `BaseTask` 增加方法。
 - 一个 Task 方法内组合多次请求时，必须考虑逻辑调用语义，见“质量语义规范”。
 - 独立 CLI 调用本模块业务时，端点必须来自 Request，payload/流程/轮询必须来自 Task，响应规则必须来自 Assertions；CLI 只负责参数、展示和退出码。
@@ -291,6 +297,10 @@ from module.example_model import (
 from module.example_model.response_schemas import EXAMPLE_GENERATION_SUCCESS_SCHEMA
 
 
+EXAMPLE_MODEL_ID = "example-model"
+EXAMPLE_PROMPT = "用于接口自动化验证的最小提示词"
+
+
 class TestExampleGeneration:
     def setup_method(self):
         self.example_request = ExampleModelRequest()
@@ -301,7 +311,10 @@ class TestExampleGeneration:
         self.example_request.close()
 
     def test_create_generation_returns_valid_contract(self):
-        payload = self.example_task.build_generation_payload()
+        payload = self.example_task.build_generation_payload(
+            model_id=EXAMPLE_MODEL_ID,
+            prompt=EXAMPLE_PROMPT,
+        )
 
         response = self.example_task.create_example_generation(
             self.example_request,
@@ -317,6 +330,8 @@ class TestExampleGeneration:
 ```
 
 测试类禁止定义 `__init__`，否则 pytest 不收集。Request Session 必须有唯一且可验证的所有者：使用 `setup_method` 创建时由 `teardown_method` 关闭；使用 fixture 创建时由 fixture 的 `yield` 收尾关闭。需要释放业务资源时使用 `test_context.add_cleanup()`。
+
+示例中的 `EXAMPLE_MODEL_ID` 和 `EXAMPLE_PROMPT` 是静态测试输入，所以位于测试文件开头。响应中提取出的 request ID、task ID 等动态数据不按此方式声明，应继续使用局部变量或 `TestContext`。
 
 ## 6. 优先使用 BaseTask 已有能力
 
@@ -843,11 +858,12 @@ target / -k / -m / --ignore
 - 每个 nodeid 最多执行一次；
 - `expected_case_count` 取自最终计划，不取自控制台文本；
 - 权威空集合返回 pytest exit 5；
-- 单池返回 pytest 原始退出码；
+- 在 `reports/execution-result.json` 原子写入成功的前提下，单池 Runner 最终退出码等于 pytest 原始退出码；
 - 多池只有所有已执行池都为 0 时才返回 0；
-- exit 1 可以继续后续池收集失败证据；exit 2/3/4/5 或 Runner 异常必须停止后续真实接口池；
+- exit 1 可以继续后续池收集失败证据；exit 2/3/4/5 或池执行异常必须停止所有后续执行池；
+- 执行事实写入失败时，Runner 保留终止型原始码 2/3/4/5，其他情况返回 1；
 - `reports/execution-result.json` 只记录权威计划、池级原始退出事实和最终退出码，不推导 Jenkins 最终状态；
-- Quality、Metrics、Flaky、JUnit 和 Allure 不得改写 pytest 原始退出码。
+- Quality、Metrics、Flaky、JUnit 和 Allure 不得改写池级 pytest 原始退出码。
 
 ### 18.7 Allure 单一生命周期规范
 
@@ -997,7 +1013,10 @@ if (-not (Test-Path -LiteralPath '.env')) {
 [ ] Request Session 由 teardown_method 或 fixture yield 收尾关闭
 [ ] 路径为相对路径，没有硬编码域名
 [ ] 没有硬编码 API Key、账号和敏感数据
-[ ] payload 使用 Python 类型并由 Task/payloads.py 构建
+[ ] payload 使用 Python 类型并由 Task/payloads.py 的参数化公共模板构建
+[ ] 模型 ID、提示词、媒体 URL、时长、分辨率、比例和开关等静态测试变量统一声明在 test_*.py 文件开头
+[ ] Task/payloads.py 没有保存某条用例专用变量，公共模板包含说明设计意图和调用方责任的简短注释
+[ ] request ID、task ID、asset ID 等运行时数据使用局部变量、fixture 或 TestContext，没有写入模块全局变量
 [ ] 复用现有 BaseTask 兼容入口或 task capability，没有继续扩张 BaseTask
 [ ] 模块 Request 使用中性 runtime_metadata 设置稳定 operation name 和 workload/control 角色
 [ ] 复合业务动作具有正确逻辑调用作用域
