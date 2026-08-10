@@ -15,7 +15,7 @@ from module.smoke.assertions import SmokeAssertions
 from module.smoke.request import SmokeRequest
 
 
-KEY_CHAT_COMPLETIONS_MODEL_ID = "GLM-5"
+KEY_CHAT_COMPLETIONS_MODEL_ID = "DeepSeek-V4-Flash"
 SYNC_IMAGE_GENERATION_MODEL_ID = "gpt-image-2"
 ASYNC_IMAGE_GENERATION_MODEL_ID = "gpt-image-2"
 B_ACCOUNT_API_KEY = os.getenv("B_ACCOUNT_API_KEY", "").strip()

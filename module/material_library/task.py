@@ -1,16 +1,38 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import time
 import uuid
 from typing import Any
 
 import requests
 
-from common import BaseTask, allure_step
+from common import BaseTask, PollingPolicy, allure_step
 from module.material_library.request import MaterialLibraryRequest
 
 
 PROJECT_NAME = "default"
+ARK_VIRTUAL_PORTRAIT_MODEL = "dreamina-seedance-2-0-260128"
+ARK_GROUP_ID_PREFIX = "group-"
+ARK_ASSET_ID_PREFIX = "asset-"
+ARK_ASSET_POLL_INTERVAL_SECONDS = 5
+ARK_ASSET_POLL_TIMEOUT_SECONDS = 180
+ARK_MEDIA_POLL_INTERVAL_SECONDS = 5
+ARK_MEDIA_POLL_TIMEOUT_SECONDS = 1500
+ARK_MEDIA_SUCCESS_STATUSES = {"succeeded", "success", "completed", "finished"}
+ARK_MEDIA_FAILURE_STATUSES = {"failed", "failure", "rejected", "error"}
+ARK_MEDIA_POLLING_POLICY = PollingPolicy(
+    status_json_path="$.status",
+    pending=frozenset({"queued", "running", "pending", "processing"}),
+    success=frozenset(ARK_MEDIA_SUCCESS_STATUSES),
+    failure=frozenset(ARK_MEDIA_FAILURE_STATUSES | {"cancelled", "canceled"}),
+    result_json_path="$.content.video_url",
+    error_json_path="$.error",
+)
+ARK_VISUAL_VALIDATE_POLL_INTERVAL_SECONDS = 3
+ARK_VISUAL_VALIDATE_POLL_TIMEOUT_SECONDS = 1800
+ARK_VISUAL_VALIDATE_READY_STATUS = "group_ready"
+ARK_VISUAL_VALIDATE_FAILURE_STATUSES = {"failed", "expired"}
 VOLC_AIGC_GROUP_TYPE = "AIGC"
 VOLC_IMAGE_ASSET_TYPE = "Image"
 VOLC_GROUP_ID_PREFIX = "group-volc-cn-"
@@ -20,7 +42,7 @@ VOLC_LIVENESS_GROUP_TYPE = "LivenessFace"
 DEFAULT_VOLC_LIVENESS_IMAGE_URL = "https://ark-project.tos-cn-beijing.volces.com/doc_image/r2v_tea_pic2.jpg"
 DEFAULT_VOLC_SAMPLE_IMAGE_URL = "https://ark-project.tos-cn-beijing.volces.com/doc_image/r2v_tea_pic1.jpg"
 DEFAULT_VOLC_FAST_VIDEO_MODEL = "doubao-seedance-2-0-fast-260128"
-DEFAULT_VOLC_MINI_VIDEO_MODEL = "doubao-seedance-2-0-mini-260615"
+DEFAULT_VOLC_MINI_VIDEO_MODEL = "doubao-seedance-2-5-260628"
 DEFAULT_VOLC_SEEDANCE_2_5_VIDEO_MODEL = "doubao-seedance-2-0-mini-260615"
 VOLC_ASSET_POLL_INTERVAL_SECONDS = 3
 VOLC_ASSET_POLL_TIMEOUT_SECONDS = 180
@@ -35,7 +57,278 @@ VOLC_MEDIA_SUCCESS_STATUSES = {"succeeded", "success", "completed", "finished"}
 VOLC_MEDIA_FAILURE_STATUSES = {"failed", "failure", "rejected", "error"}
 
 
+@dataclass
+class _PollingBoundaryLogger:
+    label: str
+    first_value: str | None = None
+    last_value: str | None = None
+    finished: bool = False
+
+    def observe(self, value: Any) -> None:
+        normalized = str(value or "<empty>")
+        if self.first_value is None:
+            self.first_value = normalized
+            print(f"{self.label} first: {normalized}", flush=True)
+        self.last_value = normalized
+
+    def finish(self, value: Any | None = None) -> None:
+        if self.finished:
+            return
+        if value is not None:
+            self.last_value = str(value or "<empty>")
+        if self.last_value is not None:
+            print(f"{self.label} final: {self.last_value}", flush=True)
+        self.finished = True
+
+
 class MaterialLibraryTask(BaseTask):
+    @allure_step("创建 Ark 虚拟人像素材组")
+    def create_ark_virtual_portrait_group(
+        self,
+        request_client: MaterialLibraryRequest,
+        *,
+        name: str | None = None,
+        description: str = "api-case Ark virtual portrait group",
+    ) -> requests.Response:
+        return request_client.create_ark_asset_group(
+            self.build_create_ark_asset_group_payload(
+                name=name or self.unique_ark_group_name(),
+                description=description,
+            )
+        )
+
+    @allure_step("上传 Ark 虚拟人像图片素材到素材组: {group_id}")
+    def upload_ark_virtual_portrait_image(
+        self,
+        request_client: MaterialLibraryRequest,
+        group_id: str,
+        *,
+        image_url: str = DEFAULT_VOLC_SAMPLE_IMAGE_URL,
+        name: str | None = None,
+    ) -> requests.Response:
+        return request_client.create_ark_asset(
+            self.build_create_ark_asset_payload(
+                group_id=group_id,
+                image_url=image_url,
+                name=name or self.unique_ark_asset_name(),
+            )
+        )
+
+    @allure_step("上传 Ark 真人图片素材到认证素材组: {group_id}")
+    def upload_ark_real_person_image(
+        self,
+        request_client: MaterialLibraryRequest,
+        group_id: str,
+        *,
+        image_url: str,
+        name: str | None = None,
+    ) -> requests.Response:
+        return request_client.create_ark_asset(
+            self.build_create_ark_asset_payload(
+                group_id=group_id,
+                image_url=image_url,
+                name=name or self.unique_ark_asset_name(),
+            )
+        )
+
+    @allure_step("查询 Ark 素材详情: {asset_id}")
+    def get_ark_asset(
+        self,
+        request_client: MaterialLibraryRequest,
+        asset_id: str,
+    ) -> requests.Response:
+        return request_client.get_ark_asset(asset_id)
+
+    @allure_step("创建 Ark 真人认证 H5 会话")
+    def create_ark_visual_validate_session(
+        self,
+        request_client: MaterialLibraryRequest,
+        *,
+        client_redirect_url: str,
+        project_name: str = PROJECT_NAME,
+    ) -> requests.Response:
+        return request_client.create_ark_visual_validate_session(
+            self.build_create_ark_visual_validate_session_payload(
+                client_redirect_url=client_redirect_url,
+                project_name=project_name,
+            )
+        )
+
+    @allure_step("查询 Ark 真人认证会话: {session_id}")
+    def get_ark_visual_validate_session(
+        self,
+        request_client: MaterialLibraryRequest,
+        session_id: str,
+    ) -> requests.Response:
+        return request_client.get_ark_visual_validate_session(session_id)
+
+    @allure_step("轮询 Ark 真人认证完成: {session_id}")
+    def poll_ark_visual_validate_session_until_ready(
+        self,
+        request_client: MaterialLibraryRequest,
+        session_id: str,
+        *,
+        poll_interval: float = ARK_VISUAL_VALIDATE_POLL_INTERVAL_SECONDS,
+        poll_timeout: float = ARK_VISUAL_VALIDATE_POLL_TIMEOUT_SECONDS,
+    ) -> requests.Response:
+        deadline = time.monotonic() + poll_timeout
+        last_response: requests.Response | None = None
+        boundary = _PollingBoundaryLogger(
+            f"ark visual validate session {session_id}"
+        )
+        while True:
+            last_response = self.get_ark_visual_validate_session(
+                request_client,
+                session_id,
+            )
+            if last_response.status_code == 200:
+                status = self.extract_ark_visual_validate_status(last_response)
+                boundary.observe(status)
+                if status == ARK_VISUAL_VALIDATE_READY_STATUS:
+                    boundary.finish()
+                    return last_response
+                if status in ARK_VISUAL_VALIDATE_FAILURE_STATUSES:
+                    boundary.finish()
+                    raise AssertionError(
+                        "Ark visual validation failed. "
+                        f"Response body: {last_response.text}"
+                    )
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                boundary.finish()
+                raise TimeoutError(
+                    f"Timed out waiting for Ark visual validation {session_id}. "
+                    f"Last response: {last_response.text if last_response is not None else '<none>'}"
+                )
+            time.sleep(min(poll_interval, remaining))
+
+    @allure_step("获取 Ark 真人认证结果: {session_id}")
+    def get_ark_visual_validate_result(
+        self,
+        request_client: MaterialLibraryRequest,
+        session_id: str,
+    ) -> requests.Response:
+        return request_client.get_ark_visual_validate_result(session_id)
+
+    @allure_step("轮询 Ark 素材到 Active: {asset_id}")
+    def poll_ark_asset_until_active(
+        self,
+        request_client: MaterialLibraryRequest,
+        asset_id: str,
+        *,
+        poll_interval: float = ARK_ASSET_POLL_INTERVAL_SECONDS,
+        poll_timeout: float = ARK_ASSET_POLL_TIMEOUT_SECONDS,
+    ) -> requests.Response:
+        deadline = time.monotonic() + poll_timeout
+        last_response: requests.Response | None = None
+        boundary = _PollingBoundaryLogger(f"ark asset {asset_id}")
+        while True:
+            last_response = self.get_ark_asset(request_client, asset_id)
+            if last_response.status_code == 200:
+                status = str(self.json_body(last_response).get("Status") or "")
+                boundary.observe(status)
+                if status == "Active":
+                    boundary.finish()
+                    return last_response
+                if status == "Failed":
+                    boundary.finish()
+                    raise AssertionError(
+                        f"Ark asset processing failed. Response body: {last_response.text}"
+                    )
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                boundary.finish()
+                raise TimeoutError(
+                    f"Timed out waiting for Ark asset {asset_id} to become Active. "
+                    f"Last response: {last_response.text if last_response is not None else '<none>'}"
+                )
+            time.sleep(min(poll_interval, remaining))
+
+    @allure_step("提交 Ark 虚拟人像视频生成任务: {asset_id}")
+    def create_ark_virtual_portrait_video(
+        self,
+        request_client: MaterialLibraryRequest,
+        asset_id: str,
+        *,
+        model: str = ARK_VIRTUAL_PORTRAIT_MODEL,
+    ) -> requests.Response:
+        return request_client.create_ark_media_generation(
+            self.build_ark_virtual_portrait_video_payload(
+                asset_id=asset_id,
+                model=model,
+            )
+        )
+
+    @allure_step("提交 Ark 真人素材视频生成任务: {asset_id}")
+    def create_ark_real_person_video(
+        self,
+        request_client: MaterialLibraryRequest,
+        asset_id: str,
+        *,
+        model: str = ARK_VIRTUAL_PORTRAIT_MODEL,
+    ) -> requests.Response:
+        return request_client.create_ark_media_generation(
+            self.build_ark_virtual_portrait_video_payload(
+                asset_id=asset_id,
+                model=model,
+            )
+        )
+
+    @allure_step("查询 Ark 视频生成任务: {task_id}")
+    def get_ark_media_generation_task(
+        self,
+        request_client: MaterialLibraryRequest,
+        task_id: str,
+    ) -> requests.Response:
+        return request_client.get_ark_media_generation_task(task_id)
+
+    @allure_step("轮询 Ark 视频生成任务完成: {task_id}")
+    def poll_ark_media_generation_until_finished(
+        self,
+        request_client: MaterialLibraryRequest,
+        task_id: str,
+        *,
+        poll_interval: float = ARK_MEDIA_POLL_INTERVAL_SECONDS,
+        poll_timeout: float = ARK_MEDIA_POLL_TIMEOUT_SECONDS,
+    ) -> requests.Response:
+        boundary = _PollingBoundaryLogger(f"ark media task {task_id}")
+        first_response = self.get_ark_media_generation_task(request_client, task_id)
+        first_status = self.extract_media_task_status(first_response)
+        boundary.observe(first_status or f"HTTP {first_response.status_code}")
+
+        try:
+            final_response = request_client.poll_ark_media_generation_task(
+                task_id,
+                poll_interval=poll_interval,
+                poll_timeout=poll_timeout,
+                polling_policy=ARK_MEDIA_POLLING_POLICY,
+            )
+        except Exception as error:
+            boundary.finish(getattr(error, "last_status", None))
+            raise
+
+        boundary.observe(self.extract_media_task_status(final_response))
+        boundary.finish()
+        return final_response
+
+    @allure_step("删除 Ark 素材: {asset_id}")
+    def delete_ark_asset_if_exists(
+        self,
+        request_client: MaterialLibraryRequest,
+        asset_id: str,
+    ) -> requests.Response:
+        return request_client.delete_ark_asset(asset_id)
+
+    @allure_step("删除 Ark 素材组: {group_id}")
+    def delete_ark_asset_group_if_exists(
+        self,
+        request_client: MaterialLibraryRequest,
+        group_id: str,
+    ) -> requests.Response:
+        return request_client.delete_ark_asset_group(group_id)
+
     @allure_step("创建国内官key素材组")
     def create_asset_group(
         self,
@@ -376,6 +669,8 @@ class MaterialLibraryTask(BaseTask):
         resolution: str = "720p",
         ratio: str = "16:9",
         reference_role: str = "reference_image",
+        generate_audio: bool = True,
+        watermark: bool = False,
     ) -> requests.Response:
         return request_client.create_media_generation(
             self.build_asset_video_generation_payload(
@@ -386,6 +681,8 @@ class MaterialLibraryTask(BaseTask):
                 resolution=resolution,
                 ratio=ratio,
                 reference_role=reference_role,
+                generate_audio=generate_audio,
+                watermark=watermark,
             ),
         )
 
@@ -446,6 +743,68 @@ class MaterialLibraryTask(BaseTask):
         project_name: str = PROJECT_NAME,
     ) -> requests.Response:
         return request_client.delete_volc_asset_group(group_id, {"ProjectName": project_name})
+
+    @staticmethod
+    def build_create_ark_asset_group_payload(
+        *,
+        name: str,
+        description: str,
+    ) -> dict[str, Any]:
+        return {
+            "Name": name,
+            "Description": description,
+            "GroupType": VOLC_AIGC_GROUP_TYPE,
+        }
+
+    @staticmethod
+    def build_create_ark_asset_payload(
+        *,
+        group_id: str,
+        image_url: str,
+        name: str,
+    ) -> dict[str, Any]:
+        return {
+            "GroupId": group_id,
+            "URL": image_url,
+            "AssetType": VOLC_IMAGE_ASSET_TYPE,
+            "Name": name,
+        }
+
+    @staticmethod
+    def build_create_ark_visual_validate_session_payload(
+        *,
+        client_redirect_url: str,
+        project_name: str = PROJECT_NAME,
+    ) -> dict[str, Any]:
+        return {
+            "client_redirect_url": client_redirect_url,
+            "project_name": project_name,
+        }
+
+    @staticmethod
+    def build_ark_virtual_portrait_video_payload(
+        *,
+        asset_id: str,
+        model: str = ARK_VIRTUAL_PORTRAIT_MODEL,
+    ) -> dict[str, Any]:
+        return {
+            "model": model,
+            "duration": 5,
+            "resolution": "720p",
+            "ratio": "16:9",
+            "generate_audio": True,
+            "content": [
+                {
+                    "type": "text",
+                    "text": "参考图主体自然微笑并看向镜头",
+                },
+                {
+                    "type": "image_url",
+                    "role": "reference_image",
+                    "image_url": {"url": f"asset://{asset_id}"},
+                },
+            ],
+        }
 
     @staticmethod
     def build_create_asset_group_payload(
@@ -583,6 +942,8 @@ class MaterialLibraryTask(BaseTask):
         resolution: str = "720p",
         ratio: str = "16:9",
         reference_role: str = "reference_image",
+        generate_audio: bool = True,
+        watermark: bool = False,
     ) -> dict[str, Any]:
         return {
             "model": model,
@@ -600,9 +961,38 @@ class MaterialLibraryTask(BaseTask):
             "duration": duration,
             "resolution": resolution,
             "ratio": ratio,
-            "generate_audio": True,
-            "watermark": False,
+            "generate_audio": generate_audio,
+            "watermark": watermark,
         }
+
+    @staticmethod
+    def extract_root_id(response: requests.Response) -> str:
+        value = MaterialLibraryTask.json_body(response).get("Id")
+        assert value, f"Response missing Id. Response body: {response.text}"
+        return str(value)
+
+    @staticmethod
+    def extract_ark_visual_validate_session_id(response: requests.Response) -> str:
+        value = MaterialLibraryTask.json_body(response).get("session_id")
+        assert value, f"Response missing session_id. Response body: {response.text}"
+        return str(value)
+
+    @staticmethod
+    def extract_ark_visual_validate_h5_link(response: requests.Response) -> str:
+        value = MaterialLibraryTask.json_body(response).get("h5_link")
+        assert value, f"Response missing h5_link. Response body: {response.text}"
+        return str(value)
+
+    @staticmethod
+    def extract_ark_visual_validate_status(response: requests.Response) -> str:
+        value = MaterialLibraryTask.json_body(response).get("status")
+        return str(value or "")
+
+    @staticmethod
+    def extract_ark_visual_validate_group_id(response: requests.Response) -> str:
+        value = MaterialLibraryTask.json_body(response).get("group_id")
+        assert value, f"Response missing group_id. Response body: {response.text}"
+        return str(value)
 
     @staticmethod
     def extract_group_id(response: requests.Response) -> str:
@@ -724,3 +1114,11 @@ class MaterialLibraryTask(BaseTask):
     @staticmethod
     def unique_asset_name() -> str:
         return f"api-case-volc-asset-{uuid.uuid4().hex[:8]}"
+
+    @staticmethod
+    def unique_ark_group_name() -> str:
+        return f"api-case-ark-group-{uuid.uuid4().hex[:8]}"
+
+    @staticmethod
+    def unique_ark_asset_name() -> str:
+        return f"api-case-ark-asset-{uuid.uuid4().hex[:8]}"

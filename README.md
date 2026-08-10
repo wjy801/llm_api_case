@@ -631,112 +631,18 @@ class TestOfflineEcho:
 Quality 关闭时使用唯一临时目录运行，避免历史报告污染：
 
 ```powershell
-$python = (Resolve-Path .\.venv\Scripts\python.exe).Path
-$evidenceRoot = Join-Path `
-  ([System.IO.Path]::GetTempPath()) `
-  ('offline-example-disabled-' + [guid]::NewGuid().ToString('N'))
-$junitPath = Join-Path $evidenceRoot 'offline-disabled.xml'
-$allurePath = Join-Path $evidenceRoot 'allure'
-$qualityRoot = Join-Path $evidenceRoot 'quality'
-$runnerResult = 'reports/execution-result.json'
-$runnerBackup = Join-Path $evidenceRoot 'execution-result.original'
-$runnerExisted = Test-Path -LiteralPath $runnerResult
-New-Item -ItemType Directory -Path $evidenceRoot,$qualityRoot -Force | Out-Null
-if ($runnerExisted) {
-  Copy-Item -LiteralPath $runnerResult -Destination $runnerBackup
-}
-
-$env:QUALITY_ENABLE = '0'
-$env:QUALITY_OUTPUT_DIR = $qualityRoot
-$env:GENERATE_ALLURE_REPORT = 'FALSE'
-$env:GENERATE_HISTORY_REPORT = 'FALSE'
-try {
-  & $python run_master.py module/offline_framework_example `
-    -n 2 `
-    --junitxml=$junitPath `
-    --alluredir=$allurePath `
-    -q
-  if ($LASTEXITCODE -ne 0) { throw 'Offline example failed.' }
-}
-finally {
-  if ($runnerExisted) {
-    Copy-Item -LiteralPath $runnerBackup -Destination $runnerResult -Force
-  }
-  elseif (Test-Path -LiteralPath $runnerResult) {
-    Remove-Item -LiteralPath $runnerResult -Force
-  }
-  @(
-    'QUALITY_ENABLE',
-    'QUALITY_OUTPUT_DIR',
-    'GENERATE_ALLURE_REPORT',
-    'GENERATE_HISTORY_REPORT'
-  ) | ForEach-Object {
-    Remove-Item ('Env:' + $_) -ErrorAction SilentlyContinue
-  }
-}
+& .\course\scripts\run_offline_quality_evidence.ps1 -QualityMode Disabled
 ```
 
-当前预期为 23 条通过、Quality 文件为 0；JUnit 与 Allure 原始结果位于 `$evidenceRoot`。
+当前预期为 23 条通过、Quality 文件为 0；脚本会输出本轮唯一证据目录。它先逐项保存调用者环境，确认 Runner 备份存在后才删除原文件，关键文件操作使用 fail-fast，并通过嵌套 `finally` 独立恢复 Runner 产物、环境变量和工作目录。实现见 [run_offline_quality_evidence.ps1](course/scripts/run_offline_quality_evidence.ps1)。
 
 Quality、Semantic 和 Metrics 开启时使用全新的 run ID 与输出目录：
 
 ```powershell
-$python = (Resolve-Path .\.venv\Scripts\python.exe).Path
-$runId = 'offline-doc-' + [guid]::NewGuid().ToString('N')
-$evidenceRoot = Join-Path ([System.IO.Path]::GetTempPath()) $runId
-$qualityRoot = Join-Path $evidenceRoot 'quality'
-$junitPath = Join-Path $evidenceRoot 'offline-quality.xml'
-$allurePath = Join-Path $evidenceRoot 'allure'
-$runnerResult = 'reports/execution-result.json'
-$runnerBackup = Join-Path $evidenceRoot 'execution-result.original'
-$runnerExisted = Test-Path -LiteralPath $runnerResult
-New-Item -ItemType Directory -Path $qualityRoot -Force | Out-Null
-if ($runnerExisted) {
-  Copy-Item -LiteralPath $runnerResult -Destination $runnerBackup
-}
-
-$env:QUALITY_ENABLE = '1'
-$env:QUALITY_SEMANTIC_ENABLE = '1'
-$env:QUALITY_METRICS_ENABLE = '1'
-$env:QUALITY_FLAKY_HISTORY_ENABLE = '0'
-$env:QUALITY_FLAKY_STATE_ENABLE = '0'
-$env:QUALITY_OUTPUT_DIR = $qualityRoot
-$env:QUALITY_RUN_ID = $runId
-Remove-Item Env:QUALITY_EXECUTION_ID -ErrorAction SilentlyContinue
-$env:USE_CHINA_ENVIRONMENT = 'FALSE'
-$env:GENERATE_ALLURE_REPORT = 'FALSE'
-$env:GENERATE_HISTORY_REPORT = 'FALSE'
-try {
-  & $python run_master.py module/offline_framework_example `
-    -n 2 `
-    --junitxml=$junitPath `
-    --alluredir=$allurePath `
-    -q
-  if ($LASTEXITCODE -ne 0) { throw 'Offline Quality example failed.' }
-}
-finally {
-  if ($runnerExisted) {
-    Copy-Item -LiteralPath $runnerBackup -Destination $runnerResult -Force
-  }
-  elseif (Test-Path -LiteralPath $runnerResult) {
-    Remove-Item -LiteralPath $runnerResult -Force
-  }
-  @(
-    'QUALITY_ENABLE',
-    'QUALITY_SEMANTIC_ENABLE',
-    'QUALITY_METRICS_ENABLE',
-    'QUALITY_FLAKY_HISTORY_ENABLE',
-    'QUALITY_FLAKY_STATE_ENABLE',
-    'QUALITY_OUTPUT_DIR',
-    'QUALITY_RUN_ID',
-    'USE_CHINA_ENVIRONMENT',
-    'GENERATE_ALLURE_REPORT',
-    'GENERATE_HISTORY_REPORT'
-  ) | ForEach-Object {
-    Remove-Item ('Env:' + $_) -ErrorAction SilentlyContinue
-  }
-}
+& .\course\scripts\run_offline_quality_evidence.ps1 -QualityMode Enabled
 ```
+
+Enabled 模式使用全新的 run ID 和 Quality 输出目录，同时临时关闭 Flaky 持久写入、Allure HTML 与 history；结束后逐值恢复调用者原有环境，不把原值统一删除。
 
 完整 23 条模块当前允许 Metrics 因 `usage_incomplete` 进入受控 `degraded`；黄金路径的 usage 完整，Metrics 必须为 `aggregated`。
 
@@ -793,7 +699,7 @@ pytestmark = pytest.mark.serial
 
 `--collect-only` 在加载 Quality 配置前短路，不生成 run_id、不写质量产物，也不调用真实接口。
 
-退出码保持 pytest 原始语义：权威空集合返回 5；单池直接返回原始码；多池只有全部已执行池均为 0 时才返回 0。退出码 2/3/4/5 不会被压成 1 或 0，也不会继续启动后续真实接口池。
+Runner 始终保留池级 pytest 原始退出事实：权威空集合返回 5；在 `reports/execution-result.json` 原子写入成功的前提下，单池最终退出码等于 pytest 原始码，多池只有全部已执行池均为 0 时才返回 0。exit 2/3/4/5 或池执行异常会停止所有后续执行池。若执行事实写入失败，Runner 保留终止型原始码 2/3/4/5，其他情况返回 1；Quality、JUnit、Allure 和报告不得改写池级原始退出码。
 
 直接执行框架单测：
 
@@ -863,14 +769,24 @@ Pipeline Summary 只展示最直接的请求成功率、重试挽救率、接口
 
 ### Flaky 状态机与治理
 
-Flaky 历史只导入可信、已完成运行中的可比较用例；skip/xfail/xpass 不进入波动判断。状态流转为：
+Flaky 历史只导入可信、已完成运行中的可比较用例；skip/xfail/xpass 不进入波动判断。状态需要区分自动检测与人工治理。自动检测流转为：
 
 ```text
-OBSERVING（观察中）
--> STABLE（稳定）或 SUSPECTED（疑似不稳定）
--> CONFIRMED（已确认不稳定）
--> QUARANTINED（已隔离）
--> RECOVERING（恢复观察中）
+OBSERVING -> STABLE | SUSPECTED
+STABLE -> SUSPECTED
+SUSPECTED -> STABLE | CONFIRMED
+CONFIRMED -> CONFIRMED（检测结果保持粘性，等待人工治理）
+```
+
+人工纠正与治理流转为：
+
+```text
+SUSPECTED -> CONFIRMED（人工确认）
+SUSPECTED | CONFIRMED -> STABLE（人工纠正为非 Flaky）
+CONFIRMED -> QUARANTINED（人工隔离）
+QUARANTINED -> RECOVERING（开始恢复观察）
+QUARANTINED -> CONFIRMED（取消隔离）
+RECOVERING -> STABLE | CONFIRMED（恢复证据判定）
 ```
 
 默认规则要求至少 3 个一致样本才能判定稳定；确认 Flaky 需要至少 4 个样本、至少 2 次通过、2 次失败和 2 次结果切换。单次失败不会直接判定 Flaky。
@@ -1136,4 +1052,3 @@ CI 变更前建议按“确定性离线门禁 → 全部框架回归 → 真实�
 - 阶段5发布门禁：`PASS`。
 - 阶段6文档与发布基线：`PASS`。
 - 整体发布：`PASS`；离线框架能力分类用例与黄金路径总方案为 `COMPLETE`。
-

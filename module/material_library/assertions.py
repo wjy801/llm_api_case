@@ -8,6 +8,72 @@ from common import BaseAssertions
 
 
 class MaterialLibraryAssertions(BaseAssertions):
+    def assert_root_id_prefix(
+        self,
+        response: requests.Response,
+        expected_prefix: str,
+        *,
+        field_label: str = "Id",
+    ) -> requests.Response:
+        body = self.json_body(response)
+        result_id = body.get(field_label)
+        assert isinstance(result_id, str) and result_id.startswith(expected_prefix), (
+            f"{field_label} should start with {expected_prefix!r}, actual: {result_id!r}. "
+            f"Response body: {response.text}"
+        )
+        return response
+
+    def assert_root_status(
+        self,
+        response: requests.Response,
+        expected_status: str,
+    ) -> requests.Response:
+        actual_status = self.json_body(response).get("Status")
+        assert actual_status == expected_status, (
+            f"Status should be {expected_status!r}, actual: {actual_status!r}. "
+            f"Response body: {response.text}"
+        )
+        return response
+
+    def assert_ark_visual_validate_session_created(
+        self,
+        response: requests.Response,
+    ) -> requests.Response:
+        body = self.json_body(response)
+        session_id = body.get("session_id")
+        h5_link = body.get("h5_link")
+        assert isinstance(session_id, str) and session_id.strip(), (
+            f"session_id should be a non-empty string. Response body: {response.text}"
+        )
+        assert isinstance(h5_link, str) and h5_link.startswith("http"), (
+            f"h5_link should be an HTTP URL, actual: {h5_link!r}. "
+            f"Response body: {response.text}"
+        )
+        return response
+
+    def assert_ark_visual_validate_status(
+        self,
+        response: requests.Response,
+        expected_status: str,
+    ) -> requests.Response:
+        actual_status = self.json_body(response).get("status")
+        assert actual_status == expected_status, (
+            f"status should be {expected_status!r}, actual: {actual_status!r}. "
+            f"Response body: {response.text}"
+        )
+        return response
+
+    def assert_ark_visual_validate_group_id(
+        self,
+        response: requests.Response,
+    ) -> requests.Response:
+        group_id = self.json_body(response).get("group_id")
+        assert isinstance(group_id, str) and group_id.startswith("group-"), (
+            f"group_id should start with 'group-', actual: {group_id!r}. "
+            f"Response body: {response.text}"
+        )
+        return response
+
     def assert_result_id_prefix(
         self,
         response: requests.Response,
@@ -75,6 +141,26 @@ class MaterialLibraryAssertions(BaseAssertions):
         assert asset_id in asset_ids, (
             f"Result.Items should contain asset id {asset_id!r}, actual ids: {asset_ids!r}. "
             f"Response body: {response.text}"
+        )
+        return response
+
+    def assert_asset_list_statuses(
+        self,
+        response: requests.Response,
+        expected_statuses: set[str],
+    ) -> requests.Response:
+        items = self.get_result_items(response)
+        unexpected_statuses: set[str] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                unexpected_statuses.add(f"<non-object:{type(item).__name__}>")
+                continue
+            status = item.get("Status")
+            if status not in expected_statuses:
+                unexpected_statuses.add(repr(status))
+        assert not unexpected_statuses, (
+            f"Result.Items statuses should be in {sorted(expected_statuses)!r}, "
+            f"unexpected statuses: {unexpected_statuses!r}. Response body: {response.text}"
         )
         return response
 
@@ -205,6 +291,10 @@ class MaterialLibraryAssertions(BaseAssertions):
         result = body.get("result")
         if not isinstance(result, dict):
             result = self.get_nested_value(body, ["data", "result"])
+
+        content_video_url = self.get_nested_value(body, ["content", "video_url"])
+        if isinstance(content_video_url, str) and content_video_url.startswith("http"):
+            return response
 
         assert isinstance(result, dict), f"Media task response should contain result object. Response body: {response.text}"
 
