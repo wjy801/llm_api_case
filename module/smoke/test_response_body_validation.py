@@ -40,7 +40,7 @@ class TestResponseBodyValidation:
 
         self.smoke_assertions.assert_status_code(response, 200)
         self.smoke_assertions.assert_schema(response, CHAT_COMPLETION_SUCCESS_SCHEMA)
-        self.smoke_assertions.assert_json_value(response, "$.model", "GLM-5")
+        self.smoke_assertions.assert_json_value(response, "$.model", "DeepSeek-V4-Flash")
 
     def test_stream_chat_completions_chunk_fields(self):
         response = self.smoke_task.create_small_stream_chat_completion(self.smoke_request)
