@@ -259,7 +259,7 @@ Test -> Task ->（领域 Request 方法或 Request Client）-> BaseRequest
 - `CapturePolicy` 如何分别控制输入媒体和输出结果，以及各自的最大下载大小。
 - 输入分支：POST 请求进入 `MediaResourceMiddleware.before_request()`，异步启动输入媒体下载。
 - 输出分支：Polling Decorator 从最终响应的 JSONPath 提取结果链接并下载，不把下载失败替换成业务响应失败。
-- 本课只把 Polling Decorator 当作“最终响应的输出 Capture 接口”，Polling 状态机和超时分支推迟到第 10 课展开。
+- 本课只把 Polling Decorator 当作“最终响应的输出 Capture 接口”，Polling 状态机和超时分支推迟到第 9 课展开。
 - `module/conftest.py` 如何在用例资源收口时把输入下载步骤和输出文件挂入 Allure。
 - `download_url()` 如何处理临时文件、大小上限、安全命名、重名和附件类型。
 - Capture 是两条共享策略与下载原语的分支，不应画成 `Middleware -> 输入下载 -> 输出下载` 的错误线性顺序。
