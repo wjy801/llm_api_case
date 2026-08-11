@@ -60,11 +60,11 @@ pipeline {
         stage('Check Runtime Env') {
             steps {
                 ciPowerShell('''
-                $sourceEnv = 'D:/API_CASE/.env'
-                if (!(Test-Path .env) -and (Test-Path -LiteralPath $sourceEnv)) {
-                    Copy-Item -LiteralPath $sourceEnv -Destination .env -Force
+                $sourceEnv = 'D:/API_CASE/.env.pipeline'
+                if (!(Test-Path .env.pipeline) -and (Test-Path -LiteralPath $sourceEnv)) {
+                    Copy-Item -LiteralPath $sourceEnv -Destination .env.pipeline -Force
                 }
-                if (!(Test-Path .env)) {
+                if (!(Test-Path .env.pipeline)) {
                     Write-Error ".env does not exist in workspace and source path was not found: $sourceEnv"
                 }
                 ''')
