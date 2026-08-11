@@ -11,8 +11,6 @@
 - 协议与业务层已覆盖 OpenAI Chat Completions、Responses、Anthropic Messages，以及图片、视频和真实 Smoke 链路。
 - 质量链已实现事实归并、完整性校验、失败分类、请求指标和机器可读产物。
 - 语义与指标链已实现逻辑调用、HTTP/SSE/异步耗时、Token/媒体用量覆盖；Flaky 历史、状态机与治理命令完整保留。
-- 已建立确定性离线学习模块：标准库 loopback 服务提供 9 个固定场景，18 项基础设施门禁验证协议、隔离、并发计数和线程回收；截至 2026-08-06，23 条业务用例覆盖 6 组能力分类和 1 条黄金路径，Runner 计划为 23 条并发、0 条串行。23 条是日期化快照，长期合同是最终计划与并发/串行池集合守恒。
-- 截至 2026-08-06，本地 Runner、Quality、Metrics、Flaky 和完整框架回归均已通过；Jenkins Build #76 从提交 `c0954ba` Checkout 并通过 23 条离线用例，阶段5发布门禁为 `PASS`，离线框架能力总方案为 `COMPLETE`。详细证据见“本地验收”和 Build #76，不以本段替代后续实际验收。
 - Jenkins 已支持参数化执行、并发优先与串行收尾、每轮 Pipeline 执行摘要、JUnit/Allure、邮件直达链接和构建产物自动清理。
 - `reports/pipeline-summary.md` 是唯一人工质量报告；缺失的 Metrics 或 Flaky 数据只降级对应章节，不按零计算，也不覆盖 pytest/Jenkins 结果。
 
@@ -62,21 +60,6 @@ module/
   smoke/                   # Smoke 用例、响应 Schema、业务 payload builder
   material_library/        # 素材管理领域四件套、真实用例与独立 CLI
   protocol_testing/        # OpenAI/Anthropic 协议兼容性用例
-  offline_framework_example/
-    offline_service.py     # 127.0.0.1 随机端口确定性 HTTP 服务与冻结场景
-    request.py             # 显式离线 Settings、相对路径与中性 metadata
-    task.py                # 离线 payload、业务动作与 Retry/Polling 策略
-    assertions.py          # 离线领域断言，委托 BaseAssertions
-    decorators.py          # 保留真实类身份的薄 Decorators 子类
-    response_schemas.py    # 创建、Polling、错误与审计响应 Schema
-    conftest.py            # 服务、Request、Capture 与 Runtime 观察 fixture
-    test_request_pipeline.py # Request 与默认 Middleware 分类
-    test_retry.py          # GET/POST Retry 资格与挽救分类
-    test_polling.py        # Polling success/failure/unknown/timeout 分类
-    test_context_cleanup.py # TestContext 提取、转换与 LIFO cleanup 分类
-    test_capture_assertions.py # Capture、Schema 与脱敏诊断分类
-    test_concurrency_context.py # ContextVar、Session 与 Header 隔离分类
-    test_full_framework_flow.py # 稳定成功主链黄金路径
 
 quality/
   collector.py             # Case/请求事实采集
@@ -94,9 +77,6 @@ tests/
   quality/                 # 质量事实、Metrics、Flaky、Jenkins 集成回归测试
   test_*.py                # 框架基础能力单测
 
-dev/                       # 架构审查、协议合同与开发思路
-dev_plan/                  # 可执行的阶段开发方案
-code_history/              # 分阶段代码变更与验收记录
 config.py                  # Settings 与环境配置加载
 master_service.py          # 收集与分池公共导入的稳定兼容门面
 run_master.py              # 本地与 Jenkins 共用的稳定执行入口
@@ -150,21 +130,6 @@ run_master.py 稳定入口
 -> Quality 关闭返回 Noop；开启后才加载质量阶段实现
 -> master_service 通过兼容委托提供稳定公共导入
 ```
-
-离线学习链路复用同一公共入口，不建立第二套测试框架：
-
-```text
-OfflineService（127.0.0.1 + 随机端口 + 固定响应序列）
--> OfflineFrameworkTask 构建 payload 和业务动作
--> OfflineFrameworkRequest 复用 BaseRequest/Middleware/Retry
--> OfflineFrameworkAssertions 复用 BaseAssertions
--> Request/Middleware/Retry/Polling/TestContext/Capture 分类
--> ContextVar/Session/Header 并发隔离分类
--> 稳定成功黄金路径组合能力
--> pytest / Runner / Allure / 可选 Quality 消费同一执行事实
-```
-
-当前离线业务模块已经实现 Request、默认 Middleware、Retry、Polling、TestContext、Capture、Assertions、并发隔离和黄金路径。所有示例复用框架公共实现，不建立第二套 Request、Retry、Polling、Capture、Runner 或 Quality 实现。
 
 依赖方向必须保持：
 
@@ -255,8 +220,6 @@ QUALITY_FLAKY_DB_PATH=
 ```
 
 账单、余额及用量查询需要对应环境的 `*_CONTROL_API_KEY`。特殊账号 Key 继续按 `.env.example` 配置，不写入代码或 Jenkinsfile。
-
-离线分类用例只访问 `127.0.0.1` 随机端口，`OfflineFrameworkRequest` 会创建自己的离线 `Settings`，不会使用 `.env` 中的真实 URL 或 Key。不过，框架导入 `config.py` 时仍会校验所选环境配置，因此 `.env` 至少要保留语法合法的 URL、非空 Key 和有效开关值；直接复制 `.env.example` 已满足离线运行要求。
 
 本地启用完整质量事实与 Metrics 数据链路时，可在 PowerShell 当前进程中设置：
 
@@ -606,36 +569,7 @@ class TestOfflineEcho:
 .\.venv\Scripts\python.exe run_master.py
 ```
 
-未指定目标时会收集 `module/` 下全部业务用例，其中包含可能调用真实接口、产生费用或修改共享状态的用例。学习和离线验收应始终显式指定 `module/offline_framework_example`。
-
-完全离线验证本地服务合同：
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_offline_service.py -q
-```
-
-只收集离线业务分类，不发起请求：
-
-```powershell
-.\.venv\Scripts\python.exe run_master.py module/offline_framework_example --collect-only -q
-```
-
-通过 Runner 并发执行离线业务分类：
-
-```powershell
-.\.venv\Scripts\python.exe run_master.py module/offline_framework_example -n 2
-```
-
-### 离线学习模块运行级验收
-
-Quality 关闭时使用唯一临时目录运行，避免历史报告污染：
-
-```powershell
-& .\course\scripts\run_offline_quality_evidence.ps1 -QualityMode Disabled
-```
-
-当前预期为 23 条通过、Quality 文件为 0；脚本会输出本轮唯一证据目录。它先逐项保存调用者环境，确认 Runner 备份存在后才删除原文件，关键文件操作使用 fail-fast，并通过嵌套 `finally` 独立恢复 Runner 产物、环境变量和工作目录。实现见 [run_offline_quality_evidence.ps1](course/scripts/run_offline_quality_evidence.ps1)。
-
+未指定目标时会收集 `module/` 下全部业务用例，其中包含可能调用真实接口、产生费用或修改共享状态的用例。
 Quality、Semantic 和 Metrics 开启时使用全新的 run ID 与输出目录：
 
 ```powershell
@@ -930,8 +864,6 @@ SMOKE_TARGET=module/offline_framework_example
 TEST_PARALLEL_WORKERS=2
 ```
 
-阶段4并发分类和黄金路径文件已经进入提交 `c0954ba707dba258a08d7cfdd623e5628acf5ea8`。Jenkins Build #76 使用上述参数 Checkout 同一提交并以 `SUCCESS` 结束，JUnit 为 23 passed，Allure、Quality、Flaky、Pipeline Summary 和归档入口均可用。业务测试 HTTP 只访问本轮 fixture 提供的 `127.0.0.1` 地址；`Prepare Python Env` 仍可能访问 pip/npm 镜像，因此这里证明的是“业务接口零外部请求”，不是整个构建物理断网。目标提交或关键文件变化后必须重新验收，不能自动沿用 Build #76。
-
 只执行指定业务文件：
 
 ```text
@@ -1015,18 +947,10 @@ SMTP 授权码只配置在 Jenkins 中，不写入 `Jenkinsfile` 或仓库。
 - 真实 Smoke 的 pytest 2/3/4/5 会保留原码并停止后续池。
 - Jenkins 超时和节点执行异常会反映到构建状态。
 
-事实优先级固定为：pytest 原始退出码决定测试进程事实，Jenkins 阶段状态决定流水线事实，JUnit 提供统计与失败详情，Quality/Metrics/Flaky 仅提供诊断。Pipeline Summary 汇总这些事实，不修改构建结果。当前明确不做：
-
-- 基于测试通过率的强制阻断。
-- 性能基线、P95/P99 趋势门禁。
-- 估算成本或账本价格对账。
-- Flaky 自动跳过或自动重跑。
-- MR 精准选测、覆盖率/契约矩阵和智能测试生成。
-
+事实优先级固定为：pytest 原始退出码决定测试进程事实，Jenkins 阶段状态决定流水线事实，JUnit 提供统计与失败详情，Quality/Metrics/Flaky 仅提供诊断。Pipeline Summary 汇总这些事实，不修改构建结果。
 Jenkins 环境复建和迁移参考：
 
 - `JENKINS_MIGRATION_TEMPLATE.md`
-- `dev_plan/P1迭代三Flaky状态机与治理详细开发方案.md`
 
 ### 本地验收
 
@@ -1039,16 +963,3 @@ CI 变更前建议按“确定性离线门禁 → 全部框架回归 → 真实�
 .\.venv\Scripts\python.exe -m pytest tests -q
 .\.venv\Scripts\python.exe run_master.py module/smoke --collect-only -q
 ```
-
-截至 2026-08-06，当前工作树使用 Python 3.14.6，验收快照如下。数量用于识别意外丢失，不替代集合守恒和零失败发布合同：
-
-- 离线服务合同：`18 passed`。
-- 离线业务模块：`23 passed`（并发池 `23`、串行池 `0`）。
-- Quality、Semantic、Metrics 与 Flaky：本地运行级门禁通过；完整模块 Metrics 唯一受控降级原因为 `usage_incomplete`。
-- 黄金路径：`4 operations / 7 request groups / 1 polling session / 8 request events`。
-- Smoke collect-only：`40` 项（并发池 `15`、串行池 `25`），只验证收集和分池。
-- 完整框架回归：`686 passed / 0 failed / 0 errors / 0 skipped`。
-- 实际 Jenkins：Build #76 `SUCCESS`，Checkout `c0954ba`，JUnit 23 passed，Allure、Quality、Flaky、Pipeline Summary 与归档完整。
-- 阶段5发布门禁：`PASS`。
-- 阶段6文档与发布基线：`PASS`。
-- 整体发布：`PASS`；离线框架能力分类用例与黄金路径总方案为 `COMPLETE`。
