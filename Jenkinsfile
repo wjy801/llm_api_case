@@ -31,6 +31,7 @@ pipeline {
     }
 
     environment {
+        API_CASE_DOTENV_PATH = '.env.pipeline'
         CI_MAIL_TO = 'wujinyang@qiqikeji.com'
         CI_MAIL_FROM = '13463214057@163.com'
         GENERATE_ALLURE_REPORT = 'FALSE'
@@ -61,11 +62,15 @@ pipeline {
             steps {
                 ciPowerShell('''
                 $sourceEnv = 'D:/API_CASE/.env.pipeline'
-                if (!(Test-Path .env.pipeline) -and (Test-Path -LiteralPath $sourceEnv)) {
-                    Copy-Item -LiteralPath $sourceEnv -Destination .env.pipeline -Force
+                $runtimeEnv = $env:API_CASE_DOTENV_PATH
+                if ([string]::IsNullOrWhiteSpace($runtimeEnv)) {
+                    Write-Error 'API_CASE_DOTENV_PATH is not configured.'
                 }
-                if (!(Test-Path .env.pipeline)) {
-                    Write-Error ".env does not exist in workspace and source path was not found: $sourceEnv"
+                if (!(Test-Path -LiteralPath $runtimeEnv) -and (Test-Path -LiteralPath $sourceEnv)) {
+                    Copy-Item -LiteralPath $sourceEnv -Destination $runtimeEnv -Force
+                }
+                if (!(Test-Path -LiteralPath $runtimeEnv)) {
+                    Write-Error "Pipeline dotenv does not exist in workspace and source path was not found: $sourceEnv"
                 }
                 ''')
             }
@@ -179,7 +184,7 @@ pipeline {
                 $env:QUALITY_METRICS_ENABLE = '1'
                 $env:QUALITY_FLAKY_HISTORY_ENABLE = '0'
                 $env:QUALITY_FLAKY_STATE_ENABLE = '0'
-                $flakyEnvFiles = @('.env', 'D:/API_CASE/.env')
+                $flakyEnvFiles = @($env:API_CASE_DOTENV_PATH)
                 foreach ($flakyEnvFile in $flakyEnvFiles) {
                     if ([string]::IsNullOrWhiteSpace($env:QUALITY_FLAKY_DB_PATH) -and (Test-Path -LiteralPath $flakyEnvFile)) {
                         $flakyDbSetting = Get-Content -LiteralPath $flakyEnvFile |
@@ -337,7 +342,7 @@ void generatePipelineSummary() {
               --machine-output reports/pipeline-summary.json `
               --email-subject-output reports/pipeline-email-subject.txt `
               --email-html-output reports/pipeline-email.html `
-              --dotenv .env
+              --dotenv $env:API_CASE_DOTENV_PATH
             ''')
         }
         if (!fileExists('reports/pipeline-summary.md')) {

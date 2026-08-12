@@ -12,7 +12,6 @@ from module.material_library.request import MaterialLibraryRequest
 
 
 PROJECT_NAME = "default"
-ARK_VIRTUAL_PORTRAIT_MODEL = "dreamina-seedance-2-0-260128"
 ARK_GROUP_ID_PREFIX = "group-"
 ARK_ASSET_ID_PREFIX = "asset-"
 ARK_ASSET_POLL_INTERVAL_SECONDS = 5
@@ -39,11 +38,6 @@ VOLC_GROUP_ID_PREFIX = "group-volc-cn-"
 VOLC_ASSET_ID_PREFIX = "asset-volc-cn-"
 VOLC_VISUAL_VALIDATE_SESSION_ID_PREFIX = "session-volc-cn-"
 VOLC_LIVENESS_GROUP_TYPE = "LivenessFace"
-DEFAULT_VOLC_LIVENESS_IMAGE_URL = "https://ark-project.tos-cn-beijing.volces.com/doc_image/r2v_tea_pic2.jpg"
-DEFAULT_VOLC_SAMPLE_IMAGE_URL = "https://ark-project.tos-cn-beijing.volces.com/doc_image/r2v_tea_pic1.jpg"
-DEFAULT_VOLC_FAST_VIDEO_MODEL = "doubao-seedance-2-0-fast-260128"
-DEFAULT_VOLC_MINI_VIDEO_MODEL = "doubao-seedance-2-5-260628"
-DEFAULT_VOLC_SEEDANCE_2_5_VIDEO_MODEL = "doubao-seedance-2-0-mini-260615"
 VOLC_ASSET_POLL_INTERVAL_SECONDS = 3
 VOLC_ASSET_POLL_TIMEOUT_SECONDS = 180
 VOLC_VISUAL_VALIDATE_POLL_INTERVAL_SECONDS = 3
@@ -103,7 +97,7 @@ class MaterialLibraryTask(BaseTask):
         request_client: MaterialLibraryRequest,
         group_id: str,
         *,
-        image_url: str = DEFAULT_VOLC_SAMPLE_IMAGE_URL,
+        image_url: str,
         name: str | None = None,
     ) -> requests.Response:
         return request_client.create_ark_asset(
@@ -252,12 +246,24 @@ class MaterialLibraryTask(BaseTask):
         request_client: MaterialLibraryRequest,
         asset_id: str,
         *,
-        model: str = ARK_VIRTUAL_PORTRAIT_MODEL,
+        model: str,
+        prompt: str,
+        duration: int,
+        resolution: str,
+        ratio: str,
+        reference_role: str,
+        generate_audio: bool,
     ) -> requests.Response:
         return request_client.create_ark_media_generation(
             self.build_ark_virtual_portrait_video_payload(
                 asset_id=asset_id,
                 model=model,
+                prompt=prompt,
+                duration=duration,
+                resolution=resolution,
+                ratio=ratio,
+                reference_role=reference_role,
+                generate_audio=generate_audio,
             )
         )
 
@@ -267,12 +273,24 @@ class MaterialLibraryTask(BaseTask):
         request_client: MaterialLibraryRequest,
         asset_id: str,
         *,
-        model: str = ARK_VIRTUAL_PORTRAIT_MODEL,
+        model: str,
+        prompt: str,
+        duration: int,
+        resolution: str,
+        ratio: str,
+        reference_role: str,
+        generate_audio: bool,
     ) -> requests.Response:
         return request_client.create_ark_media_generation(
             self.build_ark_virtual_portrait_video_payload(
                 asset_id=asset_id,
                 model=model,
+                prompt=prompt,
+                duration=duration,
+                resolution=resolution,
+                ratio=ratio,
+                reference_role=reference_role,
+                generate_audio=generate_audio,
             )
         )
 
@@ -372,7 +390,7 @@ class MaterialLibraryTask(BaseTask):
         request_client: MaterialLibraryRequest,
         group_id: str,
         *,
-        image_url: str = DEFAULT_VOLC_SAMPLE_IMAGE_URL,
+        image_url: str,
         name: str | None = None,
         asset_type: str = VOLC_IMAGE_ASSET_TYPE,
         project_name: str = PROJECT_NAME,
@@ -663,14 +681,14 @@ class MaterialLibraryTask(BaseTask):
         request_client: MaterialLibraryRequest,
         asset_id: str,
         *,
-        model: str = DEFAULT_VOLC_FAST_VIDEO_MODEL,
-        prompt: str = "图片1中的人物在海边自然行走，保持主体一致，电影感镜头。",
-        duration: int = 5,
-        resolution: str = "720p",
-        ratio: str = "16:9",
-        reference_role: str = "reference_image",
-        generate_audio: bool = True,
-        watermark: bool = False,
+        model: str,
+        prompt: str,
+        duration: int,
+        resolution: str,
+        ratio: str,
+        reference_role: str,
+        generate_audio: bool,
+        watermark: bool,
     ) -> requests.Response:
         return request_client.create_media_generation(
             self.build_asset_video_generation_payload(
@@ -785,22 +803,29 @@ class MaterialLibraryTask(BaseTask):
     def build_ark_virtual_portrait_video_payload(
         *,
         asset_id: str,
-        model: str = ARK_VIRTUAL_PORTRAIT_MODEL,
+        model: str,
+        prompt: str,
+        duration: int,
+        resolution: str,
+        ratio: str,
+        reference_role: str,
+        generate_audio: bool,
     ) -> dict[str, Any]:
+        # 模板只映射接口字段；模型与生成参数由具体测试场景显式提供。
         return {
             "model": model,
-            "duration": 5,
-            "resolution": "720p",
-            "ratio": "16:9",
-            "generate_audio": True,
+            "duration": duration,
+            "resolution": resolution,
+            "ratio": ratio,
+            "generate_audio": generate_audio,
             "content": [
                 {
                     "type": "text",
-                    "text": "参考图主体自然微笑并看向镜头",
+                    "text": prompt,
                 },
                 {
                     "type": "image_url",
-                    "role": "reference_image",
+                    "role": reference_role,
                     "image_url": {"url": f"asset://{asset_id}"},
                 },
             ],
@@ -936,15 +961,16 @@ class MaterialLibraryTask(BaseTask):
     def build_asset_video_generation_payload(
         *,
         asset_id: str,
-        model: str = DEFAULT_VOLC_FAST_VIDEO_MODEL,
-        prompt: str = "图片1中的人物在海边自然行走，保持主体一致，电影感镜头。",
-        duration: int = 5,
-        resolution: str = "720p",
-        ratio: str = "16:9",
-        reference_role: str = "reference_image",
-        generate_audio: bool = True,
-        watermark: bool = False,
+        model: str,
+        prompt: str,
+        duration: int,
+        resolution: str,
+        ratio: str,
+        reference_role: str,
+        generate_audio: bool,
+        watermark: bool,
     ) -> dict[str, Any]:
+        # 模板只映射接口字段；模型与生成参数由具体测试场景显式提供。
         return {
             "model": model,
             "content": [

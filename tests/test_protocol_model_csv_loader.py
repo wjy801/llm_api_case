@@ -30,6 +30,27 @@ class TestProtocolModelCsvLoader:
 
         assert load_model_ids_from_csv(csv_path) == ["model-a", "model-b"]
 
+    def test_load_model_ids_supports_utf8_sig(self, tmp_path):
+        csv_path = tmp_path / "model_id.csv"
+        csv_path.write_text("\ufeffmodel_id\nmodel-a\n", encoding="utf-8")
+
+        assert load_model_ids_from_csv(csv_path) == ["model-a"]
+
+    def test_load_model_ids_returns_empty_for_header_only_csv(self, tmp_path):
+        csv_path = tmp_path / "model_id.csv"
+        csv_path.write_text("model_id\n", encoding="utf-8")
+
+        assert load_model_ids_from_csv(csv_path) == []
+
+    def test_load_model_ids_returns_empty_for_missing_file(self, tmp_path):
+        assert load_model_ids_from_csv(tmp_path / "missing.csv") == []
+
+    def test_load_model_ids_returns_empty_for_empty_file(self, tmp_path):
+        csv_path = tmp_path / "model_id.csv"
+        csv_path.write_text("", encoding="utf-8")
+
+        assert load_model_ids_from_csv(csv_path) == []
+
     def test_resolve_protocol_testing_path_uses_protocol_testing_root(self):
         assert resolve_protocol_testing_path("text_model/openai.csv") == (
             PROTOCOL_TESTING_ROOT / "text_model/openai.csv"

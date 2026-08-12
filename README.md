@@ -97,6 +97,7 @@ pytest.ini                 # pytest 与 Allure 默认配置
 requirements.txt           # Python 依赖
 package.json               # Allure CLI 依赖
 .env.example               # 环境变量示例
+.env.pipeline.example      # Jenkins 流水线专用环境变量模板
 ```
 
 以下目录为本地生成产物，不应提交到仓库：
@@ -192,6 +193,17 @@ npm install
 ```powershell
 Copy-Item .env.example .env
 ```
+
+Jenkins 使用独立的 `.env.pipeline`，避免与本地开发配置混用：
+
+```powershell
+Copy-Item .env.pipeline.example .env.pipeline
+```
+
+Agent 主机将真实文件保存在 `D:/API_CASE/.env.pipeline`。`Jenkinsfile` 设置
+`API_CASE_DOTENV_PATH=.env.pipeline` 并将受控文件复制到 workspace；`config.py`
+在该变量存在时读取指定文件，未设置时仍默认读取本地 `.env`。真实
+`.env.pipeline` 与 `.env` 均不得提交仓库。
 
 再按 `config.py` 当前读取的变量修改配置：
 
@@ -800,7 +812,7 @@ Checkout
 当前阶段职责：
 
 - `Checkout`：从 SCM 拉取当前分支代码和 `Jenkinsfile`。
-- `Check Runtime Env`：确认 workspace 中存在 `.env`；当前 Windows Agent 可从本机受控路径复制，不把凭据写入仓库。
+- `Check Runtime Env`：确认 workspace 中存在 `API_CASE_DOTENV_PATH` 指定的 `.env.pipeline`；当前 Windows Agent 可从本机受控路径复制，不把凭据写入仓库。
 - `Prepare Python Env`：创建或复用 `.venv`，安装 Python 和 npm 依赖，并清理本次 `reports/` 目录。
 - `Framework Unit Tests`：执行 `tests/` 下的框架测试并发布 `reports/unit-tests.xml`。
 - `Collect Smoke Cases`：只收集真实业务用例，不调用真实接口；收集结果以 UTF-8 写入 `reports/smoke-collect.txt`。
@@ -822,7 +834,7 @@ Checkout
 
 默认参数只执行框架测试和 Smoke 收集，不执行真实接口，避免因外部服务、账号余额和调用成本造成非预期影响。
 
-`GENERATE_PIPELINE_SUMMARY` 默认开启，也可在 `.env` 中使用同名变量。本轮 Jenkins 参数/进程环境优先于 `.env`；关闭时不生成主摘要、兜底摘要和邮件摘要链接，但不影响 JUnit、Allure、质量事实、Metrics 与 Flaky 产物。
+`GENERATE_PIPELINE_SUMMARY` 默认开启，本地可在 `.env`、Jenkins 可在 `.env.pipeline` 中使用同名变量。本轮 Jenkins 参数/进程环境优先于 dotenv 文件；关闭时不生成主摘要、兜底摘要和邮件摘要链接，但不影响 JUnit、Allure、质量事实、Metrics 与 Flaky 产物。
 
 `QUALITY_ENABLE` 独立控制质量采集和报告质量数据源。Jenkins 的真实接口阶段会显式开启它，并在生成摘要时传递同一执行事实；本地未开启时，报告中的“质量观测”为 `NOT_RUN`，且不会读取上轮遗留的 `reports/quality`。已开启但本轮核心质量产物缺失、损坏或版本不匹配时才显示 `NO_DATA`。
 

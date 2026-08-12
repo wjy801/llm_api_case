@@ -15,6 +15,9 @@ def test_real_smoke_enables_quality_reports_and_archives_artifacts():
     assert content.index("deleteDir()") < content.index("def scmVars = checkout scm")
     assert "env.GIT_COMMIT = scmVars.GIT_COMMIT" in content
     assert "env.GIT_BRANCH = scmVars.GIT_BRANCH" in content
+    assert "API_CASE_DOTENV_PATH = '.env.pipeline'" in content
+    assert "$sourceEnv = 'D:/API_CASE/.env.pipeline'" in content
+    assert "Copy-Item -LiteralPath $sourceEnv -Destination $runtimeEnv -Force" in content
     assert "$env:QUALITY_ENABLE = '1'" in content
     assert "$env:QUALITY_SEMANTIC_ENABLE = '1'" in content
     assert "$env:QUALITY_METRICS_ENABLE = '1'" in content
@@ -24,12 +27,13 @@ def test_real_smoke_enables_quality_reports_and_archives_artifacts():
     assert "$env:QUALITY_FLAKY_STATE_ENABLE = '1'" in content
     assert "archiveArtifacts artifacts: 'allure-results/**, reports/**'" in content
     assert "junit allowEmptyResults: true, testResults: 'reports/smoke-tests*.xml'" in content
-    assert "$flakyEnvFiles = @('.env', 'D:/API_CASE/.env')" in content
+    assert "$flakyEnvFiles = @($env:API_CASE_DOTENV_PATH)" in content
     assert "Get-Content -LiteralPath $flakyEnvFile" in content
     assert "Where-Object { $_ -match '^\\\\s*QUALITY_FLAKY_DB_PATH\\\\s*=' }" in content
     assert "IsNullOrWhiteSpace($env:QUALITY_FLAKY_DB_PATH) -and" in content
     assert "IsNullOrWhiteSpace($env:QUALITY_FLAKY_DB_PATH)" in content
     assert "$env:QUALITY_OUTPUT_DIR = 'reports/quality'" in content
+    assert "--dotenv $env:API_CASE_DOTENV_PATH" in content
     assert "$reportsPath = Join-Path (Get-Location) 'reports'" in content
     assert "Remove-Item -LiteralPath $reportsPath -Recurse -Force" in content
     assert content.index("Remove-Item -LiteralPath $reportsPath -Recurse -Force") < content.index("New-Item -ItemType Directory -Force -Path $reportsPath")
