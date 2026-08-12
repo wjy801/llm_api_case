@@ -374,7 +374,7 @@ Test -> Task ->（领域 Request 方法或 Request Client）-> BaseRequest
 - 最大尝试次数、退避时间和 deadline。
 - GET 与 POST 的重试风险差异。
 - `RetryExecutor` 在进入尝试循环前先判断请求方法是否具备重试资格；POST 即使配置 RetryPolicy，也可能只执行一次 `_send`。
-- RetryAttemptRecord 如何记录每次尝试。
+- RetryAttemptRecord 如何记录“准备下一次 retry”的原因与候选等待；最终成功、最终响应和最终异常不会追加记录。
 - 最后一次得到可重试 HTTP 响应时直接返回该响应；最后一次抛出异常时重新抛出原始异常，不存在统一的 RetryExhausted 出口。
 
 **代码入口**：
