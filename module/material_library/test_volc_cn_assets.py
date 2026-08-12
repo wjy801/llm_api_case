@@ -11,19 +11,28 @@ from module.material_library import (
     MaterialLibraryTask,
 )
 from module.material_library.task import (
-    DEFAULT_VOLC_FAST_VIDEO_MODEL,
-    DEFAULT_VOLC_MINI_VIDEO_MODEL,
-    PROJECT_NAME,
     VOLC_AIGC_GROUP_TYPE,
     VOLC_ASSET_ID_PREFIX,
     VOLC_GROUP_ID_PREFIX,
 )
 
 
-VOLC_VIRTUAL_VIDEO_MODELS = (
-    # DEFAULT_VOLC_FAST_VIDEO_MODEL,
-    DEFAULT_VOLC_MINI_VIDEO_MODEL,
+VOLC_PROJECT_NAME = "default"
+VOLC_VIRTUAL_IMAGE_URL = (
+    "https://ark-project.tos-cn-beijing.volces.com/doc_image/r2v_tea_pic1.jpg"
 )
+VOLC_VIRTUAL_VIDEO_MODELS = (
+    "doubao-seedance-2-5-260628",
+)
+VOLC_VIRTUAL_VIDEO_PROMPT = (
+    "图片1中的人物在海边自然行走，保持主体一致，电影感镜头。"
+)
+VOLC_VIRTUAL_VIDEO_DURATION = 5
+VOLC_VIRTUAL_VIDEO_RESOLUTION = "720p"
+VOLC_VIRTUAL_VIDEO_RATIO = "16:9"
+VOLC_VIRTUAL_VIDEO_REFERENCE_ROLE = "reference_image"
+VOLC_VIRTUAL_VIDEO_GENERATE_AUDIO = True
+VOLC_VIRTUAL_VIDEO_WATERMARK = False
 
 
 @dataclass
@@ -89,7 +98,10 @@ class TestVolcCnVirtualAssetsFlow:
     ):
         runtime = volc_cn_virtual_asset_runtime
 
-        response = runtime.task.create_aigc_asset_group(runtime.request)
+        response = runtime.task.create_aigc_asset_group(
+            runtime.request,
+            project_name=VOLC_PROJECT_NAME,
+        )
         group_id = runtime.task.extract_group_id(response)
         runtime.state.group_id = group_id
 
@@ -107,7 +119,8 @@ class TestVolcCnVirtualAssetsFlow:
         response = runtime.task.upload_image_asset(
             runtime.request,
             group_id,
-            project_name=PROJECT_NAME,
+            image_url=VOLC_VIRTUAL_IMAGE_URL,
+            project_name=VOLC_PROJECT_NAME,
         )
         asset_id = runtime.task.extract_asset_id(response)
         runtime.state.asset_id = asset_id
@@ -150,6 +163,13 @@ class TestVolcCnVirtualAssetsFlow:
             runtime.request,
             asset_id,
             model=model_id,
+            prompt=VOLC_VIRTUAL_VIDEO_PROMPT,
+            duration=VOLC_VIRTUAL_VIDEO_DURATION,
+            resolution=VOLC_VIRTUAL_VIDEO_RESOLUTION,
+            ratio=VOLC_VIRTUAL_VIDEO_RATIO,
+            reference_role=VOLC_VIRTUAL_VIDEO_REFERENCE_ROLE,
+            generate_audio=VOLC_VIRTUAL_VIDEO_GENERATE_AUDIO,
+            watermark=VOLC_VIRTUAL_VIDEO_WATERMARK,
         )
         task_id = runtime.task.extract_media_task_id(response)
         runtime.state.task_ids[model_id] = task_id
@@ -332,7 +352,7 @@ class TestVolcCnAssetGroupsManagement:
             self.material_library_request,
             name=group_name,
             description="api-case group management test",
-            project_name=PROJECT_NAME,
+            project_name=VOLC_PROJECT_NAME,
         )
         self.material_library_assertions.assert_status_code(response, 200)
         self.material_library_assertions.assert_result_id_prefix(response, VOLC_GROUP_ID_PREFIX)
@@ -508,7 +528,7 @@ class TestVolcCnAssetsManagement:
         group_response = self.material_library_task.create_aigc_asset_group(
             self.material_library_request,
             description="api-case asset management test",
-            project_name=PROJECT_NAME,
+            project_name=VOLC_PROJECT_NAME,
         )
         self.material_library_assertions.assert_status_code(group_response, 200)
         self.material_library_assertions.assert_result_id_prefix(
@@ -522,8 +542,9 @@ class TestVolcCnAssetsManagement:
         asset_response = self.material_library_task.upload_image_asset(
             self.material_library_request,
             group_id,
+            image_url=VOLC_VIRTUAL_IMAGE_URL,
             name=asset_name,
-            project_name=PROJECT_NAME,
+            project_name=VOLC_PROJECT_NAME,
         )
         self.material_library_assertions.assert_status_code(asset_response, 200)
         self.material_library_assertions.assert_result_id_prefix(

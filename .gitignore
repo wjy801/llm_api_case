@@ -3,6 +3,7 @@
 .env
 .env.*
 !.env.example
+!.env.pipeline.example
 
 # Python cache / test cache
 __pycache__/

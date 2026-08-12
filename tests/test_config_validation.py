@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+import subprocess
+import sys
+
 import pytest
 from pydantic import BaseModel
 
-from config import Settings, load_settings
+from config import (
+    DEFAULT_DOTENV_PATH,
+    DOTENV_PATH_ENV,
+    Settings,
+    load_settings,
+    resolve_dotenv_path,
+)
 from util.config_validation import (
     ConfigValidationError,
     is_enabled,
@@ -14,6 +25,73 @@ from util.config_validation import (
 
 
 class TestLoadSettings:
+    def test_dotenv_path_defaults_to_local_env(self):
+        assert resolve_dotenv_path({}) == DEFAULT_DOTENV_PATH
+
+    def test_dotenv_path_uses_explicit_pipeline_file(self):
+        assert (
+            resolve_dotenv_path({DOTENV_PATH_ENV: "  .env.pipeline  "})
+            == ".env.pipeline"
+        )
+
+    def test_pipeline_dotenv_is_loaded_in_clean_process(self, tmp_path):
+        pipeline_env = tmp_path / ".env.pipeline"
+        pipeline_env.write_text(
+            "\n".join(
+                (
+                    "USE_CHINA_ENVIRONMENT=TRUE",
+                    "CHINA_TEST_ENVIRONMENT_BASE_URL=https://pipeline.example.com",
+                    "CHINA_API_KEY=synthetic-pipeline-key",
+                    "B_ACCOUNT_API_KEY=synthetic-b-account-key",
+                    "API_TIMEOUT=30",
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        environment = os.environ.copy()
+        for name in (
+            "USE_CHINA_ENVIRONMENT",
+            "CHINA_TEST_ENVIRONMENT_BASE_URL",
+            "CHINA_API_KEY",
+            "B_ACCOUNT_API_KEY",
+            "API_TIMEOUT",
+        ):
+            environment.pop(name, None)
+        environment[DOTENV_PATH_ENV] = ".env.pipeline"
+        project_root = Path(__file__).resolve().parents[1]
+        existing_pythonpath = environment.get("PYTHONPATH")
+        environment["PYTHONPATH"] = os.pathsep.join(
+            part
+            for part in (str(project_root), existing_pythonpath)
+            if part
+        )
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import os; "
+                    "from config import settings; "
+                    "assert settings.environment_name == 'china'; "
+                    "assert settings.base_url == 'https://pipeline.example.com'; "
+                    "assert settings.api_key == 'synthetic-pipeline-key'; "
+                    "assert settings.timeout == 30; "
+                    "assert os.environ['B_ACCOUNT_API_KEY'] == "
+                    "'synthetic-b-account-key'"
+                ),
+            ],
+            cwd=tmp_path,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+
     def test_loads_china_settings_and_strips_base_url_slash(self):
         settings = load_settings(
             {

@@ -43,7 +43,7 @@ SMTP 授权码
 | Agent 节点名 | `Windows` | Jenkinsfile 使用该标签 |
 | Agent 标签 | `Windows windows` | 节点模式为 Exclusive |
 | Agent 工作目录 | `D:\JenkinsAgent` | 新机器按实际路径替换 |
-| `.env` 来源 | `D:/API_CASE/.env` | 位于 Windows Agent 主机 |
+| `.env.pipeline` 来源 | `D:/API_CASE/.env.pipeline` | 位于 Windows Agent 主机，仅供流水线使用 |
 | 收件人 | `wujinyang@qiqikeji.com` | `Jenkinsfile` 中的 `CI_MAIL_TO` |
 | 发件人 | `13463214057@163.com` | `Jenkinsfile` 中的 `CI_MAIL_FROM` |
 | SMTP | `smtp.163.com:465`，SSL | 授权码仅存 Jenkins |
@@ -57,7 +57,7 @@ Windows 主机
 ├─ Docker Desktop
 │  └─ jenkins Controller :8080 / :50000
 ├─ D:\API_CASE
-│  ├─ .env
+│  ├─ .env.pipeline
 │  └─ 项目源码
 └─ D:\JenkinsAgent
    ├─ agent.jar
@@ -217,7 +217,7 @@ java -version
 node --version
 npm --version
 Test-Path D:\JenkinsAgent
-Test-Path D:\API_CASE\.env
+Test-Path D:\API_CASE\.env.pipeline
 ```
 
 ## 8. Pipeline Job 配置
@@ -296,21 +296,21 @@ buildDiscarder(logRotator(
 - 构建编号、结果、参数和控制台历史持续保留。
 - 外部 Flaky SQLite 不属于构建产物，不会被该策略删除。
 
-## 9. Runtime `.env` 与持久数据
+## 9. Runtime `.env.pipeline` 与持久数据
 
-### 9.1 `.env` 来源
+### 9.1 `.env.pipeline` 来源
 
 当前 Jenkinsfile：
 
 ```text
-workspace 没有 .env
--> 从 D:/API_CASE/.env 复制
+workspace 没有 .env.pipeline
+-> 从 D:/API_CASE/.env.pipeline 复制
 -> 两处都不存在则构建失败
 ```
 
-迁移到新 Agent 时，修改 Jenkinsfile 的 `$sourceEnv` 或在相同路径准备 `.env`。
+`Jenkinsfile` 设置 `API_CASE_DOTENV_PATH=.env.pipeline`，`config.py`、Flaky 路径读取和 Pipeline Summary 使用同一个文件选择。迁移到新 Agent 时，修改 Jenkinsfile 的 `$sourceEnv` 或在相同路径准备 `.env.pipeline`。
 
-建议从 `.env.example` 复制，只填写目标环境实际值。至少核对：
+建议从 `.env.pipeline.example` 复制，只填写目标环境实际值。至少核对：
 
 ```text
 USE_CHINA_ENVIRONMENT
@@ -323,7 +323,7 @@ OVERSEAS_CONTROL_API_KEY
 API_TIMEOUT
 ```
 
-Smoke 特殊账号按 `.env.example` 的名称配置，不要改成 Jenkins 全局明文参数。
+Smoke 特殊账号按 `.env.pipeline.example` 的名称配置，不要改成 Jenkins 全局明文参数。
 
 ### 9.2 质量事实与 Metrics 配置
 
@@ -335,7 +335,7 @@ QUALITY_SEMANTIC_ENABLE=1
 QUALITY_METRICS_ENABLE=1
 QUALITY_FLAKY_HISTORY_ENABLE=0 或 1
 QUALITY_FLAKY_STATE_ENABLE=0 或 1
-QUALITY_FLAKY_DB_PATH=<从 .env 加载的 Job 独占绝对路径>
+QUALITY_FLAKY_DB_PATH=<从 .env.pipeline 加载的 Job 独占绝对路径>
 QUALITY_OUTPUT_DIR=reports/quality
 ```
 
@@ -343,7 +343,7 @@ QUALITY_OUTPUT_DIR=reports/quality
 
 ### 9.3 Flaky SQLite
 
-在 `.env` 中配置：
+在 `.env.pipeline` 中配置：
 
 ```text
 QUALITY_FLAKY_DB_PATH=D:/JenkinsData/llm-api-case/flaky-history.db
@@ -631,13 +631,14 @@ http.version 应为 HTTP/1.1
 检查 WebSocket 是否被网络策略阻断
 ```
 
-### 15.3 找不到 `.env`
+### 15.3 找不到 `.env.pipeline`
 
 ```text
-检查 D:\API_CASE\.env
+检查 D:\API_CASE\.env.pipeline
 检查 Jenkinsfile 中 $sourceEnv
+检查 API_CASE_DOTENV_PATH 是否为 .env.pipeline
 检查 Agent 运行账户的读取权限
-确认 .env 没有被提交到仓库
+确认 .env.pipeline 没有被提交到仓库
 ```
 
 ### 15.4 Pipeline Summary 或质量机器数据不存在
@@ -698,7 +699,7 @@ numToKeep=-1
 [ ] GitHub 分支为 dev3
 [ ] Controller 与 Agent 都能访问 GitHub
 [ ] Agent 标签为 Windows
-[ ] .env 和特殊账号 Key 未进入仓库
+[ ] .env.pipeline 和特殊账号 Key 未进入仓库
 [ ] SMTP 授权码未进入 Jenkinsfile
 [ ] Flaky SQLite 位于 workspace 外部
 [ ] 质量 facts、Metrics 和 Flaky 机器数据均已归档
