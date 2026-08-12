@@ -233,6 +233,26 @@ pending -> success -> failure
 
 转换为 `AssertionError`，消息使用脱敏且最多 2000 字符的 Response 文本。
 
+### 6.5 HTTP 状态码不参与当前 PollingState 分类
+
+`evaluate_polling_response()` 会调用 `response.json()` 并读取配置的 JSONPath，但完全不读取 `response.status_code`。因此 HTTP 状态与业务 Polling 状态是两条独立事实：
+
+- HTTP 200 不代表业务成功，body 仍可能是 running、failed 或 unknown；
+- 非 2xx 也不会自动阻止状态评估，只要 Response 能解析出符合 Policy 的 JSON；
+- 对已经到达 Polling evaluator 的最终 Response，HTTP 状态码只进入 `PollingTransition.response_status_code` 作为迁移证据，不参与 `PollingState` 分类。
+
+最小事实链：
+
+```text
+HTTP 503
+body = {"status": "succeeded"}
+-> evaluate_polling_response() 得到 PollingState.SUCCESS
+-> transition 记录 response_status_code = 503
+-> 状态机核心路径准备返回同一个 503 Response
+```
+
+这可能发生在未配置 Retry，或 Retry 最终返回非 2xx Response 时。它只是当前实现事实，不表示业务应接受 503 为成功；调用方仍需分别执行 HTTP 状态断言和业务结果断言。最终 Response 是否真正返回，还受 deadline 与第 13.1 节附件边界约束。
+
 ---
 
 ## 7. 四种 PollingState
@@ -410,6 +430,8 @@ Polling query 1
 
 Polling transition 只记录评估后的业务 Response；中间 503 属于 Retry 证据。
 
+这里的“中间 503”特指 Retry 后仍会继续发送的 attempt。若未配置 Retry，或 Retry 最终把 503 Response 返回给 Polling，`evaluate_polling_response()` 仍会评估其 JSON；例如 body 为 `{"status":"succeeded"}` 时，业务状态会被分类为 SUCCESS。
+
 ### 12.2 Retry wait 不能超出 Polling deadline
 
 若剩余 1 秒而 Retry backoff 需要 2 秒：
@@ -442,13 +464,15 @@ Retry attempt_index：单个 GET 的传输尝试次数
 - Response JSON 或状态解析异常；
 - 其他请求执行异常。
 
-Retry 耗尽后的 Timeout/ConnectionError 与 Middleware 等请求异常保持原异常继续抛出；解析路径遵循 `evaluate_polling_response()` 自己的 AssertionError/解析异常语义。它们都不会被统一转换为 PollingError。
+在相关日志附件调用未抛异常的前提下，Retry 耗尽后的 Timeout/ConnectionError 与 Middleware 等请求异常保持原异常继续抛出；解析路径遵循 `evaluate_polling_response()` 自己的 AssertionError/解析异常语义。它们都不会被统一转换为 PollingError。附件失败边界见第 13.1 节。
 
 ---
 
 ## 13. 状态机出口与底层异常边界
 
-| 出口 | 返回/异常 | 保留信息 |
+下表描述附件回调正常时的状态机出口。终态、解析异常和请求异常路径都会同步写日志或迁移附件；若附件调用抛异常，表中的原出口可能不再成立，详见第 13.1 节。
+
+| 出口 | 返回/异常（附件回调正常时） | 保留信息 |
 | --- | --- | --- |
 | SUCCESS 且未超时 | 最终 Response | transitions 进入日志 |
 | FAILURE 且未超时 | `PollingFailedError` | last status/response/transitions/error |
@@ -460,6 +484,30 @@ Retry 耗尽后的 Timeout/ConnectionError 与 Middleware 等请求异常保持�
 `PollingFailedError` 和 `PollingUnknownStateError` 属于 `AssertionError` 分支；`PollingTimeoutError` 属于 `TimeoutError`。
 
 已取得 Response 的请求日志不代表 HTTP 2xx 或业务 Polling 成功；failure/unknown 是状态机结论。
+
+### 13.1 日志附件当前不是 fail-open 保证（选读）
+
+Polling 的多个出口会同步执行附件调用：
+
+```text
+请求或 Retry 异常
+-> logger.attach_failure(error)
+-> 回调正常：原请求异常继续抛出
+-> 回调异常：附件异常向外传播，可能覆盖原请求异常
+
+Response JSON 或状态解析异常
+-> logger.attach_success(response)
+-> 回调正常：原解析异常继续抛出
+-> 回调异常：附件异常向外传播，可能覆盖解析异常
+
+SUCCESS / FAILURE / UNKNOWN / TIMEOUT
+-> attach_polling_transitions(...)
+-> logger.attach_success(response)
+-> 回调正常：执行原定返回或 Polling 异常出口
+-> 回调异常：阻止 Response 返回，或覆盖原定 Polling 异常
+```
+
+这些调用当前没有统一 `try/except` 隔离。因此“日志只观察、不改变业务出口”是设计目标，不是当前机械保证；正文和总图中的终态出口都以附件回调未抛异常为前提。
 
 ---
 
@@ -535,7 +583,7 @@ if ($pytestExitCode -ne 0) {
 - Polling GET 内 Retry；
 - Retry backoff 被总 deadline 阻止。
 
-现有测试没有构造 error 与 result 同时存在的 Response，因此不直接证明二者之间的优先级；`error -> result -> status` 的完整顺序来自当前源码。测试也不证明真实异步服务、媒体结果或外部任务一定成功。
+现有测试没有构造 error 与 result 同时存在的 Response，因此不直接证明二者之间的优先级；`error -> result -> status` 的完整顺序来自当前源码。测试也不证明真实异步服务、媒体结果或外部任务一定成功，也不证明日志附件阶段具备 fail-open 保证。
 
 ---
 
@@ -552,6 +600,8 @@ if ($pytestExitCode -ne 0) {
 | `{"status":"running","error":"x"}` | FAILURE | PollingFailedError |
 
 如果设置 `unknown="pending"`，paused 改为 PENDING。
+
+HTTP 状态码不改变上表的 Evaluation：例如 HTTP 503 搭配 `{"status":"succeeded"}` 仍分类为 SUCCESS；调用方之后仍应单独判断该 503 是否符合 HTTP 合同。
 
 ---
 
@@ -583,6 +633,8 @@ GET 3 succeeded -> return
 
 ## 17. 第九版累积链路总图
 
+本图展开 Polling 核心状态机，并折叠第 13.1 节的日志附件副作用。图中的返回或异常出口均以附件回调未抛异常为前提。
+
 ```mermaid
 flowchart TD
     CALL["Task / Request Client<br/>调用 poll_get"]
@@ -591,14 +643,15 @@ flowchart TD
     LOOP["Polling query attempt +1"]
     GET["GET 查询<br/>内部可选 Retry"]
     RDEAD["Retry 共享同一 deadline<br/>max_elapsed 仍是单个 GET 局部门禁"]
-    EVAL["evaluate_polling_response"]
+    EVAL["evaluate_polling_response<br/>只读取 JSON / JSONPath<br/>不使用 status_code"]
+    HSTATUS["response.status_code<br/>仅作为 Transition 证据"]
     ERROR{"error path 有值?"}
     RESULT{"result path 有值?"}
     STATUS{"status 属于哪个集合?"}
     TRANS["记录 PollingTransition"]
     TIME{"remaining <= 0?"}
     STATE{"PollingState"}
-    SUCCESS["返回最终 Response"]
+    SUCCESS["返回最终 Response<br/>HTTP 可能为非 2xx"]
     FAILURE["未超时 FAILURE<br/>PollingFailedError"]
     UNKNOWN["未超时 UNKNOWN<br/>PollingUnknownStateError"]
     TIMEOUT["PollingTimeoutError"]
@@ -609,6 +662,7 @@ flowchart TD
     GET -. "Retry attempts / backoff" .-> RDEAD
     RDEAD --> EVAL
     GET -->|"无 Retry 或最终 Response"| EVAL
+    GET -. "最终 Response 的 HTTP 状态" .-> HSTATUS
     GET -. "Retry deadline 耗尽" .-> TIMEOUT
     GET -. "Retry 次数或 max_elapsed 异常路径耗尽<br/>Middleware / transport 异常" .-> RAWERR
     EVAL --> ERROR
@@ -617,6 +671,7 @@ flowchart TD
     ERROR -->|"否"| RESULT
     RESULT -->|"是"| TRANS
     RESULT -->|"否"| STATUS --> TRANS
+    HSTATUS -. "不参与状态分类" .-> TRANS
     TRANS --> TIME
     TIME -->|"是"| TIMEOUT
     TIME -->|"否"| STATE
@@ -655,7 +710,7 @@ pending 是继续等待的合法状态。
 
 ### 误区二：HTTP 200 就是 Polling success
 
-200 body 仍可能是 running、failed 或 unknown。
+200 body 仍可能是 running、failed 或 unknown。反过来，非 2xx 也不会自动阻止 evaluator 读取 JSON；503 body 为 succeeded 时，当前实现仍会分类为 SUCCESS。
 
 ### 误区三：Polling 就是 Retry
 
@@ -696,13 +751,13 @@ PollingTimeoutError 保留 last status、Response 和 transitions。
 ```text
 Polling 与 Retry 是两个循环。Retry 重复同一 HTTP 请求以应对瞬时传输失败；Polling 在每次 GET 正常得到业务状态后，决定继续查询还是结束。每个 Polling GET 内部可以使用 Retry，但二者共享 poll_timeout 形成的唯一 deadline。
 
-PollingPolicy 定义 status JSONPath、pending/success/failure 集合、可选 result/error path 和 unknown 策略。evaluate 先检查 error，再检查 result，再按 status 集合分类，最后处理 unknown。pending 继续，success 返回，failure 和 unknown 抛明确异常。
+PollingPolicy 定义 status JSONPath、pending/success/failure 集合、可选 result/error path 和 unknown 策略。evaluate 先检查 error，再检查 result，再按 status 集合分类，最后处理 unknown。它不使用 HTTP status_code；HTTP 状态只进入 transition 证据，因此 200 不等于业务成功，非 2xx 也不自动阻止状态分类。pending 继续，success 返回，failure 和 unknown 抛明确异常。
 
 poll_get 每轮 GET 后解析状态、记录 transition，然后先检查 deadline，再处理终态。迟到的 succeeded 仍然 timeout。只有 pending 才 sleep，等待是 poll_interval 与 remaining 的较小值。
 
 HTTP transport、Retry attempts、Retry backoff 和 poll sleep 都消费同一 deadline。HTTP timeout 参数会缩小到剩余预算，但不是硬中断器，所以 Response 返回后仍要复查 deadline。RetryPolicy.max_elapsed 只是单个 GET 内部的局部门禁。
 
-poll_get 只把 RetryDeadlineExceeded 转换为 PollingTimeoutError。Retry 耗尽后的原始 Timeout/ConnectionError 与 Middleware 异常继续抛出；解析路径保留 evaluator 自身的异常语义，不会统一包装。业务状态失败与 HTTP 传输失败仍是不同出口。
+在日志附件未抛异常的前提下，poll_get 只把 RetryDeadlineExceeded 转换为 PollingTimeoutError。Retry 耗尽后的原始 Timeout/ConnectionError 与 Middleware 异常继续抛出；解析路径保留 evaluator 自身的异常语义，不会统一包装。业务状态失败与 HTTP 传输失败仍是不同出口。
 ```
 
 ---
@@ -717,6 +772,7 @@ poll_get 只把 RetryDeadlineExceeded 转换为 PollingTimeoutError。Retry 耗�
 6. failure 状态抛什么？A PollingFailedError / B Timeout（A）
 7. poll sleep 怎样计算？A interval / B min(interval, remaining)（B）
 8. transition attempt 是什么？A 状态查询轮数 / B HTTP Retry 次数（A）
+9. HTTP 503 且 body 为 succeeded，当前 evaluator 怎样分类？A SUCCESS / B FAILURE（A）
 
 ---
 
@@ -724,7 +780,7 @@ poll_get 只把 RetryDeadlineExceeded 转换为 PollingTimeoutError。Retry 耗�
 
 ### 21.1 必做内容
 
-1. 更新第九版图，包含优先级、四状态、deadline 和 Retry 嵌套。
+1. 更新第九版图，包含 HTTP/业务状态边界、优先级、四状态、deadline 和 Retry 嵌套。
 2. 完成 4 组状态序列预测，写出 transitions、sleeps 和出口。
 3. 完成一次三分钟复述。
 
@@ -754,6 +810,7 @@ poll_get 只把 RetryDeadlineExceeded 转换为 PollingTimeoutError。Retry 耗�
 10. success/failure/unknown/timeout 各是什么出口？
 11. 迟到 success 为什么不能通过？
 12. Polling 与 Retry attempt_index 为什么不能混用？
+13. 为什么 HTTP 200 不等于 Polling success，而 HTTP 503 也不自动等于 Polling failure？
 
 合格复述必须包含：
 
@@ -763,6 +820,7 @@ poll_get 只把 RetryDeadlineExceeded 转换为 PollingTimeoutError。Retry 耗�
 - deadline 先于终态；
 - pending sleep；
 - 四个明确出口；
+- HTTP 状态与业务 PollingState 分离；
 - Retry 嵌套但不等同 Polling。
 
 ---

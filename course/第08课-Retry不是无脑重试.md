@@ -60,21 +60,21 @@
 -> 第 20、22 节：更新总图并完成复述
 ```
 
-第 6.2、9.5、14、16、19、21、23 节可作为教师备课和课后自检。
+第 6.2、9.5、14.3、16、19、21、23 节可作为教师备课和课后自检。
 
 ---
 
 ## 2. 承接第七课：普通请求为什么保留真实失败
 
-第 7 课答辩 Case 没有传 `retry_policy`：
+第 7 课答辩测试项没有传 `retry_policy`：
 
 ```text
 BaseRequest.request
--> _build_request_context
--> _send_single_group
--> _send
--> Middleware
--> Session.request
+├─ 调用 _build_request_context 并接收 context
+└─ 调用 _send_single_group(context)
+   -> _send(context)
+   -> Middleware
+   -> Session.request
 ```
 
 如果 Session 抛连接异常，当前普通路径会：
@@ -339,6 +339,14 @@ headers={"Idempotency-Key": "request-001"}
 
 Header 名比较不区分大小写。存在幂等 Header 后，POST 才进入多 attempt 资格。
 
+这里的“存在”只是框架机械门禁：`is_method_retry_allowed()` 只检查 Header 名，不检查值是否非空、唯一或稳定。因此下面的请求也会通过方法门禁：
+
+```python
+headers={"Idempotency-Key": ""}
+```
+
+Header 名存在只代表通过框架机械门禁，不代表幂等键有效，更不证明服务端幂等。`RetryPolicy` 对 `idempotency_header` 的非空校验约束的是“要查找的 Header 名”，不是请求中实际 Header 值。
+
 ### 7.4 `allow_post=True`
 
 这是调用方显式承担重复发送风险的开关，不是“POST 自动安全”的证明。
@@ -508,6 +516,8 @@ retry_records
 
 ## 11. Response 路径的真实出口
 
+本节与下一节先描述 Retry 结果路径；其中“返回 Response”或“重抛原异常”都以 `attach_records()` 回调未抛异常为前提。附件失败边界在第 14.3 节单独展开。
+
 ### 11.1 非重试状态
 
 ```text
@@ -671,7 +681,38 @@ BaseRequest 把 records 交给当前 attempt 的 logger 附件逻辑。日志可
 - 状态码或异常类型；
 - 当前 attempt 与最大次数。
 
-日志证据不改变 Response 或原异常出口。
+只有附件回调未抛异常时，日志证据才不会改变 Response 或原异常出口。
+
+### 14.3 当前附件回调不是 fail-open 保证（选读）
+
+进入具备方法资格的 attempt 循环后，`RetryExecutor.execute()` 会在多个控制点同步调用 `attach_records()`。但 BaseRequest 的 `_attach_retry_records()` 会先判断 records：
+
+```text
+records 为空
+-> 直接返回
+-> 不取得 logger，也不调用 logger.attach_retry_records
+
+records 非空
+-> 取得当前 attempt 的 logger
+-> 调用 logger.attach_retry_records(records)
+```
+
+因此 `max_attempts=1`、第一次即得到不可重试结果等没有产生 RetryAttemptRecord 的场景，不会真正进入 logger 附件逻辑。只有 records 非空并调用 logger 时，才存在以下附件失败边界：
+
+```text
+最终或不可重试结果
+-> attach_records(context, records)
+-> 回调正常：返回 Response 或重抛原异常
+-> 回调异常：附件异常向外传播，原出口不再成立
+
+准备下一次 retry
+-> 追加 RetryAttemptRecord
+-> attach_records(context, records)
+-> 回调正常：继续预算判断、sleep 和下一 attempt
+-> 回调异常：中断 Executor，后续 retry 不再执行
+```
+
+BaseRequest 当前传入的 `_attach_retry_records()` 会直接调用 logger 的附件方法，没有统一 `try/except` 隔离。因此“观测不影响业务”是设计目标，不是当前机械保证；附件异常可能阻止 Response 返回、覆盖原请求异常，或阻断后续重试。
 
 ---
 
@@ -814,6 +855,7 @@ if ($pytestExitCode -ne 0) {
 - 这两组测试没有覆盖 fixed backoff 分支，也没有覆盖全部 Policy 字段校验；
 - 服务端幂等实现正确；
 - 真实 POST 重试不会重复扣费；
+- Retry 附件回调失败不会影响控制流；当前实现没有这一 fail-open 保证；
 - Polling 总 deadline 正确；
 - Metrics 重试挽救率已生成。
 
@@ -944,7 +986,7 @@ max_attempts=1
 
 ## 20. 第八版累积链路总图
 
-本图保留第一周主链，只展开 `BaseRequest.request()` 的 Retry 分支。Polling、SSE 和 Quality 继续使用虚线接口。
+本图保留第一周主链，只展开 `BaseRequest.request()` 的 Retry 核心分支。Retry 记录的附件观察与失败边界折叠到第 14.3 节，不进入本课主图；Polling、SSE 和 Quality 继续使用虚线接口。
 
 ```mermaid
 flowchart TD
@@ -978,7 +1020,7 @@ flowchart TD
     ERET["重抛原 Exception"]
     DERR["RetryDeadlineExceeded<br/>仅外层 deadline 分支"]
     TESTNEXT["Response 返回 Test<br/>再做业务断言"]
-    TFAIL["异常返回调用方"]
+    TFAIL["异常沿调用栈抛出"]
 
     TEST --> REQ --> HAS
     HAS -->|"否"| SINGLE --> SKIND
@@ -1027,7 +1069,7 @@ flowchart TD
 ### 20.1 图中三类“否”不能合并
 
 - 方法不允许：执行一次，不进入循环；
-- 结果不可重试：立即返回 Response 或抛原异常；
+- 结果不可重试：主图直接表达返回 Response 或抛原异常，附件观察边界已折叠；
 - 预算不允许：根据 Response/Exception/max_elapsed/deadline 走不同出口。
 
 ### 20.2 当前图没有表达业务成功
@@ -1085,6 +1127,10 @@ Timeout 不代表服务端没执行；必须先有幂等依据。
 ### 误区十二：Retry 成功就表示测试通过
 
 Retry 只返回最终 Response；业务合同仍由 Assertions 判断。
+
+### 误区十三：Retry 记录附件是纯旁路，失败也不会改变出口
+
+当前附件回调在 Executor 中同步执行，且 BaseRequest 没有统一异常隔离。附件失败可能阻断下一次 retry、阻止 Response 返回或覆盖原请求异常。
 
 ---
 
