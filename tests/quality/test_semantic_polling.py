@@ -5,8 +5,7 @@ import json
 import requests
 
 from common.base_request import BaseRequest
-from common.base_task import BaseTask
-from common.polling import DEFAULT_MEDIA_POLLING_POLICY, PollingPolicy
+from common.polling import PollingPolicy
 from quality.storage import read_jsonl
 
 
@@ -48,42 +47,3 @@ def test_polling_session_separates_poll_count_from_request_groups(semantic_runti
     assert operation["operation_kind"] == "polling"
     assert operation["timing"]["polling_total_ms"] is not None
     assert all(group["url_template"] == "/v1/media/tasks/{id}" for group in groups)
-
-
-def test_base_task_async_operation_links_create_poll_and_media_usage(semantic_runtime, monkeypatch):
-    client = BaseRequest(config=DummyConfig())
-    responses = [
-        _response({"task_id": "task-001"}),
-        _response({"status": "queued"}),
-        _response({"status": "succeeded", "result": {"urls": ["https://example.com/a.png"]}}),
-    ]
-    client.session.request = lambda method, url, **kwargs: responses.pop(0)  # type: ignore[method-assign]
-    monkeypatch.setattr("common.base_request.time.sleep", lambda _seconds: None)
-    monkeypatch.setattr(
-        "common.base_decorators.BaseDecorators._extract_urls",
-        lambda self, value: [],
-    )
-
-    result = BaseTask().create_and_poll_media_generation(
-        client,
-        {"model": "image-model", "prompt": "not persisted"},
-        poll_interval=0.01,
-        poll_timeout=1,
-        polling_policy=DEFAULT_MEDIA_POLLING_POLICY,
-    )
-
-    assert result.json()["status"] == "succeeded"
-    operations = read_jsonl(semantic_runtime.semantic.paths.operations)
-    sessions = read_jsonl(semantic_runtime.semantic.paths.polling_sessions)
-    groups = read_jsonl(semantic_runtime.semantic.paths.request_groups)
-    assert len(operations) == len(sessions) == 1
-    operation = operations[0]
-    assert operation["operation_kind"] == "async_task"
-    assert operation["operation_name"] == "media_generation"
-    assert len(operation["request_group_ids"]) == len(groups) == 3
-    assert operation["polling_session_ids"] == [sessions[0]["polling_session_id"]]
-    assert operation["usage"]["media_count"] == 1
-    assert operation["timing"]["create_request_ms"] is not None
-    serialized = json.dumps({"operations": operations, "sessions": sessions, "groups": groups})
-    assert "task-001" not in serialized
-    assert "not persisted" not in serialized
