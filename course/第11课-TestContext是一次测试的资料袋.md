@@ -17,11 +17,10 @@
 ### 1.1 学完本课，你应该能够
 
 1. 解释 TestContext 为什么是可选的用例级容器，而不是 Request 管线节点。
-2. 使用 `set/get/require/extract` 描述动态值的保存、提取和读取。
-3. 区分“未匹配、默认值、转换值”和实际已保存变量的当前语义。
-4. 解释 cleanup 为什么按 LIFO 执行，以及多个 cleanup 失败怎样继续执行后汇总。
-5. 区分显式 TestContext 对象与 ContextVar 快照，并说明线程池为什么使用 `submit_with_context()`。
-6. 判断一次 Response 提取是否会读取 body，并说明未消费 SSE 的所有权边界。
+2. 使用 `set/get/require/extract` 描述动态值的保存、提取和读取，并区分未匹配、默认值、转换值与实际已保存变量。
+3. 解释 cleanup 为什么按 LIFO 执行，以及多个 cleanup 失败怎样继续执行后汇总。
+4. 区分显式 TestContext 对象与 ContextVar 快照，并说明线程池为什么使用 `submit_with_context()`。
+5. 判断一次 Response 提取是否会读取 body，并说明未消费 SSE 的所有权边界。
 
 ### 1.2 本课刻意不展开
 
@@ -417,7 +416,8 @@ TestContext -> BaseRequest -> HTTP
 -> 提取必填 Header 但未匹配
 -> 构造错误摘要并读取 response.text
 -> 整体消费或阻塞流，也可能抛传输异常
--> Response._content_consumed: False -> True
+-> 若完整读取成功，Response._content_consumed: False -> True
+-> 若读取阻塞或抛传输异常，不保证该状态已经转换
 -> Task 尚未接管原始流，流所有权被诊断路径改变
 ```
 
@@ -427,7 +427,7 @@ TestContext -> BaseRequest -> HTTP
 - 先由 Task 消费并关闭流，再从 Task 已收集的 chunks 或领域结果中提取变量；
 - 不对未消费 SSE 直接使用 JSONPath、基于 Response 的 Regex，或会生成完整 Response 错误摘要的必填提取路径。
 
-本课 34 条离线测试都使用已在内存中构造、可直接缓冲的 Response，没有证明 TestContext 对未消费流式 Response 安全。
+本课 34 条离线测试中，涉及 Response 提取的测试均使用内存构造的完整、可直接缓冲 Response；其余测试覆盖变量、cleanup、fixture 与 ContextVar。它们没有证明 TestContext 对未消费流式 Response 安全。
 
 ---
 
@@ -1103,7 +1103,7 @@ errors 中包含原 RuntimeError
 
 当前工作树中的业务 Test 尚未声明 `test_context` fixture，也没有使用 `extract/require` 组成完整变量链；因此图中的 fixture 与变量提取部分仍是由框架源码和单元测试支撑的推荐模式。
 
-但当前工作树并非“没有业务 TestContext 调用链”。未跟踪文件 `module/material_library/test_seedance_2_5_virtual_asset_library.py` 已存在真实清理链：`setup_method()` 手动创建 TestContext 与 MaterialLibraryRequest，资源创建后把同一个 Request Client 作为 cleanup callback 参数登记；pytest 进入 `teardown_method()` 后先尝试 `cleanup()`，再由 `finally` 关闭 Request Client。该文件会访问真实素材库和模型接口，本课只做静态阅读，绝不加入课堂执行命令。
+当前业务代码已经存在 TestContext 清理链：`module/material_library/test_seedance_2_5_virtual_asset_library.py` 的 `setup_method()` 手动创建 TestContext 与 MaterialLibraryRequest，资源创建后把同一个 Request Client 作为 cleanup callback 参数登记；pytest 进入 `teardown_method()` 后先尝试 `cleanup()`，再由 `finally` 关闭 Request Client。该文件会访问真实素材库和模型接口，本课只做静态阅读，绝不加入课堂执行命令。
 
 ```mermaid
 flowchart TD
@@ -1130,15 +1130,16 @@ flowchart TD
     FIXTURE_CALL_END["Test call 阶段结束<br/>正常返回或抛异常"]
     FIXTURE_TEARDOWN["pytest 恢复 fixture<br/>进入 finally"]
 
-    MANUAL_MODE["当前手动模式<br/>未跟踪业务文件"]
+    MANUAL_MODE["当前手动模式<br/>业务文件"]
     MANUAL_SETUP["setup_method<br/>创建 Request 与 TestContext"]
     MANUAL_REQUEST["MaterialLibraryRequest<br/>self.request"]
     MANUAL_TEST["业务 Test<br/>使用局部变量，不调用 extract / require"]
     MANUAL_REGISTER["self.test_context.add_cleanup<br/>callback 参数包含 self.request"]
     MANUAL_CALL_END["Test call 阶段结束<br/>正常返回或抛异常"]
     MANUAL_TEARDOWN["pytest 调用 teardown_method"]
-    MANUAL_CLEANUP["try: self.test_context.cleanup()<br/>业务资源清理"]
     CLIENT_CLOSE["finally: self.request.close()<br/>HTTP Client 关闭"]
+    FIXTURE_CLEANUP_EXIT["fixture teardown<br/>正常结束或报告 cleanup 异常"]
+    MANUAL_CLEANUP_EXIT["手动 teardown<br/>close 后结束或继续抛 cleanup 异常"]
 
     NO_CONTEXT["不使用 TestContext"]
     ORDINARY["普通 Test<br/>调用 Task / Request，随后 Assertions"]
@@ -1150,6 +1151,8 @@ flowchart TD
     AGG{"callback 是否失败?"}
     CLEAN_OK["cleanup 完成"]
     CLEAN_ERROR["ContextCleanupError<br/>汇总 cleanup 异常"]
+    OK_OWNER{"正常 cleanup 的调用者?"}
+    ERROR_OWNER{"异常 cleanup 的调用者?"}
 
     PYTEST -->|"根据测试代码与 fixture 声明判断"| USE
     USE -->|"是：声明 fixture"| FIXTURE_MODE
@@ -1191,10 +1194,8 @@ flowchart TD
     MANUAL_REGISTER -->|"压入 callback"| STACK
     MANUAL_TEST -->|"正常返回或抛异常"| MANUAL_CALL_END
     MANUAL_CALL_END -->|"pytest 进入 teardown"| MANUAL_TEARDOWN
-    MANUAL_TEARDOWN -->|"进入 try"| MANUAL_CLEANUP
-    MANUAL_CLEANUP -->|"正常返回或抛异常后进入 finally"| CLIENT_CLOSE
+    MANUAL_TEARDOWN -->|"try：调用 self.test_context.cleanup()"| CLEANUP
     MANUAL_REQUEST -->|"关闭同一 Client 实例"| CLIENT_CLOSE
-    MANUAL_CLEANUP -. "内部执行下方同一 LIFO cleanup 算法" .-> CLEANUP
 
     NO_CONTEXT -->|"运行原有测试链"| ORDINARY
 
@@ -1206,6 +1207,13 @@ flowchart TD
     AGG -->|"是：记录原异常并继续"| HAS_CALLBACK
     HAS_CALLBACK -->|"否且无已记录错误"| CLEAN_OK
     HAS_CALLBACK -->|"否且有已记录错误"| CLEAN_ERROR
+    CLEAN_OK -->|"按原调用链返回"| OK_OWNER
+    OK_OWNER -->|"fixture"| FIXTURE_CLEANUP_EXIT
+    OK_OWNER -->|"手动 teardown：进入 finally"| CLIENT_CLOSE
+    CLEAN_ERROR -->|"按原调用链抛出"| ERROR_OWNER
+    ERROR_OWNER -->|"fixture：报告 ContextCleanupError"| FIXTURE_CLEANUP_EXIT
+    ERROR_OWNER -->|"手动 teardown：异常待传播，先进入 finally"| CLIENT_CLOSE
+    CLIENT_CLOSE -->|"close 完成"| MANUAL_CLEANUP_EXIT
 
     PARENT["提交线程<br/>当前 ContextVar 值"]
     COPY["submit_with_context<br/>copy_context 快照"]
@@ -1226,11 +1234,11 @@ flowchart TD
 
 - 实线表示分支一旦被选择后真实发生的调用、对象传递、状态读写或 pytest 生命周期控制；每条边都标明关系类型。
 - Test 正常返回或抛异常后，pytest 进入对应 teardown 是实线生命周期边，不是可选旁路。
-- 虚线只用于算法复用说明、“不会自动复制”的概念边界和下一课接口，不表示真实失败或teardown路径可选。
+- 虚线只用于“不会自动复制”的概念边界和下一课接口，不表示真实失败或 teardown 路径可选。
 
 ### 19.2 当前业务清理链
 
-当前未跟踪业务文件的静态关系是：
+当前业务文件的静态关系是：
 
 ```text
 setup_method --创建并保存--> self.test_context
