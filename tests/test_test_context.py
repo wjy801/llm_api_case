@@ -139,6 +139,22 @@ def test_extract_invalid_json_reports_redacted_body():
     assert "invalid-secret" not in message
 
 
+def test_extract_malformed_json_fails_closed_without_leaking_quoted_sensitive_value():
+    context = TestContext()
+    response = make_response(
+        '{"api_key":"lesson-secret"',
+        content_type="application/json",
+    )
+
+    with pytest.raises(ContextExtractionError) as exc_info:
+        context.extract("task_id", response, json_path="$.task_id")
+
+    message = str(exc_info.value)
+    assert "Response body is not valid JSON" in message
+    assert "<redacted>" in message
+    assert "lesson-secret" not in message
+
+
 def test_extract_header_is_case_insensitive_and_strips_value():
     context = TestContext()
     response = make_response({}, headers={"X-OneAPI-Request-ID": " request-001 "})

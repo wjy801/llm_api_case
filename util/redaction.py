@@ -125,7 +125,9 @@ def redact_text_body(body: str, content_type: str = "") -> str:
         try:
             parsed_body = json.loads(body)
         except ValueError:
-            return body
+            # Malformed JSON cannot be redacted safely by key. Fail closed instead of
+            # returning the original body, which may contain quoted sensitive fields.
+            return REDACTED_VALUE
         return json.dumps(redact_sensitive_data(parsed_body), ensure_ascii=False)
 
     redacted_form_body = _redact_urlencoded_text(body)
