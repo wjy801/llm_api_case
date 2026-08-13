@@ -717,7 +717,7 @@ tests/test_run_orchestration_public_contract.py
 这些测试使用临时测试文件、内存 `CollectionResult`、monkeypatch 和 AST 检查；不会调用真实模型、账单或业务接口。但“无外部网络”不自动等于“不会覆盖本地运行产物”，因此还必须隔离内外两层 pytest：
 
 - `tests/conftest.py` 的 autouse fixture 把嵌套 `run_master.run()` 的默认 Allure raw 和 `execution-result.json` 重定向到当前测试的 `tmp_path`；
-- 同一 fixture 显式把嵌套 Runner 的报告与历史报告开关设为关闭，不依赖 `.env.example` 的默认值或配置导入顺序；
+- `tests/conftest.py` 在测试模块导入前把进程级报告与历史报告开关设为关闭；外层命令也显式设置相同开关，避免 `.env.example` 的默认报告配置生效；
 - 外层课堂命令再使用独立的 `--basetemp` 和 `--alluredir`，不能指望外层 `--alluredir` 自动传给嵌套 Runner。
 
 ### 13.2 安全命令
