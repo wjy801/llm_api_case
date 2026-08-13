@@ -465,10 +465,11 @@ Test -> Task ->（领域 Request 方法或 Request Client）-> BaseRequest
 
 - `common/test_context.py`
 - `common/context_executor.py`
+- `module/conftest.py`
 - `tests/test_test_context.py`
 - `tests/quality/test_quality_context_executor.py`
 
-**课堂实践**：构造三个 cleanup，预测实际执行顺序。
+**课堂实践**：构造一组包含三个 callback 的 cleanup 场景，预测实际执行顺序、失败汇总和第二次 cleanup 结果。
 
 **课后产出**：画出 TestContext 包围多步骤业务流程的生命周期图：
 
@@ -476,6 +477,7 @@ Test -> Task ->（领域 Request 方法或 Request Client）-> BaseRequest
 步骤一 Response -> 提取变量到 TestContext
 TestContext -> 为后续 Task / Request 提供变量
 测试结束 -> 按 LIFO 执行 cleanup
+手动 teardown -> 先清理业务资源 -> finally 关闭 Request Client
 ```
 
 ### 第 12 课：BaseTask 兼容门面与窄 Capability

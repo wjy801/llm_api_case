@@ -374,15 +374,58 @@ def on_exception(self, context, error):
 -> 成功路径避免日志阶段提前消费流
 ```
 
+它只控制 Middleware 附件，不控制后续 Test 或 Task 怎样读取、打印流内容。真实 Test 随后仍会调用普通状态断言；真实 SmokeTask 也仍可能把原始行输出到 stdout。
+
 它不表示：
 
 - 不创建 RequestContext；
 - 不执行所有 Middleware；
 - 不记录任何请求事实；
+- 不向 stdout 输出流内容；
 - 不需要上层关闭 Response；
 - 不需要 Test 检查状态码。
 
-流式日志应记录状态码、headers、终态和必要的脱敏片段，不能为了“完整日志”吞掉整条流。
+### 7.1 普通状态断言仍可能提前消费流
+
+真实 Test 在 Task 接管流之前调用：
+
+```python
+self.smoke_assertions.assert_status_code(response, 200)
+```
+
+公共 `assert_status_code()` 在状态不符时，会把 `response.text` 写入失败消息。对于尚未消费的 `stream=True` Response，这不是只读 headers：
+
+```text
+stream=True Response
+-> status_code != 200
+-> 构造断言消息时读取 response.text
+-> 同步消费完整流，可能阻塞或抛传输异常
+-> Task 不再拥有原始未消费流
+-> 同时尚未进入 Task 的关闭 finally
+```
+
+最小内存验证中，`Response._content_consumed` 会从 `False` 变为 `True`。因此流式状态检查不能机械复用会读取完整 `response.text` 的普通响应断言；错误预览应由拥有 Response 生命周期的边界限长、脱敏读取，并在同一个 `try/finally` 中保证关闭。
+
+### 7.2 `_attach_log=False` 不会关闭 SmokeTask 的 stdout 输出
+
+`collect_stream_chat_completion_chunks()` 对每个非空行无条件调用：
+
+```python
+self.print_stream_raw_line(line)
+```
+
+`print_stream_raw_line()` 直接打印完整原始行，只在控制台编码失败时转义字符，没有敏感信息脱敏或长度限制。主动停止方法虽然提供 `print_raw_lines` 开关，但默认值仍是 `True`。
+
+准确边界是：
+
+```text
+_attach_log=False
+-> 关闭 LoggingMiddleware 的成功/异常附件
+-> SmokeTask 仍可能打印完整 SSE chunk
+-> 内容可能进入 pytest 捕获输出或控制台
+```
+
+因此“状态码、headers、终态和必要的限长脱敏片段”是流式日志的目标设计，不是当前 SmokeTask 已完全满足的保证。当前实现仍存在原始业务内容进入 stdout 的缺口。
 
 ---
 
@@ -573,10 +616,10 @@ finally:
 
 当前源码尚不能宣称“全链路所有出口均关闭 Response”：
 
-1. 真实 Test 在调用 `collect_stream_chat_completion_chunks()` 前断言状态码；状态断言失败时尚未进入收集函数的 `try/finally`。
+1. 真实 Test 在调用 `collect_stream_chat_completion_chunks()` 前断言状态码；非 2xx 时，公共断言为构造失败消息读取完整 `response.text`，会提前消费流并可能阻塞或抛传输异常，但此时仍未进入收集函数的 `try/finally`。
 2. `interrupt_stream_chat_completion()` 在进入 `try/finally` 前调用 `get_request_id_from_response()`；缺少 request-id header 时先抛 AssertionError，同样不会执行该方法的 `finally`。
 
-本课把它们标为当前实现缺口，而不是把期望规范写成既有保证。若要宣称全出口关闭，需要先调整源码并补充对应测试。
+本课把它们标为当前实现缺口，而不是把期望规范写成既有保证。第一处还意味着 Task 尚未接管 Response，而 Response 在断言失败点已经被提前消费。若要宣称全出口关闭，需要让资源所有者在同一个 `try/finally` 中执行适合流的状态检查、限长脱敏错误预览与关闭，并补充对应测试。
 
 ---
 
@@ -636,7 +679,9 @@ finally:
 self.smoke_assertions.assert_status_code(response, 200)
 ```
 
-若状态断言在消费函数外失败，Task 的 `finally` 尚未进入。当前用例的 teardown 会关闭 Session，但这不能证明当前 Response 已在失败点被及时显式关闭，也不是推荐的通用资源模板。新流式场景宜让状态检查与消费处于同一个拥有 close 的边界。
+若状态断言在消费函数外失败，公共断言会先读取完整 `response.text` 形成错误消息。该读取会同步消费流，可能阻塞或抛出传输异常；Task 因而失去原始未消费流，同时它的 `finally` 尚未进入。当前用例的 teardown 会关闭 Session，但这不能证明当前 Response 已在失败点被及时显式关闭，也不是推荐的通用资源模板。
+
+新流式场景应让状态检查与消费处于同一个拥有 close 的边界。非 2xx 错误预览应限长并脱敏，不能直接照搬读取完整 `response.text` 的普通响应断言。
 
 ### 13.3 数据合同错误
 
@@ -873,38 +918,67 @@ if ($pytestExitCode -ne 0) {
 
 ## 18. 第十版累积链路总图
 
-本图展开真实 Smoke SSE 切片。普通 HTTP、Retry 和 Polling 保持前课结论但折叠展示；Runtime Hooks 仅保留后续接口。
+本图展开真实 Smoke SSE 切片。普通 HTTP、Retry 和 Polling 保持前课结论但折叠展示；Runtime Hooks 仅保留后续接口。图中同时保留当前两个实现缺口：普通状态断言可能提前消费流，SmokeTask 会把完整原始行输出到 stdout。
 
 ```mermaid
 flowchart TD
     TEST["Test<br/>选择小流式场景与最终字段预期"]
     TASK_CREATE["SmokeTask.create_small_stream_chat_completion<br/>构造 payload 并发起场景"]
-    REQUEST["SmokeRequest.create_stream_chat_completion<br/>Accept、stream=True、_attach_log=False"]
+    REQUEST["SmokeRequest.create_stream_chat_completion<br/>Accept、stream=True、_attach_log=False<br/>仅关闭 Middleware 附件"]
     BASE["BaseRequest.post / request<br/>统一请求入口"]
     SEND["requests.Session.request<br/>取得 headers 与流式 Response"]
     RESPONSE["Response<br/>body 尚待持续消费"]
-    STATUS{"Test 期望 HTTP 200?"}
+    STATUS_CHECK["Test 调用 assert_status_code(response, 200)"]
+    STATUS{"status_code == 200?"}
+    STREAM_CONSUME["失败消息读取 response.text<br/>同步消费完整流<br/>可能阻塞或抛传输异常"]
     COLLECT["SmokeTask.collect_stream_chat_completion_chunks<br/>拥有消费流程与关闭责任"]
     ITER["iter_sse_lines<br/>逐行读取、解码、观察"]
     LINE["非空文本行"]
+    RAWPRINT["SmokeTask.print_stream_raw_line<br/>完整原始行输出到 stdout<br/>无脱敏与长度限制"]
+    STDOUT["pytest 捕获输出 / 控制台<br/>可能包含真实业务内容"]
     DATA{"以 data: 开头?"}
     DONE{"data 内容是 [DONE]?"}
-    JSON["json.loads<br/>追加 JSON chunk"]
-    CLOSE["消费函数 finally: Response.close"]
-    ASSERT["Test<br/>断言字段、首块角色、末块 usage"]
-    CONTRACT_ERROR["AssertionError<br/>数据合同失败"]
+    JSON["json.loads(data)"]
+    CLOSE_NORMAL["finally: Response.close<br/>正常结束或自然耗尽"]
+    CLOSE_CONTRACT["finally: Response.close<br/>消费中合同错误"]
+    CLOSE_TRANSPORT["finally: Response.close<br/>传输读取异常"]
+    POSTCHECK["Task 关闭后检查<br/>至少一个 data line<br/>末行精确 data: [DONE]<br/>至少一个 JSON chunk"]
+    TASK_RESULT["StreamChatCompletionChunks<br/>raw_data_lines + chunks"]
+    ASSERT["Test<br/>断言字段、首块角色、末块 usage<br/>并再次检查末行 [DONE]"]
+    CONTRACT_ERROR["消费中 AssertionError<br/>data 前缀或 JSON 合同失败"]
+    CONTRACT_EXIT["原 AssertionError 沿调用栈抛出"]
+    POST_ERROR["关闭后的 Task 后置合同失败<br/>AssertionError"]
     TRANSPORT_ERROR["原始传输异常<br/>如 ChunkedEncodingError"]
-    HTTP_ERROR["状态码断言失败<br/>调用方仍需保证关闭"]
+    TRANSPORT_EXIT["原传输异常沿调用栈抛出"]
+    HTTP_ERROR["状态检查失败或读取异常<br/>Task 未接管原始流<br/>尚未进入局部 finally"]
 
-    TEST --> TASK_CREATE --> REQUEST --> BASE --> SEND --> RESPONSE --> STATUS
-    STATUS -->|"是"| COLLECT --> ITER --> LINE --> DATA
-    STATUS -->|"否"| HTTP_ERROR
-    DATA -->|"否"| CONTRACT_ERROR --> CLOSE
+    TEST -->|"调用"| TASK_CREATE
+    TASK_CREATE -->|"调用"| REQUEST
+    REQUEST -->|"调用 post / request"| BASE
+    BASE -->|"调用"| SEND
+    SEND -->|"返回 stream=True Response"| RESPONSE
+    RESPONSE -->|"沿调用栈返回给 Test"| STATUS_CHECK
+    STATUS_CHECK -->|"读取 status_code"| STATUS
+    STATUS -->|"是：Test 调用 Task 收集"| COLLECT
+    COLLECT -->|"调用并迭代"| ITER
+    ITER -->|"yield 非空文本行"| LINE
+    LINE -->|"作为参数打印"| RAWPRINT
+    RAWPRINT -->|"打印后继续行合同检查"| DATA
+    STATUS -->|"否：构造失败消息"| STREAM_CONSUME --> HTTP_ERROR
+    RAWPRINT -. "完整内容可能进入" .-> STDOUT
+    DATA -->|"否：抛 AssertionError"| CONTRACT_ERROR --> CLOSE_CONTRACT
     DATA -->|"是"| DONE
-    DONE -->|"否"| JSON --> ITER
-    DONE -->|"是"| CLOSE --> ASSERT
-    ITER -->|"自然耗尽；Task 后置断言无 DONE"| CONTRACT_ERROR
-    ITER -->|"读取异常"| TRANSPORT_ERROR --> CLOSE
+    DONE -->|"否：作为 JSON 文本输入"| JSON
+    JSON -->|"成功：追加 chunk 后继续迭代"| ITER
+    JSON -->|"ValueError -> AssertionError"| CONTRACT_ERROR
+    DONE -->|"是"| CLOSE_NORMAL
+    ITER -->|"自然耗尽"| CLOSE_NORMAL
+    ITER -->|"读取异常"| TRANSPORT_ERROR --> CLOSE_TRANSPORT
+    CLOSE_NORMAL -->|"close 返回后"| POSTCHECK
+    CLOSE_CONTRACT --> CONTRACT_EXIT
+    CLOSE_TRANSPORT --> TRANSPORT_EXIT
+    POSTCHECK -->|"全部满足"| TASK_RESULT --> ASSERT
+    POSTCHECK -->|"任一后置合同不满足"| POST_ERROR
 
     HTTP["前课普通 HTTP<br/>完整 Response 后断言"]
     POLLING["第 9 课 Polling<br/>多次 GET 等业务终态"]
@@ -923,7 +997,7 @@ flowchart TD
 
 ### 18.1 图中的三类线
 
-- SSE 主链使用实线，表示真实调用或对象流向。
+- SSE 主链使用实线；边标签明确区分函数调用、对象返回/输入和控制分支，不能仅凭箭头猜关系。
 - 已学但不属于当前切片主链的 Retry、Polling 使用虚线条件边。
 - Runtime Hooks 与 TestContext 使用虚线，表示观察或后续课程接口。
 
@@ -933,9 +1007,13 @@ Response 节点明确标注 body 尚待消费。只有消费、终止标记和�
 
 ### 18.3 HTTP 状态失败的资源边界
 
-真实 Test 在 Task 收集函数外断言状态码。若此处抛异常，Task 的 `finally` 尚未进入。新场景应让拥有 Response 的边界同时拥有 close，不能机械照抄。
+真实 Test 在 Task 收集函数外断言状态码。非 2xx 时，普通断言会读取完整 `response.text`，同步消费流并可能阻塞或抛传输异常；此时 Task 的 `finally` 尚未进入。新场景应让拥有 Response 的边界同时拥有适合流的状态检查、限长脱敏错误预览与 close，不能机械照抄。
 
 主动停止分支还有第二个同类缺口：request-id 提取发生在该方法的 `try/finally` 之前。总图未把这条备选业务分支画成 SSE 收集主链，但关闭审计必须同时覆盖它。
+
+### 18.4 Middleware 附件与 stdout 是两条记录路径
+
+`_attach_log=False` 只让 LoggingMiddleware 跳过成功响应与请求异常附件。当前 SmokeTask 的主收集方法仍无条件打印每条非空原始行，因此完整 chunk 仍可能进入 pytest 捕获输出或控制台。
 
 ---
 
@@ -979,7 +1057,7 @@ Accept 给服务端；客户端仍需 `stream=True` 和显式迭代。
 
 ### 误区十：`_attach_log=False` 表示所有日志与观察关闭
 
-它同时跳过 `after_response()` 的成功响应附件和 `on_exception()` 的请求异常附件，但不关闭运行时观察或其他 Middleware。
+它同时跳过 `after_response()` 的成功响应附件和 `on_exception()` 的请求异常附件，但不关闭运行时观察、其他 Middleware，也不阻止 SmokeTask 把完整原始行打印到 stdout。关闭附件不等于流内容不会进入 pytest 捕获输出或控制台。
 
 ### 误区十一：`max_duration_seconds=15` 能在第 15 秒强制打断 socket
 
@@ -1006,7 +1084,9 @@ Accept 给服务端；客户端仍需 `stream=True` 和显式迭代。
 
 真实链路从 Test 进入 SmokeTask.create_small_stream_chat_completion，再到 SmokeRequest.create_stream_chat_completion、BaseRequest.post/request 和 requests.Session.request。SmokeRequest 同时设置 Accept: text/event-stream、stream=True 和 _attach_log=False。Accept 告诉服务端期望 SSE；stream=True 告诉 requests 不提前下载完整 body；_attach_log=False 同时跳过成功响应附件和请求异常附件，运行时观察与其他 Middleware 仍执行。
 
-拿到 Response 只表示 headers 阶段完成。Test 先检查 HTTP 状态，随后 SmokeTask 调用 iter_sse_lines。helper 跳过空行、按 UTF-8 解码、产出原始行并观察生命周期，但不验证 data 前缀、不解析 JSON、不判断领域错误，也不关闭 Response。
+拿到 Response 只表示 headers 阶段完成。Test 先检查 HTTP 状态，随后 SmokeTask 调用 iter_sse_lines。当前普通状态断言在非 2xx 时会读取完整 response.text 构造错误消息，可能同步消费或阻塞流、抛传输异常，而且尚未进入 Task 的关闭 finally；流式错误预览应由资源所有者限长、脱敏读取并保证关闭。
+
+helper 跳过空行、按 UTF-8 解码、产出原始行并观察生命周期，但不验证 data 前缀、不解析 JSON、不判断领域错误，也不关闭 Response。_attach_log=False 只关闭 Middleware 附件；当前 SmokeTask 仍会把完整原始行打印到 stdout，尚未实现脱敏和长度限制。
 
 helper 使用 line.strip() 识别 data: [DONE] 并观察生命周期完成，但 yield 的仍是原始文本行。SmokeTask 验证 data 前缀，保存原始行，去掉前缀；遇到 [DONE] 就停止，否则执行 json.loads 并收集 chunk。结束后还要求原始末行精确等于 data: [DONE]，并且此前至少有一个 JSON chunk。helper 的完成观察不等于业务行合同通过。
 
@@ -1030,6 +1110,8 @@ helper 使用 line.strip() 识别 data: [DONE] 并观察生命周期完成，但
 9. `max_duration_seconds` 是硬 socket deadline 吗？A 是 / B 否（B）
 10. `data: {"error": ...}` 会自动变成业务异常吗？A 会 / B 不会（B）
 11. helper 与 SmokeTask 对终止行使用同一条精确规则吗？A 是 / B 否，前者先 strip，后者检查原始末行（B）
+12. 非 2xx 流式 Response 经过当前普通状态断言后，body 仍保证未消费吗？A 保证 / B 不保证，失败消息会读取 `response.text`（B）
+13. `_attach_log=False` 能阻止 SmokeTask 将原始 chunk 输出到 stdout 吗？A 能 / B 不能（B）
 
 ---
 
@@ -1037,8 +1119,8 @@ helper 使用 line.strip() 识别 data: [DONE] 并观察生命周期完成，但
 
 ### 22.1 必做内容
 
-1. 在第十版图中保留 Request、Response、逐行消费、`[DONE]`、异常出口和 `finally close`。
-2. 为合法流、非法 JSON、传输中断、缺少 `[DONE]`、主动停止填写出口与关闭动作。
+1. 在第十版图中保留 Request、Response、逐行消费、`[DONE]`、异常出口和 `finally close`，并标明调用、对象流与控制分支。
+2. 为合法流、非 2xx 状态、非法 JSON、传输中断、缺少 `[DONE]`、主动停止填写消费结果、出口与关闭动作。
 3. 完成一次三分钟因果链复述。
 
 ### 22.2 不要求完成
@@ -1059,7 +1141,7 @@ helper 使用 line.strip() 识别 data: [DONE] 并观察生命周期完成，但
 1. 普通 JSON、Polling 和 SSE 的最小区别是什么？
 2. 为什么拿到 200 Response 不等于完整流成功？
 3. `Accept` 与 `stream=True` 分别作用于谁？
-4. `_attach_log=False` 防止什么问题？
+4. `_attach_log=False` 防止什么问题，又不能阻止哪条 stdout 输出路径？
 5. 本课真实 SSE 调用链经过哪些方法？
 6. `iter_sse_lines()` 做什么、不做什么？
 7. 原始 data line 与 JSON chunk 有何区别？
@@ -1072,6 +1154,7 @@ helper 使用 line.strip() 识别 data: [DONE] 并观察生命周期完成，但
 14. 2xx 流内业务错误当前由谁定义？
 15. 当前 SmokeTask 为什么不是完整 SSE 标准解析器？
 16. helper 的完成观察与 SmokeTask 的原始末行合同有何不同？
+17. 为什么当前普通状态断言不适合直接作为非 2xx 流式响应的错误预览？
 
 合格复述必须包含：
 
@@ -1081,6 +1164,8 @@ helper 使用 line.strip() 识别 data: [DONE] 并观察生命周期完成，但
 - `data:`、JSON chunk 与 `[DONE]`；
 - 正常、合同失败、传输中断和主动停止；
 - 消费 `try/finally` 内的关闭保证与两个前置缺口；
+- 非 2xx 普通断言读取 `response.text` 的提前消费风险；
+- Middleware 附件开关与 SmokeTask stdout 原始行输出是两条独立路径；
 - 当前业务错误和主动停止时间边界。
 
 ---

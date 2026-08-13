@@ -11,7 +11,7 @@
 | 讲解重点 | 用例级所有权、提取漏斗、缺失与空值、LIFO cleanup、ContextVar 传播边界 |
 | 代码入口 | `common/test_context.py`、`common/context_executor.py`、`module/conftest.py` |
 | 轻量验证 | `tests/test_test_context.py`、`tests/quality/test_quality_context_executor.py`，共 34 条 |
-| 安全边界 | 只使用内存 Response、临时文件和线程池，不访问真实 API |
+| 安全边界 | 课堂命令只使用内存中的完整、可缓冲 Response、临时文件和线程池，不访问真实 API；不证明未消费流式 Response 安全 |
 | 课后产出 | TestContext 生命周期图、cleanup 顺序表和三分钟复述 |
 
 ### 1.1 学完本课，你应该能够
@@ -21,6 +21,7 @@
 3. 区分“未匹配、默认值、转换值”和实际已保存变量的当前语义。
 4. 解释 cleanup 为什么按 LIFO 执行，以及多个 cleanup 失败怎样继续执行后汇总。
 5. 区分显式 TestContext 对象与 ContextVar 快照，并说明线程池为什么使用 `submit_with_context()`。
+6. 判断一次 Response 提取是否会读取 body，并说明未消费 SSE 的所有权边界。
 
 ### 1.2 本课刻意不展开
 
@@ -37,13 +38,15 @@
 | 环节 | 对应章节 | 建议时间 |
 | --- | --- | ---: |
 | 问题、约束与 fixture 所有权 | 第 2～5 节 | 8～10 分钟 |
-| 变量与提取主流程 | 第 6～10.3 节，不含 9.5 | 18～22 分钟 |
-| cleanup 主流程 | 第 13～14.3 节 | 13～16 分钟 |
-| ContextVar 基本边界 | 第 16.1～16.3、16.5 节 | 7～9 分钟 |
-| 离线证据、活动、总图与课堂验收 | 第 17～19、21、24.1 节 | 12～15 分钟 |
-| 缓冲与提问 | 全课 | 5 分钟 |
+| 变量、提取与流式边界 | 第 6～10.3 节，不含 9.5 | 16～19 分钟 |
+| cleanup 主流程 | 第 13～14.3 节 | 10～12 分钟 |
+| 实例隔离与 ContextVar 基本边界 | 第 15.1～15.2、16.1～16.3、16.5 节 | 8～10 分钟 |
+| 离线证据结论与 cleanup 活动 | 第 17～18 节 | 7～9 分钟 |
+| 三模式总图与必讲误区 | 第 19 节；第 20 节误区一至六、八、十七 | 10～12 分钟 |
+| 三分钟复述与统一课堂验收 | 第 21 节、第 22.1 节；第 24.1 节只判定结果 | 7～9 分钟 |
+| 过渡、讨论与机动 | 全课 | 4～9 分钟 |
 
-总计约 63～77 分钟。第 9.5、10.4、11、12、14.4、15.3～15.4、16.4 节改为选讲或课后阅读，不进入必讲时间；第 17 节命令不额外计时。
+总计约 70～90 分钟。第 9.5、10.4、11、12、14.4、15.3～15.4、16.4 节改为选讲或课后阅读；第 20 节其余误区和第 22.2 节作为题库，不进入必讲时间。第 17 节只讲离线证据结论，不在课堂现场重复执行命令。
 
 ### 1.4 课堂最短路径
 
@@ -51,8 +54,11 @@
 第 2～5 节：建立“一个用例一个资料袋”
 -> 第 6～10.3 节：走通 Response 提取、存储、读取
 -> 第 13～14.3 节：预测 LIFO 与失败汇总
+-> 第 15.1～15.2 节：区分实例隔离与共享实例线程安全
 -> 第 16.1～16.3、16.5 节：分开 TestContext 与 ContextVar
--> 第 18、19、21、24.1 节：活动、条件模式图、复述、验收
+-> 第 17～18 节：确认离线证据并完成一个 cleanup 场景
+-> 第 19～20 节：三模式总图与必讲误区
+-> 第 21～22.1 节：三分钟复述与同一套课堂验收题
 ```
 
 课堂只要求掌握主干。null 特殊分支、`extract_first()` 回退细节、脱敏实现、共享实例与进程隔离等内容保留为教师答疑和课后查阅，避免按全文逐行讲授。
@@ -250,6 +256,8 @@ def test_multi_step(test_context):
     ...
 ```
 
+fixture 是推荐的所有权模式，但不是当前工作树中唯一的创建方式。现有业务文件还存在 `setup_method()` 手动创建实例、`teardown_method()` 先调用 cleanup 并在 `finally` 中关闭 Request Client 的模式；这种模式不经过 fixture，必须由业务 Test 自己保证业务清理与 Client 关闭成对出现。
+
 ### 5.3 fixture 的可用范围
 
 当前 fixture 定义在 `module/conftest.py`，服务于该 pytest 目录树。`tests/test_test_context.py` 对 fixture 的测试是直接驱动其生成器，不应误认为所有仓库目录都自动获得同一个 fixture 实例。
@@ -381,10 +389,12 @@ test_context.require("request_id")
 
 ### 7.3 TestContext 不主动发请求
 
-Response 已经由 Test、Task 或 Request 取得。TestContext 只读取传入的 Response：
+Response 已经由 Test、Task 或 Request 取得，TestContext 不会主动调用 BaseRequest 或发送 HTTP。但“读取传入的 Response”不等于无副作用：读取 body 可能消费尚未缓冲的流。
 
 ```text
-Response -> extract -> variable
+Test --调用 extract(response)--> TestContext
+Response --作为提取输入--> extract
+extract --写入变量--> 当前 TestContext
 ```
 
 不能画成：
@@ -392,6 +402,32 @@ Response -> extract -> variable
 ```text
 TestContext -> BaseRequest -> HTTP
 ```
+
+### 7.4 流式 Response 的提取边界
+
+当前实现有两类读取会触碰完整 body：
+
+1. JSONPath 调用 `response.json()`；基于 Response 的 Regex 直接读取 `response.text`。它们只适合 body 已完整取得、允许缓冲的普通响应。
+2. Header 或 Cookie 成功提取只读取元数据，不读取 body；但当必填值缺失时，错误摘要会调用 `_redact_response_summary(response)`，其中同样读取完整 `response.text`。
+
+因此即使选择 Header，也不能推导出当前 `extract()` 对未消费 SSE 安全：
+
+```text
+未消费的 stream=True Response
+-> 提取必填 Header 但未匹配
+-> 构造错误摘要并读取 response.text
+-> 整体消费或阻塞流，也可能抛传输异常
+-> Response._content_consumed: False -> True
+-> Task 尚未接管原始流，流所有权被诊断路径改变
+```
+
+流式场景应选择以下边界之一：
+
+- 由拥有 Response 生命周期的代码执行流安全 Header 检查；失败消息只使用状态码、Header 名等元数据，并在同一个 `try/finally` 中保证关闭；
+- 先由 Task 消费并关闭流，再从 Task 已收集的 chunks 或领域结果中提取变量；
+- 不对未消费 SSE 直接使用 JSONPath、基于 Response 的 Regex，或会生成完整 Response 错误摘要的必填提取路径。
+
+本课 34 条离线测试都使用已在内存中构造、可直接缓冲的 Response，没有证明 TestContext 对未消费流式 Response 安全。
 
 ---
 
@@ -405,6 +441,7 @@ test_context.extract("task_id", response, json_path="$.task_id")
 
 - JSONPath 必须以 `$` 开头；
 - Response 必须能解析 JSON；
+- 会读取并缓冲 body，不用于尚待逐行消费的 SSE Response；
 - 默认返回第一个匹配；
 - `multiple=True` 时返回所有匹配组成的 list。
 
@@ -418,7 +455,7 @@ test_context.extract(
 )
 ```
 
-requests 的 headers 大小写不敏感；字符串值会执行 `strip()`。
+requests 的 headers 大小写不敏感；字符串值会执行 `strip()`。成功路径只读取 headers，但必填 Header 缺失时，当前错误摘要仍会读取完整 `response.text`。
 
 ### 8.3 Cookie
 
@@ -426,11 +463,11 @@ requests 的 headers 大小写不敏感；字符串值会执行 `strip()`。
 test_context.extract("session_id", response, cookie="session_id")
 ```
 
-从 `response.cookies` 读取；字符串值同样会 strip。
+从 `response.cookies` 读取；字符串值同样会 strip。成功路径不读取 body，但必填 Cookie 缺失时同样会进入读取 `response.text` 的错误摘要。
 
 ### 8.4 Regex
 
-可以从 `response.text`：
+可以从 `response.text`，这会读取并缓冲 body，只适合完整响应：
 
 ```python
 test_context.extract(
@@ -452,6 +489,8 @@ test_context.extract(
 ```
 
 Regex 仍是四种来源之一；`source_text` 只是 Regex 的输入，不是第五种独立来源。
+
+若数据来自 SSE，应优先把 Task 已收集的 chunk 内容显式转换成 `source_text`，不要让 Regex 重新读取未消费 Response。
 
 ---
 
@@ -824,7 +863,7 @@ worker 1 -> context 1
 ...
 ```
 
-它证明“不同实例在不同线程中互不共享变量”。
+它证明“不同实例在不同线程中互不共享变量”。它不证明同一个 TestContext 实例可以被多个线程安全地并发修改；锁与共享写入细节保留到 15.3 选讲。
 
 ### 15.3 它没有证明什么（选讲）
 
@@ -1006,10 +1045,11 @@ if ($pytestExitCode -ne 0) {
 - call 失败与 teardown 失败在最终报告中的具体展示；
 - Runtime Hooks 与 Quality 的全部 ContextVar 都已正确归属。
 - `copy_context()` 会深拷贝 ContextVar 绑定的可变对象。
+- TestContext 对未消费流式 Response 安全；JSONPath、基于 Response 的 Regex 与失败摘要均可能读取 body，当前测试没有覆盖 `_content_consumed=False` 的 SSE 输入。
 
 ---
 
-## 18. 课堂活动：三个 cleanup 的真实顺序
+## 18. 课堂活动：一组包含三个 callback 的 cleanup
 
 ### 18.1 题目
 
@@ -1059,50 +1099,121 @@ errors 中包含原 RuntimeError
 
 ---
 
-## 19. 第十一版累积链路总图：推荐的条件式使用模式
+## 19. 第十一版累积链路总图：fixture、当前手动模式与不使用模式
 
-当前 `module/` 业务 Test 尚未声明 `test_context` fixture；只有 `module/conftest.py` 提供 fixture 定义。下图不是现有业务用例调用链，而是由 `tests/test_test_context.py` 单元测试和框架规范支撑的推荐条件模式：当未来某个多步骤业务 Test 显式声明 fixture 时，TestContext 按需包围流程，但不插入 Request 与 Response 之间。ContextVar 线程传播仍是独立分支。
+当前工作树中的业务 Test 尚未声明 `test_context` fixture，也没有使用 `extract/require` 组成完整变量链；因此图中的 fixture 与变量提取部分仍是由框架源码和单元测试支撑的推荐模式。
+
+但当前工作树并非“没有业务 TestContext 调用链”。未跟踪文件 `module/material_library/test_seedance_2_5_virtual_asset_library.py` 已存在真实清理链：`setup_method()` 手动创建 TestContext 与 MaterialLibraryRequest，资源创建后把同一个 Request Client 作为 cleanup callback 参数登记；pytest 进入 `teardown_method()` 后先尝试 `cleanup()`，再由 `finally` 关闭 Request Client。该文件会访问真实素材库和模型接口，本课只做静态阅读，绝不加入课堂执行命令。
 
 ```mermaid
 flowchart TD
-    PYTEST["推荐条件：未来多步骤 Test<br/>显式声明 test_context fixture"]
-    FIXTURE["module/conftest.py::test_context<br/>创建一个 TestContext"]
-    TEST["Test<br/>拥有场景输入与步骤编排"]
-    STEP1["步骤一：Task / Request<br/>取得 Response"]
-    RESPONSE["Response<br/>包含动态 ID"]
-    EXTRACT["TestContext.extract / extract_first<br/>提取、转换、校验并保存"]
-    STORE["当前 TestContext 变量字典<br/>用例级动态状态"]
-    REQUIRE["TestContext.require<br/>显式读取并校验类型"]
-    STEP2["步骤二：后续 Task / Request<br/>使用动态 ID"]
+    PYTEST["pytest 收集到测试项"]
+    USE{"本测试是否启用 TestContext?"}
+
+    FIXTURE_MODE["fixture 模式（推荐）<br/>Test 声明 test_context 参数"]
+    FIXTURE_SETUP["pytest fixture setup<br/>创建 TestContext"]
+    FIXTURE_TEST["多步骤 Test<br/>接收同一个 TestContext 对象"]
+    STEP1["步骤一：Task / Request"]
+    RESPONSE["Response<br/>包含候选动态 ID"]
+    BUFFERED{"body 是否已完整且允许缓冲?"}
+    EXTRACT["Test 调用 extract / extract_first"]
+    STREAM_OWNER["Task 消费并关闭 SSE"]
+    STREAM_RESULT["chunks / 领域结果"]
+    STREAM_TEST["Test 接收流处理结果"]
+    SET_CONTEXT["Test 调用 TestContext.set"]
+    STORE["当前 TestContext 变量字典"]
+    REQUIRE["Test 调用 require(name)"]
+    VALUE["动态 ID"]
+    STEP2["步骤二：后续 Task / Request"]
     RESOURCE["本用例创建的业务资源"]
-    REGISTER["TestContext.add_cleanup<br/>登记同步 callback"]
-    TEARDOWN["fixture teardown<br/>context.cleanup"]
-    STACK["cleanup 栈<br/>LIFO pop"]
+    REGISTER["Test 调用 add_cleanup(callback, id)"]
+    FIXTURE_CALL_END["Test call 阶段结束<br/>正常返回或抛异常"]
+    FIXTURE_TEARDOWN["pytest 恢复 fixture<br/>进入 finally"]
+
+    MANUAL_MODE["当前手动模式<br/>未跟踪业务文件"]
+    MANUAL_SETUP["setup_method<br/>创建 Request 与 TestContext"]
+    MANUAL_REQUEST["MaterialLibraryRequest<br/>self.request"]
+    MANUAL_TEST["业务 Test<br/>使用局部变量，不调用 extract / require"]
+    MANUAL_REGISTER["self.test_context.add_cleanup<br/>callback 参数包含 self.request"]
+    MANUAL_CALL_END["Test call 阶段结束<br/>正常返回或抛异常"]
+    MANUAL_TEARDOWN["pytest 调用 teardown_method"]
+    MANUAL_CLEANUP["try: self.test_context.cleanup()<br/>业务资源清理"]
+    CLIENT_CLOSE["finally: self.request.close()<br/>HTTP Client 关闭"]
+
+    NO_CONTEXT["不使用 TestContext"]
+    ORDINARY["普通 Test<br/>调用 Task / Request，随后 Assertions"]
+
+    CLEANUP["TestContext.cleanup"]
+    STACK["当前实例的 cleanup 栈"]
+    HAS_CALLBACK{"栈中还有 callback?"}
+    CALLBACK["最后登记的 callback"]
     AGG{"callback 是否失败?"}
-    NEXT["继续下一个 callback"]
     CLEAN_OK["cleanup 完成"]
     CLEAN_ERROR["ContextCleanupError<br/>汇总 cleanup 异常"]
 
-    PYTEST --> FIXTURE --> TEST --> STEP1 --> RESPONSE --> EXTRACT --> STORE
-    STORE --> REQUIRE --> STEP2
-    STEP1 --> RESOURCE --> REGISTER
-    STEP2 --> TEARDOWN
-    REGISTER --> TEARDOWN
-    TEST -. "任一步骤正常结束或失败" .-> TEARDOWN
-    TEARDOWN --> STACK --> AGG
-    AGG -->|"否"| NEXT --> STACK
-    AGG -->|"是，记录错误"| NEXT
-    STACK -->|"栈耗尽且无错误"| CLEAN_OK
-    STACK -->|"栈耗尽且有错误"| CLEAN_ERROR
+    PYTEST -->|"根据测试代码与 fixture 声明判断"| USE
+    USE -->|"是：声明 fixture"| FIXTURE_MODE
+    USE -->|"是：手动创建"| MANUAL_MODE
+    USE -->|"否"| NO_CONTEXT
 
-    OPTIONAL["未声明 fixture 的单请求用例<br/>不创建 TestContext"]
-    PYTEST -. "可选分支" .-> OPTIONAL
+    FIXTURE_MODE -->|"pytest 调用 fixture"| FIXTURE_SETUP
+    FIXTURE_SETUP -->|"yield TestContext 对象"| FIXTURE_TEST
+    FIXTURE_TEST -->|"调用"| STEP1
+    STEP1 -->|"返回 Response"| RESPONSE
+    RESPONSE -->|"判断响应形态"| BUFFERED
+    BUFFERED -->|"是：Response 作为提取输入"| EXTRACT
+    FIXTURE_TEST -->|"调用 extract / extract_first"| EXTRACT
+    BUFFERED -->|"否：未消费 SSE"| STREAM_OWNER
+    STREAM_OWNER -->|"返回"| STREAM_RESULT
+    STREAM_RESULT -->|"对象返回给"| STREAM_TEST
+    STREAM_TEST -->|"调用 set(name, value)"| SET_CONTEXT
+    SET_CONTEXT -->|"写入变量"| STORE
+    EXTRACT -->|"写入变量"| STORE
+    FIXTURE_TEST -->|"调用 require"| REQUIRE
+    STORE -->|"提供已保存值"| REQUIRE
+    REQUIRE -->|"返回"| VALUE
+    FIXTURE_TEST -->|"调用后续步骤"| STEP2
+    VALUE -->|"作为请求参数"| STEP2
+    STEP1 -->|"创建资源"| RESOURCE
+    STEP2 -->|"也可能创建资源"| RESOURCE
+    FIXTURE_TEST -->|"调用 add_cleanup"| REGISTER
+    RESOURCE -->|"资源 ID 作为 callback 参数"| REGISTER
+    REGISTER -->|"压入 callback"| STACK
+    FIXTURE_TEST -->|"正常返回或抛异常"| FIXTURE_CALL_END
+    FIXTURE_CALL_END -->|"pytest 进入 teardown"| FIXTURE_TEARDOWN
+    FIXTURE_TEARDOWN -->|"调用 context.cleanup()"| CLEANUP
+
+    MANUAL_MODE -->|"pytest 调用 setup_method"| MANUAL_SETUP
+    MANUAL_SETUP -->|"保存 self.request"| MANUAL_REQUEST
+    MANUAL_SETUP -->|"保存 self.test_context"| MANUAL_TEST
+    MANUAL_TEST -->|"资源创建后调用"| MANUAL_REGISTER
+    MANUAL_REQUEST -->|"作为 callback 参数"| MANUAL_REGISTER
+    MANUAL_REGISTER -->|"压入 callback"| STACK
+    MANUAL_TEST -->|"正常返回或抛异常"| MANUAL_CALL_END
+    MANUAL_CALL_END -->|"pytest 进入 teardown"| MANUAL_TEARDOWN
+    MANUAL_TEARDOWN -->|"进入 try"| MANUAL_CLEANUP
+    MANUAL_CLEANUP -->|"正常返回或抛异常后进入 finally"| CLIENT_CLOSE
+    MANUAL_REQUEST -->|"关闭同一 Client 实例"| CLIENT_CLOSE
+    MANUAL_CLEANUP -. "内部执行下方同一 LIFO cleanup 算法" .-> CLEANUP
+
+    NO_CONTEXT -->|"运行原有测试链"| ORDINARY
+
+    CLEANUP -->|"检查当前栈"| HAS_CALLBACK
+    STACK -->|"提供栈状态"| HAS_CALLBACK
+    HAS_CALLBACK -->|"是：LIFO pop"| CALLBACK
+    CALLBACK -->|"执行后判断"| AGG
+    AGG -->|"否：继续"| HAS_CALLBACK
+    AGG -->|"是：记录原异常并继续"| HAS_CALLBACK
+    HAS_CALLBACK -->|"否且无已记录错误"| CLEAN_OK
+    HAS_CALLBACK -->|"否且有已记录错误"| CLEAN_ERROR
 
     PARENT["提交线程<br/>当前 ContextVar 值"]
     COPY["submit_with_context<br/>copy_context 快照"]
     WORKER["worker<br/>context.run(function)"]
     FUTURE["Future<br/>返回值或原异常"]
-    PARENT --> COPY --> WORKER --> FUTURE
+    PARENT -->|"调用 submit_with_context"| COPY
+    COPY -->|"executor.submit(context.run, ...)"| WORKER
+    WORKER -->|"完成或抛异常写入"| FUTURE
 
     NO_COPY["TestContext 变量字典<br/>不会被 submit_with_context 自动复制"]
     COPY -. "不包含显式资料袋复制语义" .-> NO_COPY
@@ -1111,22 +1222,36 @@ flowchart TD
     STEP2 -. "后续课程接口" .-> CAPABILITY
 ```
 
-### 19.1 实线表示推荐模式内部关系，不是当前业务实线
+### 19.1 线型与边标签
 
-一旦业务 Test 选择该模式，图中实线表示模式内部应有的对象流与控制流：
+- 实线表示分支一旦被选择后真实发生的调用、对象传递、状态读写或 pytest 生命周期控制；每条边都标明关系类型。
+- Test 正常返回或抛异常后，pytest 进入对应 teardown 是实线生命周期边，不是可选旁路。
+- 虚线只用于算法复用说明、“不会自动复制”的概念边界和下一课接口，不表示真实失败或teardown路径可选。
+
+### 19.2 当前业务清理链
+
+当前未跟踪业务文件的静态关系是：
 
 ```text
-Response -> extract -> store -> require -> 后续步骤
-资源 -> add_cleanup -> teardown -> LIFO
+setup_method --创建并保存--> self.test_context
+setup_method --创建并保存--> self.request
+业务 Test --把 self.request 与资源 ID 作为参数登记--> self.test_context.add_cleanup
+Test call 正常结束或失败 --pytest 生命周期--> teardown_method
+teardown_method --try 调用--> self.test_context.cleanup
+cleanup 正常返回或抛异常 --finally--> self.request.close
 ```
 
-其实现证据来自 TestContext、fixture 源码和单元测试；当前没有可引用的 `module/test_*.py` 业务调用链。课程不得把推荐路径讲成已经落地的业务主链。
+业务资源 cleanup callback 依赖尚未关闭的同一个 MaterialLibraryRequest；因此 teardown 必须先尝试业务资源清理，再在 `finally` 中关闭 HTTP Client。两层责任彼此不同，而且即使 cleanup 抛出 ContextCleanupError，也仍会尝试关闭 Client。该链没有证明 fixture 注入、`extract()` 或 `require()` 已在业务中使用。该文件访问真实接口，只允许静态阅读。
 
-### 19.2 为什么 Optional 使用虚线
+### 19.3 fixture 与变量提取仍是推荐模式
 
-TestContext 不是所有测试的固定节点。未声明 fixture 的单请求用例继续沿原有 Test → Task/Request → Response → Assertions 运行。
+fixture 分支的实现证据来自 TestContext、`module/conftest.py` 和单元测试。对于完整、可缓冲 Response，可使用 `extract()` 保存变量；对于未消费 SSE，应先由 Task 完成消费和 close，再从 chunks 或领域结果保存动态值。
 
-### 19.3 为什么 ContextVar 单独成图
+### 19.4 为什么保留不使用模式
+
+TestContext 不是所有测试的固定节点。未声明 fixture、也未手动创建实例的单请求用例继续沿原有 Test → Task/Request → Response → Assertions 运行。
+
+### 19.5 为什么 ContextVar 单独成图
 
 `copy_context()` 操作的是隐式 ContextVar 上下文；TestContext 是显式对象。二者都涉及“上下文”，但数据结构、传递方式和所有者不同。
 
@@ -1134,7 +1259,7 @@ TestContext 不是所有测试的固定节点。未声明 fixture 的单请求�
 
 ## 20. 常见误区
 
-课堂必讲误区一至六和误区八；null 相关的误区七以及误区九至十六作为选讲或课后自查。
+课堂必讲误区一至六、误区八和误区十七；null 相关的误区七以及误区九至十六作为选讲或课后自查。
 
 ### 误区一：每个 Request 都必须经过 TestContext
 
@@ -1200,6 +1325,10 @@ TestContext 不是所有测试的固定节点。未声明 fixture 的单请求�
 
 不会。它只汇总 cleanup callback 异常；pytest 负责 call 与 teardown 阶段报告。
 
+### 误区十七：Header 提取只读 headers，所以对未消费 SSE 总是安全
+
+不对。Header 成功路径不读取 body，但必填 Header 缺失时，当前错误摘要会读取完整 `response.text`。未消费 SSE 应由资源所有者执行流安全 Header 检查并保证 close，或先由 Task 收集 chunks 后再保存变量。
+
 ---
 
 ## 21. 三分钟复述
@@ -1207,48 +1336,56 @@ TestContext 不是所有测试的固定节点。未声明 fixture 的单请求�
 ```text
 TestContext 是一个可选的用例级资料袋。它解决同一个测试内多步骤动态值传递和业务资源清理，不是每次 Request 的必经节点。局部变量能清楚完成的短流程不必使用它；模块全局变量和依赖用例顺序则会破坏隔离。
 
-当前 test_context fixture 不是 autouse。Test 声明参数后，pytest 为该用例创建一个新 TestContext，yield 给 Test，并在 teardown 的 finally 中调用 cleanup。TestContext 内部有两个独立结构：变量字典和 cleanup 栈。clear 只清变量，不取消 cleanup；snapshot 是变量字典的浅拷贝。
+当前 test_context fixture 不是 autouse。Test 声明参数后，pytest 为该用例创建一个新 TestContext，yield 给 Test，并在 teardown 的 finally 中调用 cleanup。当前工作树还存在手动模式：setup_method 创建 TestContext 与 Request Client，资源创建后 add_cleanup，teardown_method 先尝试 cleanup，再在 finally 中关闭 Client；它尚未使用 fixture、extract 或 require。TestContext 内部有两个独立结构：变量字典和 cleanup 栈。clear 只清变量，不取消 cleanup；snapshot 是变量字典的浅拷贝。
 
-extract 先要求 json_path、header、cookie、regex 四种来源恰好选一个，再提取候选值，处理 required/default，然后执行 transform、expected_type 校验并保存。没有匹配且 required=False、无 default 时返回 None 但不保存。get 的 default 只返回不保存，extract 的 default 会经过转换和类型检查后保存。null 与 extract_first 的特殊回退规则作为课后阅读。
+extract 先要求 json_path、header、cookie、regex 四种来源恰好选一个，再提取候选值，处理 required/default，然后执行 transform、expected_type 校验并保存。JSONPath 和基于 Response 的 Regex 会读取 body；Header、Cookie 成功路径不读 body，但必填值缺失时错误摘要仍会读取 response.text。因此当前 extract 不应直接处理未消费 SSE，流应由 Task 消费并关闭，再从 chunks 或领域结果保存变量。没有匹配且 required=False、无 default 时返回 None 但不保存。get 的 default 只返回不保存，extract 的 default 会经过转换和类型检查后保存。
 
 资源成功创建并取得 ID 后应立即 add_cleanup。cleanup 使用 LIFO，后创建的依赖资源先删除。某个 callback 失败时先记录异常，继续执行剩余 callback，最后抛 ContextCleanupError 汇总。callback 返回值被忽略，失败必须自己抛异常。栈在执行时被 pop，所以第二次 cleanup 幂等返回，但不会重试失败动作。
 
-TestContext 与 ContextVar 是两条机制。TestContext 是显式对象；submit_with_context 在提交线程 copy_context，为每个任务传播提交时的 ContextVar 绑定快照，Future 保留返回值和原异常。它不会复制 TestContext 字典，不会把共享 TestContext 或 requests.Session 变成线程安全对象；绑定值本身也不会被深拷贝。
+TestContext 与 ContextVar 是两条机制。TestContext 是显式对象；submit_with_context 在提交线程 copy_context，为每个任务传播提交时的 ContextVar 绑定快照，Future 保留返回值和原异常。它不会复制 TestContext 字典，也不会把共享 TestContext 或 requests.Session 变成线程安全对象。
 ```
 
 ---
 
-## 22. 课堂小测
+## 22. 课堂验收与课后题库
 
-### 22.1 课堂必答
+### 22.1 统一课堂验收题
 
 1. TestContext 是每个 Request 的必经节点吗？A 是 / B 否，按需使用（B）
-2. `get("x", default=1)` 会保存 x 吗？A 会 / B 不会（B）
-3. `extract(..., default="2", transform=int)` 保存什么？A `"2"` / B `2`（B）
-4. required=False、无匹配且无 default 时会保存 None 吗？A 会 / B 不会（B）
-5. clear 会清空 cleanup 栈吗？A 会 / B 不会（B）
-6. cleanup 登记 A、B、C，执行顺序是什么？A A-B-C / B C-B-A（B）
-7. B cleanup 失败后是否执行 A？A 执行 / B 不执行（A）
+2. `extract(..., default="2", transform=int)` 保存什么？A `"2"` / B `2`（B）
+3. 必填 Header 在未消费 SSE 中缺失时，当前 `extract()` 是否保证不读取 body？A 保证 / B 不保证，错误摘要会读取 `response.text`（B）
+4. cleanup 登记 group、asset、temp-file，执行顺序是什么？A group-asset-temp / B temp-asset-group（B）
+5. asset cleanup 失败后是否继续 group cleanup？A 继续并最后汇总 / B 立即停止（A）
+6. 手动 `teardown_method()` 中 cleanup 抛异常后是否仍尝试关闭 Request Client？A 是，`finally` 执行 close / B 否（A）
+7. 当前业务 TestContext 链采用哪种方式？A fixture + extract/require / B setup_method 手动创建、add_cleanup、teardown cleanup（B）
 8. `submit_with_context()` 复制什么？A TestContext 字典 / B ContextVar 绑定快照（B）
 
-### 22.2 课后自查
+第 24.1 节只根据本套题和口头因果链判定是否合格，不再追加第二套开放式课堂问题。
 
-1. 默认 required=True 时，JSON null 怎样保存？A 自动保存 / B 需要 `allow_none=True`（B）
-2. 第二次 cleanup 会重试失败 callback 吗？A 会 / B 不会（B）
-3. callback 返回 500 Response 会自动失败吗？A 会 / B 不会（B）
-4. 每线程独立 TestContext 测试能证明共享实例线程安全吗？A 能 / B 不能（B）
-5. extract_first 的第一个来源返回 JSON null 时会自动尝试下一来源吗？A 会 / B 不会，先进入 required/allow_none 处理（B）
-6. copy_context 会深拷贝 ContextVar 绑定的 dict 吗？A 会 / B 不会（B）
+### 22.2 课后题库
+
+1. `get("x", default=1)` 会保存 x 吗？
+2. required=False、无匹配且无 default 时会保存 None 吗？
+3. clear 会清空 cleanup 栈吗？
+4. 默认 required=True 时，JSON null 需要什么条件才能保存？
+5. `extract_first()` 的第一个来源返回 JSON null 时是否自动尝试下一来源？
+6. 第二次 cleanup 为什么不会重试失败 callback？
+7. callback 返回 500 Response 为什么不会自动失败？
+8. 每线程独立 TestContext 测试能否证明共享实例线程安全？
+9. `copy_context()` 会深拷贝 ContextVar 绑定的 dict 吗？
+10. 哪些提取路径会读取 Response body？
+11. TestContext 为什么不是 Request 管线节点？
+12. 当前业务手动清理链与推荐 fixture 变量链分别已经落地到什么程度？
 
 ---
 
-## 23. 课后作业：画资料袋生命周期，不写代码
+## 23. 课后作业：更新生命周期图，不写代码
 
 ### 23.1 必做内容
 
-1. 画出 Response → extract → require → 后续步骤，以及 resource → add_cleanup → LIFO cleanup 两条分支。
-2. 预测三组 cleanup 的执行顺序、错误列表和第二次 cleanup 结果。
-3. 完成一次三分钟因果链复述，必须区分 TestContext 与 ContextVar。
+1. 更新一张生命周期图：包含 fixture、当前手动 cleanup 和不使用三种模式；在变量分支中同时画出普通完整 Response 与未消费 SSE，在手动 teardown 分支中画出 `cleanup -> finally close Request Client`，并标明调用、对象流、状态读写和 pytest 生命周期。
+2. 只分析第 18 节这一组纯 callback 场景：写出 LIFO 执行顺序、错误汇总和第二次 cleanup 结果，不扩展 Request Client 或 teardown_method。
+3. 完成一次三分钟口头因果链复述，必须区分 TestContext 与 ContextVar；文字稿选做。
 
 ### 23.2 不要求完成
 
@@ -1263,37 +1400,25 @@ TestContext 与 ContextVar 是两条机制。TestContext 是显式对象；submi
 
 ## 24. 验收标准
 
-### 24.1 课堂必答
+### 24.1 课堂合格判定
 
-1. TestContext 解决什么问题，不解决什么问题？
-2. 为什么它不是 Request 管线节点？
-3. fixture 何时创建并清理 TestContext？
-4. `get(default)` 与 `extract(default)` 有何不同？
-5. required=False 且没有 default 时怎样表现？
-6. clear、snapshot 与 cleanup 栈有什么边界？
-7. 为什么 cleanup 使用 LIFO，某个 callback 失败后为何继续？
-8. TestContext 与 ContextVar 的本质区别是什么？
+- 第 22.1 节 8 道统一验收题至少答对 6 道；不再追加第二套课堂问题。
+- 能口头解释“未消费 SSE → 失败摘要读取 body → 流所有权被改变”的因果链。
+- 能口头解释“业务 cleanup 依赖 Request Client → teardown 先 cleanup → finally close Client”的因果链。
 
-### 24.2 课后自查
+第 22.2 节是课后题库，用于补弱和复习，不进入课堂时间预算。
 
-1. 缺失、空字符串、空列表、0、False 和 null 怎样分类？
-2. transform 与 expected_type 的顺序是什么？
-3. `extract_first()` 的优先级由谁决定？
-4. 单个来源抛 ContextExtractionError 后怎样回退？
-5. ContextCleanupError 汇总什么，不汇总什么？
-6. 为什么第二次 cleanup 不会重试失败 callback？
-7. callback 返回非 2xx 为什么不会自动失败？
-8. 不同 TestContext 实例隔离能否证明共享实例线程安全？
-9. `submit_with_context()` 在何时捕获快照？
-10. 为什么 copy_context 不等于深拷贝绑定值？
-11. 它为什么不能替代显式业务参数和每线程 Request Client？
+### 24.2 三分钟复述合格要点
 
 合格复述必须包含：
 
 - 可选的用例级容器；
 - 变量字典与 cleanup 栈；
 - 提取漏斗和空值语义；
+- 完整 Response 与未消费 SSE 的提取所有权边界；
 - LIFO、继续清理、最终汇总；
+- fixture、当前手动 cleanup 与不使用三种模式；
+- 业务资源 cleanup 与 HTTP Client close 是两层责任；
 - callback 返回值与失败责任；
 - 实例隔离但非共享线程安全；
 - TestContext 与 ContextVar 分离；
