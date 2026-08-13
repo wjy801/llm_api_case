@@ -500,7 +500,7 @@ TestContext -> 为后续 Task / Request 提供变量
 - `common/task_capabilities/billing.py`
 - `module/smoke/task.py`
 
-**课堂实践**：给出三个新业务动作，只允许在“领域 Task”与“新建窄 Capability”之间选择；同时指出现有 BaseTask 方法只是兼容入口，不能作为新增逻辑的落点。
+**课堂实践**：给出三个新业务动作，在“领域 Task / 复用或窄扩展现有 Capability / 新建窄 Capability”三种结论中选择；同时指出现有 BaseTask 方法只是兼容入口，不得向 BaseTask 增加新领域入口。
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest `
