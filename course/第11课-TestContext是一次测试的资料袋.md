@@ -9,7 +9,7 @@
 | 建议时长 | 60～90 分钟 |
 | 核心问题 | 前一步产生的 ID、资源和清理动作，怎样安全交给后续步骤？ |
 | 讲解重点 | 用例级所有权、提取漏斗、缺失与空值、LIFO cleanup、ContextVar 传播边界 |
-| 代码入口 | `common/test_context.py`、`common/context_executor.py`、`module/conftest.py` |
+| 代码入口 | `common/test_context.py`、`common/context_executor.py`、`module/conftest.py`；业务证据：`module/material_library/test_seedance_2_5_virtual_asset_library.py`（仅静态阅读，禁止课堂执行） |
 | 轻量验证 | `tests/test_test_context.py`、`tests/quality/test_quality_context_executor.py`，共 34 条 |
 | 安全边界 | 课堂命令只使用内存中的完整、可缓冲 Response、临时文件和线程池，不访问真实 API；不证明未消费流式 Response 安全 |
 | 课后产出 | TestContext 生命周期图、cleanup 顺序表和三分钟复述 |
@@ -1151,8 +1151,6 @@ flowchart TD
     AGG{"callback 是否失败?"}
     CLEAN_OK["cleanup 完成"]
     CLEAN_ERROR["ContextCleanupError<br/>汇总 cleanup 异常"]
-    OK_OWNER{"正常 cleanup 的调用者?"}
-    ERROR_OWNER{"异常 cleanup 的调用者?"}
 
     PYTEST -->|"根据测试代码与 fixture 声明判断"| USE
     USE -->|"是：声明 fixture"| FIXTURE_MODE
@@ -1207,12 +1205,10 @@ flowchart TD
     AGG -->|"是：记录原异常并继续"| HAS_CALLBACK
     HAS_CALLBACK -->|"否且无已记录错误"| CLEAN_OK
     HAS_CALLBACK -->|"否且有已记录错误"| CLEAN_ERROR
-    CLEAN_OK -->|"按原调用链返回"| OK_OWNER
-    OK_OWNER -->|"fixture"| FIXTURE_CLEANUP_EXIT
-    OK_OWNER -->|"手动 teardown：进入 finally"| CLIENT_CLOSE
-    CLEAN_ERROR -->|"按原调用链抛出"| ERROR_OWNER
-    ERROR_OWNER -->|"fixture：报告 ContextCleanupError"| FIXTURE_CLEANUP_EXIT
-    ERROR_OWNER -->|"手动 teardown：异常待传播，先进入 finally"| CLIENT_CLOSE
+    CLEAN_OK -->|"fixture 调用：返回 fixture teardown"| FIXTURE_CLEANUP_EXIT
+    CLEAN_OK -->|"手动调用：返回 teardown 后进入 finally"| CLIENT_CLOSE
+    CLEAN_ERROR -->|"fixture 调用：抛 ContextCleanupError"| FIXTURE_CLEANUP_EXIT
+    CLEAN_ERROR -->|"手动调用：异常沿调用栈返回，finally 先 close"| CLIENT_CLOSE
     CLIENT_CLOSE -->|"close 完成"| MANUAL_CLEANUP_EXIT
 
     PARENT["提交线程<br/>当前 ContextVar 值"]

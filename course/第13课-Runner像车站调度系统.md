@@ -1,6 +1,6 @@
 # 第 13 课：Runner 像车站调度系统
 
-> 本课承接第 12 课：Task 决定一个业务动作怎样执行，Runner 决定很多测试怎样被可靠调度。核心不是“开几个 worker”，而是先形成一份不可变的权威 nodeid/marker 计划，再保证每个测试不丢、不重地进入正确执行池。
+> 本课承接第 12 课：Task 决定一个业务动作怎样执行，Runner 决定很多测试怎样被可靠调度。核心不是“开几个 worker”，而是先形成一份不可变的权威 nodeid/marker 计划，再证明执行计划中的 nodeid 不丢、不重并进入正确池：未启用 `-n` 时完整计划进入一个普通串行池，提供 `-n` 值时才进入 parallel-first 与 serial 收尾两阶段。
 
 ---
 
@@ -9,7 +9,7 @@
 | 项目 | 内容 |
 | --- | --- |
 | 建议时长 | 60～90 分钟 |
-| 核心问题 | 很多测试一起执行时，怎样保证不丢、不重，并让必须串行的测试进入独立串行阶段？ |
+| 核心问题 | 很多测试一起执行时，怎样证明执行计划不丢、不重；提供 `-n` 值时怎样形成 parallel-first 与 serial 收尾两阶段，未启用时为什么完整计划只进入一个普通串行池？ |
 | 讲解重点 | CLI 分相、pytest 参数分相、权威收集、marker 计划、集合守恒、两种执行模式 |
 | 代码入口 | `run_master.py`、`run_orchestration/cli.py`、`run_orchestration/runner.py`、`run_orchestration/pytest_execution.py`、`run_orchestration/scheduling.py` |
 | 轻量验证 | 大纲指定的 3 个 Runner 离线测试文件，共 30 条测试 |
@@ -20,10 +20,9 @@
 
 1. 区分 Runner 自己的 CLI 参数和透传给 pytest 的参数。
 2. 解释 `partition_pytest_args()` 为什么把选择参数只放进权威收集。
-3. 说明 `collect_test_case_items()` 怎样取得最终 nodeid 和完整 marker 集合。
-4. 用 `C = P ⊎ S` 验证并行池与串行池没有丢失、重叠或重复。
-5. 区分“未传 `-n` 的单池串行执行”和“传入 `-n` 的并发优先、串行收尾”。
-6. 准确说明 `--collect-only` 能证明什么、不能证明什么。
+3. 说明 `run_orchestration.pytest_execution.collect_test_case_items()` 怎样取得最终 nodeid 和完整 marker 集合，并界定 collect-only 不能证明 fixture 或测试体成功。
+4. 用 `C = P ⊎ S` 验证执行计划中的并行池与串行池没有丢失、重叠或重复。
+5. 区分“未传 `-n` 的单池串行执行”和“提供 `-n` 值的两阶段执行”，并解释 `-n 0` 为什么不保证产生并发 worker。
 
 ### 1.2 本课刻意不展开
 
@@ -42,10 +41,10 @@
 | 参数分相与权威收集 | 第 7～9 节 | 18～21 分钟 |
 | 集合守恒与执行模式 | 第 10～12 节 | 15～18 分钟 |
 | 离线证据与课堂活动 | 第 13～14 节 | 10～12 分钟 |
-| 总图、复述、小测与验收 | 第 15、17～18、20 节 | 9～12 分钟 |
+| 累积主图、复述与 6 道小测 | 第 15.1、17～18 节 | 9～12 分钟 |
 | 缓冲与提问 | 全课 | 5 分钟 |
 
-总计约 75～90 分钟。第 16 节误区用于穿插纠偏，不单独占用一轮讲解时间；第 7.2、9.2、10.3、12.1 节可选讲，更深的退出码分支留到第 14 课。
+总计约 75～90 分钟。第 15.2～15.6 节全部作为教师备课或课后复盘补图，不逐张占用核心时间；第 20 节是教师验收清单与课后题库，不占课堂时间。第 16 节误区用于穿插纠偏；第 7.2、9.2、10.3、12.1 节可选讲，更深的退出码分支留到第 14 课。
 
 ### 1.4 课堂最短路径
 
@@ -54,7 +53,7 @@
 -> 第 7～8 节：追踪参数分相与一次权威收集
 -> 第 10～11 节：验证 C = P ⊎ S 和两种执行模式
 -> 第 13～14 节：观察离线证据并完成集合活动
--> 第 15、17、18、20 节：更新总图、复述、小测、验收
+-> 第 15.1、17～18 节：更新累积图、复述并完成 6 道小测
 ```
 
 ---
@@ -113,7 +112,7 @@ parallel / serial = 两个互斥候车区
 -> 串行池也再次解释同一组条件
 -> 插件、导入状态或收集环境可能发生变化
 -> 两个池看到的候选集合不再来自同一快照
--> 无法证明测试不丢、不重
+-> 无法证明执行计划中的 nodeid 不丢、不重
 ```
 
 正确方向是：选择条件只形成一次权威计划，执行池只接收最终 nodeid。
@@ -123,11 +122,11 @@ parallel / serial = 两个互斥候车区
 ```text
 用例带 serial marker
 -> 误以为任何命令都会创建两个执行池
--> 忽略 -n 是并发优先模式的开关
+-> 忽略是否提供 -n 值才是两阶段分支开关
 -> 对实际调用次数和顺序作出错误判断
 ```
 
-当前实现只有传入 `-n/--numprocesses` 时，才执行 parallel pool 后再执行 serial pool。未传 `-n` 时，所有权威 nodeid 进入同一个普通 pytest 调用。
+当前实现只有提供 `-n/--numprocesses` 值时，才进入 parallel pool 后接 serial pool 的两阶段分支。未传 `-n` 时，所有权威 nodeid 进入同一个普通 pytest 调用；`-n 0` 仍进入两阶段，但不保证产生并发 worker。
 
 ### 3.3 把 collect-only 当成运行成功
 
@@ -256,9 +255,10 @@ C = P ⊎ S
 | `run_orchestration/pytest_execution.py` | 唯一调用 `pytest.main()`，拥有权威收集和池执行适配 | 不决定 serial 分类规则 |
 | `run_orchestration/scheduling.py` | 对已收集对象执行纯分池与守恒检查 | 不调用 pytest，不读控制台文本 |
 
-`master_service.py` 仍是稳定兼容门面：
+`master_service.py` 仍是稳定兼容门面，但两个同名函数的返回合同不同，引用时必须带模块名：
 
-- `collect_test_case_items()` 延迟委托给 `pytest_execution.py`；
+- `master_service.collect_test_case_items()` 延迟委托后返回 `list[CollectedTestCase]`；
+- `run_orchestration.pytest_execution.collect_test_case_items()` 返回包含原始退出码、cases、stdout 和 stderr 的 `CollectionResult`；
 - `split_test_cases()` 延迟委托给 `scheduling.py`；
 - 旧调用方可以继续使用原公共导入。
 
@@ -298,7 +298,7 @@ C = P ⊎ S
 | --- | --- |
 | 位置参数 `target` | 本轮测试目标 |
 | `--test-path` | 显式测试目标，优先于位置参数 |
-| `-n/--numprocesses` | 启用并发优先模式并指定 xdist worker 数 |
+| `-n/--numprocesses` | 提供两阶段执行所使用的 xdist worker 值；`0` 也会进入两阶段分支，但不会创建并发 worker |
 | `--dist` | xdist 分发策略 |
 | `--serial-marker` | 指定串行分类 marker，默认 `serial` |
 | `--parallel-first` | 兼容参数；当前不会独立启用并发，仍需传入 `-n` |
@@ -408,7 +408,7 @@ execution_args =
 
 ---
 
-## 8. `collect_test_case_items()`：形成唯一权威计划
+## 8. `run_orchestration.pytest_execution.collect_test_case_items()`：形成唯一权威计划
 
 ### 8.1 实际 pytest 参数
 
@@ -430,7 +430,7 @@ execution_args =
 pytest.main(args, plugins=[collector])
 ```
 
-Runner 的一次 `run()` 只调用一次该权威计划收集函数。
+Runner 的一次 `run()` 只调用一次 `run_orchestration.pytest_execution.collect_test_case_items()`。不要与返回列表的 `master_service.collect_test_case_items()` 混淆。
 
 ### 8.2 `_CaseCollector` 读取什么
 
@@ -571,7 +571,7 @@ set(parallel) ∪ set(serial) = seen
 
 算法按权威收集顺序 append，因此每个池内部的 nodeid 顺序保持稳定。
 
-但传入 `-n` 后，parallel pool 内的实际完成顺序由 pytest-xdist 调度，不等于 nodeid 列表顺序。稳定的是计划顺序，不是并发完成时间。
+但传入能实际创建 worker 的 `-n` 值后，parallel pool 内的完成顺序由 pytest-xdist 调度，不等于 nodeid 列表顺序。稳定的是计划顺序，不是并发完成时间。
 
 ---
 
@@ -621,9 +621,9 @@ execute_pool(
 - serial marker 不会再创建第二个收尾池；
 - 每个权威 nodeid 仍只进入这一个执行池。
 
-### 11.3 传入 `-n`：并发优先、串行收尾
+### 11.3 提供 `-n` 值：进入两阶段，通常并发优先、串行收尾
 
-正常路径为：
+使用 `auto` 或正整数等可创建 worker 的值时，正常路径为：
 
 ```text
 parallel_cases 非空
@@ -642,6 +642,8 @@ parallel_cases 非空
 - 两池的 nodeid 都来自同一权威集合。
 
 “串行”在这里准确表示 Runner 不为该池传入 xdist 并发参数。它不是跨 Jenkins Job、跨进程或跨机器的全局锁。
+
+当前 CLI 不拒绝 `-n 0`。`argparse` 得到的字符串 `"0"` 在 Runner 中为真值，因此仍会进入 parallel-first / serial 两阶段，并把 `-n 0` 传给 parallel pool；但 xdist 不会因此创建并发 worker。所以“提供 `-n`”只证明选择了两阶段分支，不等于运行时必然并发。
 
 parallel pool 返回普通测试失败 1 时，当前实现仍会运行 serial pool，以便收集更多失败证据；返回 2、3、4、5 或发生 Runner 执行异常时会停止后续池。为什么这样合并退出事实，由第 14 课展开。
 
@@ -722,14 +724,15 @@ tests/test_run_orchestration_public_contract.py
 
 ### 13.2 安全命令
 
-导入框架配置前先指向合法模板，临时关闭 Quality、Allure HTML 和 history，并为外层 pytest 创建独立临时目录。命令结束后逐值恢复调用者原环境，只在确认目标是本次系统临时目录的直接子目录后递归清理：
+导入框架配置前先指向合法模板，临时关闭 Quality、Allure HTML 和 history，并在仓库根目录内创建本次专用临时目录。命令同时保存并清空标准注入变量 `PYTEST_ADDOPTS`，外层 pytest 再传 `-o addopts=` 覆盖项目默认参数，确保目标测试文件不会被环境或 `pytest.ini` 扩大。这里不能把 `--basetemp` 放到系统临时目录：这些测试会在 `tmp_path` 中再次调用 `pytest.main()`，项目外临时路径可能让嵌套 pytest 扩大 rootdir 并扫描无权限目录。命令结束后逐值恢复调用者原环境，只在确认目标是仓库根目录的本次专用直接子目录后递归清理：
 
 ```powershell
 $environmentNames = @(
   'API_CASE_DOTENV_PATH',
   'QUALITY_ENABLE',
   'GENERATE_ALLURE_REPORT',
-  'GENERATE_HISTORY_REPORT'
+  'GENERATE_HISTORY_REPORT',
+  'PYTEST_ADDOPTS'
 )
 $previousEnvironment = @{}
 foreach ($name in $environmentNames) {
@@ -740,10 +743,12 @@ foreach ($name in $environmentNames) {
     )
 }
 
-$tempBase = (Get-Item -LiteralPath ([IO.Path]::GetTempPath())).FullName
+$trimSeparators = [char[]]@('\', '/')
+$repositoryRoot = (Get-Item -LiteralPath '.').FullName.TrimEnd($trimSeparators)
+$tempBase = $repositoryRoot.TrimEnd($trimSeparators)
 $tempRoot = Join-Path `
   $tempBase `
-  ('api-case-lesson13-' + [guid]::NewGuid().ToString('N'))
+  ('.api-case-lesson13-' + [guid]::NewGuid().ToString('N'))
 $pytestTemp = Join-Path $tempRoot 'pytest'
 $outerAllure = Join-Path $tempRoot 'outer-allure-results'
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
@@ -752,7 +757,7 @@ $pytestExitCode = 1
 try {
   [Environment]::SetEnvironmentVariable(
     'API_CASE_DOTENV_PATH',
-    '.env.example',
+    (Resolve-Path -LiteralPath '.env.example' -ErrorAction Stop).Path,
     [EnvironmentVariableTarget]::Process
   )
   [Environment]::SetEnvironmentVariable(
@@ -770,8 +775,14 @@ try {
     'FALSE',
     [EnvironmentVariableTarget]::Process
   )
+  [Environment]::SetEnvironmentVariable(
+    'PYTEST_ADDOPTS',
+    '',
+    [EnvironmentVariableTarget]::Process
+  )
 
   & .\.venv\Scripts\python.exe -m pytest `
+    -o addopts= `
     tests/test_master_service_parallel_serial.py `
     tests/test_run_orchestration_boundaries.py `
     tests/test_run_orchestration_public_contract.py `
@@ -790,12 +801,12 @@ finally {
   }
 
   if (Test-Path -LiteralPath $tempRoot) {
-    $resolvedTempRoot = (Get-Item -LiteralPath $tempRoot).FullName
-    $resolvedParent = Split-Path -Parent $resolvedTempRoot
+    $resolvedTempRoot = (Get-Item -LiteralPath $tempRoot).FullName.TrimEnd($trimSeparators)
+    $resolvedParent = (Split-Path -Parent $resolvedTempRoot).TrimEnd($trimSeparators)
     $resolvedLeaf = Split-Path -Leaf $resolvedTempRoot
     if (
       $resolvedParent -eq $tempBase -and
-      $resolvedLeaf -like 'api-case-lesson13-*'
+      $resolvedLeaf -like '.api-case-lesson13-*'
     ) {
       Remove-Item -LiteralPath $resolvedTempRoot -Recurse -Force
     }
@@ -822,8 +833,8 @@ if ($pytestExitCode -ne 0) {
 
 - 函数、类和模块 marker 能进入 `CollectedTestCase.markers`；
 - 默认 `serial` marker 能把样例计划分成两个池；
-- 未传 `-n` 时全部样例 nodeid 只进入一个执行调用；
-- 传入 `-n` 时 parallel pool 先于 serial pool；
+- 未传 `-n` 时全部样例 nodeid 只进入一个计划执行调用；
+- 提供 `-n` 值时 parallel pool 计划先于 serial pool；
 - parallel 或 serial 空池不会启动多余执行；
 - collect-only 在权威收集之后不会进入正式 `run_pytest` 执行路径；
 - 已识别选择参数与执行参数按阶段分开；
@@ -841,6 +852,7 @@ if ($pytestExitCode -ne 0) {
 - 当前真实业务目录的并发/串行数量是多少；
 - 真实接口不会失败或不会产生费用；
 - 未识别插件参数绝不带选择语义；
+- 最终实际执行测试项与权威计划在所有插件组合下绝不偏离；当前测试主要冻结计划、调用参数和执行顺序，没有观察每个最终 call 项；
 - serial pool 能阻止其他进程或其他 Jenkins Job 并发访问共享资源；
 - 所有退出码、JUnit 和 Allure 证据都已在本课解释完成。
 
@@ -914,11 +926,236 @@ parallel-pool [A, C]，带 -n 2
 
 ---
 
-## 15. 第十三版累积关系图组
+## 15. 第十三版累积链路总图：继承第12课，展开运行编排
 
-本课继续把函数调用、对象流和控制结果分开。相同节点出现在不同图中，是因为三个图回答不同问题，不代表箭头可以混用。
+本课以第 12 课累积主图为底稿：TestContext 三种模式、cleanup 栈、ContextVar，以及 Task / BaseTask / Capability / Request Client 业务边界继续稳定保留；只把原来的“运行编排（第 13～14 课）”虚线接口展开到本课已经掌握的 CLI、参数分相、权威收集、分池和执行模式。退出码、JUnit、Allure、Runner execution result 与 Quality 仍保持虚线接口。
 
-### 15.1 函数调用链：谁调用谁
+`-->` 表示函数调用、条件控制或 pytest 生命周期；`==>` 表示对象、集合、返回值或执行事实流动；`-.->` 表示后续课程、可选观察或尚未展开的条件关系。
+
+### 15.1 课堂累积主图：两个稳定边界节点，只展开Runner核心增量
+
+课堂主图只保留第 11、12 课的职责边界，不再展示其内部节点和边。教师用约 4～5 分钟讲 Runner 增量，再用三分钟复述和 6 道选择题完成验收。
+
+```mermaid
+flowchart TD
+    ENTRY["run_master.py → cli.main() → runner.run()"]
+    PARTITION["partition_pytest_args()"]
+    ARG_PLAN["PytestArgumentPlan<br/>collection_args + execution_args"]
+    COLLECT["权威收集<br/>collect_test_case_items()<br/>内部调用pytest.main(--collect-only)"]
+    CASES["cases: tuple[CollectedTestCase, ...]<br/>每项包含nodeid + markers"]
+    C["权威nodeid集合 C<br/>只用于计划守恒与显式执行"]
+    SPLIT["split_test_cases(cases)<br/>按markers分类并校验 C = P ⊎ S"]
+    P["parallel计划 P"]
+    S["serial计划 S"]
+    MODE{"collect-only / 无-n / 有-n值"}
+    SHOW["collect-only<br/>只展示计划后返回"]
+    ONE_POOL["无-n<br/>完整C进入单一serial-pool"]
+    PARALLEL_STAGE["有-n值<br/>P进入parallel-pool<br/>-n 0不保证并发worker"]
+    SERIAL_STAGE["parallel后未触发停止门<br/>S进入serial-pool"]
+    EXECUTE["execute_pool(stage_id, nodeids, args)"]
+    RUN_PYTEST["run_pytest(args)"]
+    PYTEST["pytest.main()<br/>执行显式nodeid池"]
+    STABLE11["第11课稳定边界<br/>TestContext三种模式、cleanup与ContextVar"]
+    STABLE12["第12课稳定边界<br/>Test → Task / BaseTask → Capability / Request<br/>→ Response / SSE → Assertions"]
+    POOL_FACTS["实际执行池的池级事实"]
+    NEXT14["第14课<br/>退出码、JUnit、Allure与execution result"]
+    QUALITY["第15～22课<br/>质量与报告"]
+
+    ENTRY -->|runner调用| PARTITION
+    PARTITION ==>|返回| ARG_PLAN
+    ENTRY -->|runner调用| COLLECT
+    ARG_PLAN ==>|collection_args输入| COLLECT
+    COLLECT ==>|CollectionResult.cases| CASES
+    CASES ==>|提取nodeid形成| C
+    ENTRY -->|runner调用| SPLIT
+    CASES ==>|携带markers作为输入| SPLIT
+    SPLIT ==>|分类并校验| P
+    SPLIT ==>|分类并校验| S
+    ENTRY -->|runner判断| MODE
+    C ==>|计划输入| SHOW
+    MODE -->|collect-only| SHOW
+    MODE -->|无-n| ONE_POOL
+    C ==>|显式nodeids| ONE_POOL
+    MODE -->|有-n值，包括0| PARALLEL_STAGE
+    P ==>|显式nodeids| PARALLEL_STAGE
+    ENTRY -->|parallel后未触发停止门再调度| SERIAL_STAGE
+    S ==>|显式nodeids| SERIAL_STAGE
+    ENTRY -->|对非空且未停止的池调用| EXECUTE
+    ARG_PLAN ==>|execution_args经池参数构造后输入| EXECUTE
+    ONE_POOL ==>|stage与nodeids输入| EXECUTE
+    PARALLEL_STAGE ==>|非空时输入| EXECUTE
+    SERIAL_STAGE ==>|非空且未停止时输入| EXECUTE
+    EXECUTE -->|调用| RUN_PYTEST
+    RUN_PYTEST -->|调用| PYTEST
+    PYTEST -->|fixture与teardown生命周期| STABLE11
+    PYTEST -->|call阶段执行业务链| STABLE12
+    EXECUTE ==>|返回| POOL_FACTS
+    POOL_FACTS -. "第14课展开" .-> NEXT14
+    STABLE12 -. "后续旁路观察" .-> QUALITY
+    STABLE11 -. "后续消费测试与产物事实" .-> QUALITY
+```
+
+课堂读图只回答五件事：谁形成唯一计划 C，谁把 C 分成 P/S，三种模式怎样选择池，执行池真实调用链是什么，以及后续事实交给哪一课。第 11、12 课节点只确认职责仍然存在，不重新展开内部实现。
+
+### 15.2 完整继承图（教师备课与课后复盘）
+
+下图完整保留第 11、12 课内部节点，用于检查累积关系是否被新课程无意改写；它不进入课堂逐边讲解时间。
+
+```mermaid
+flowchart TD
+    subgraph ORCHESTRATION["第13课新增：运行编排"]
+        ENTRY["run_master.py / CLI入口"]
+        CLI["cli.main()<br/>分离Runner参数与pytest_args"]
+        RUNNER["runner.run()"]
+        PARTITION["partition_pytest_args()"]
+        ARG_PLAN["PytestArgumentPlan<br/>collection_args + execution_args"]
+        COLLECT["pytest_execution.collect_test_case_items()"]
+        COLLECT_PYTEST["pytest.main()<br/>--collect-only形成权威计划"]
+        COLLECTION["CollectionResult<br/>cases + 收集原始退出码"]
+        C["权威执行计划 C<br/>唯一nodeid + 完整markers"]
+        SPLIT["scheduling.split_test_cases(cases)"]
+        P["parallel计划 P"]
+        S["serial计划 S"]
+        ONLY{"collect-only?"}
+        SHOW["只展示C、P、S后返回<br/>不进入fixture或测试体"]
+        N_MODE{"是否提供-n值？"}
+        ONE_POOL["无-n<br/>完整C进入单一serial-pool"]
+        PARALLEL_STAGE["有-n值<br/>P进入parallel-pool<br/>-n 0不保证并发worker"]
+        SERIAL_STAGE["parallel后未触发停止门<br/>S进入serial-pool"]
+        EXECUTE["execute_pool(stage_id, explicit nodeids, args)"]
+        RUN_PYTEST["run_pytest(args)"]
+        POOL_FACTS["实际执行池的池级事实<br/>本课只确认已产生，不展开含义"]
+        NEXT14["第14课：退出码、JUnit、Allure<br/>与Runner execution result"]
+
+        ENTRY -->|调用| CLI
+        CLI -->|调用| RUNNER
+        RUNNER -->|调用| PARTITION
+        PARTITION ==>|返回| ARG_PLAN
+        RUNNER -->|调用| COLLECT
+        ARG_PLAN ==>|collection_args作为输入| COLLECT
+        COLLECT -->|调用| COLLECT_PYTEST
+        COLLECT_PYTEST ==>|原始退出码与收集器items回到函数| COLLECT
+        COLLECT ==>|构造并返回| COLLECTION
+        COLLECTION ==>|提取cases形成| C
+        RUNNER -->|调用| SPLIT
+        COLLECTION ==>|cases作为输入| SPLIT
+        SPLIT ==>|分类并校验守恒| P
+        SPLIT ==>|分类并校验守恒| S
+        RUNNER -->|判断| ONLY
+        C ==>|计划输入| SHOW
+        P ==>|分类数量输入| SHOW
+        S ==>|分类数量输入| SHOW
+        ONLY -->|是| SHOW
+        ONLY -->|否| N_MODE
+        N_MODE -->|未提供| ONE_POOL
+        C ==>|显式nodeids| ONE_POOL
+        N_MODE -->|提供，包括0| PARALLEL_STAGE
+        P ==>|显式nodeids| PARALLEL_STAGE
+        RUNNER -->|parallel后未触发停止门再调度| SERIAL_STAGE
+        S ==>|显式nodeids| SERIAL_STAGE
+        RUNNER -->|对非空且未停止的池调用| EXECUTE
+        ARG_PLAN ==>|execution_args经池参数构造后输入| EXECUTE
+        ONE_POOL ==>|stage与nodeids输入| EXECUTE
+        PARALLEL_STAGE ==>|非空时作为输入| EXECUTE
+        SERIAL_STAGE ==>|非空且未停止时作为输入| EXECUTE
+        EXECUTE ==>|返回| POOL_FACTS
+        POOL_FACTS -. "第14课展开证据含义与归并" .-> NEXT14
+    end
+
+    subgraph CONTEXT["第11课稳定边界：TestContext与pytest生命周期（折叠保留）"]
+        PYTEST["pytest执行显式目标测试项"]
+        USE{"本测试怎样使用TestContext?"}
+        FIXTURE["fixture模式<br/>setup创建并yield TestContext"]
+        MANUAL["当前手动模式<br/>setup_method创建Context与Request"]
+        NONE["不使用TestContext"]
+        TEST["Test<br/>场景、输入与预期"]
+        VARS["动态变量<br/>完整Response提取；SSE消费后由Test set"]
+        STACK["当前实例cleanup栈<br/>add_cleanup压栈"]
+        CALL_END["Test call阶段结束<br/>正常返回或抛异常"]
+        FIXTURE_END["fixture teardown<br/>finally调用cleanup"]
+        MANUAL_END["teardown_method<br/>try调用cleanup"]
+        NONE_END["普通pytest teardown"]
+        CLEANUP["TestContext.cleanup()<br/>LIFO；失败继续；最终汇总"]
+        CLIENT_CLOSE["manual finally<br/>Request Client.close()"]
+        PYTEST_END["pytest teardown结束<br/>或报告cleanup异常"]
+        CONTEXTVAR["ContextVar线程传播<br/>copy_context → context.run<br/>不复制TestContext变量字典"]
+
+        PYTEST -->|根据fixture声明或测试代码选择| USE
+        USE -->|fixture| FIXTURE
+        USE -->|手动创建| MANUAL
+        USE -->|均未使用| NONE
+        FIXTURE ==>|yield同一Context对象| TEST
+        MANUAL ==>|self.context与self.request| TEST
+        NONE -->|运行原有测试链| TEST
+        TEST -->|按响应形态读写| VARS
+        VARS ==>|后续步骤读取| TEST
+        TEST -->|资源创建后注册| STACK
+        TEST -->|正常或异常结束call| CALL_END
+        CALL_END -->|fixture模式| FIXTURE_END
+        CALL_END -->|手动模式| MANUAL_END
+        CALL_END -->|不使用模式| NONE_END
+        FIXTURE_END -->|调用| CLEANUP
+        MANUAL_END -->|try调用| CLEANUP
+        STACK ==>|提供LIFO callbacks| CLEANUP
+        CLEANUP -->|fixture返回或抛清理异常| PYTEST_END
+        CLEANUP -->|手动模式无论正常异常都进入finally| CLIENT_CLOSE
+        CLIENT_CLOSE -->|关闭后结束或继续抛清理异常| PYTEST_END
+        NONE_END -->|完成原有teardown| PYTEST_END
+        PYTEST -. "线程任务启用时使用独立传播机制" .-> CONTEXTVAR
+    end
+
+    subgraph BUSINESS["第12课稳定边界：Task、Capability与Request Client（折叠保留）"]
+        DOMAIN_TASK["领域Task本地方法<br/>新领域逻辑默认落点"]
+        DOMAIN_REQUEST["领域Request<br/>BaseRequest子类"]
+        FACADE["BaseTask兼容方法<br/>稳定签名、默认值与适配"]
+        FACTORY["BaseTask Capability工厂"]
+        CAPABILITY["MediaGenerationCapability<br/>或BillingCapability"]
+        NEW_CAPABILITY["未来新窄Capability<br/>当前暂无生产实例"]
+        REQUEST_CLIENT["Request Client<br/>普通HTTP / Retry / Polling<br/>stream=True只返回未消费Response"]
+        SSE_OWNER["上层Task消费并关闭SSE"]
+        RESULT["完整Response、chunks或领域结果"]
+        ASSERTIONS["领域Assertions<br/>结构与业务判断"]
+
+        TEST -->|调用领域动作| DOMAIN_TASK
+        TEST -->|也可调用兼容入口| FACADE
+        DOMAIN_TASK -->|领域端点调用| DOMAIN_REQUEST
+        DOMAIN_TASK -->|调用继承入口| FACADE
+        FACADE -->|调用工厂| FACTORY
+        FACTORY ==>|返回组合对象| FACADE
+        FACADE -->|调用返回对象的方法| CAPABILITY
+        CAPABILITY -->|调用窄Request Client接口| REQUEST_CLIENT
+        DOMAIN_REQUEST -->|self.post/get/poll_get| REQUEST_CLIENT
+        DOMAIN_TASK -. "未来本地构造或注入" .-> NEW_CAPABILITY
+        NEW_CAPABILITY -. "推荐调用窄接口" .-> REQUEST_CLIENT
+        REQUEST_CLIENT ==>|普通或Polling终态结果| RESULT
+        REQUEST_CLIENT ==>|stream=True未消费Response| SSE_OWNER
+        SSE_OWNER ==>|消费并关闭后返回| RESULT
+        RESULT ==>|逐层返回| TEST
+        TEST -->|接收完整结果后调用| ASSERTIONS
+        ASSERTIONS -->|正常返回或抛AssertionError| CALL_END
+    end
+
+    QUALITY_FUTURE["质量与报告（第15～22课）<br/>旁路观察、可信治理与汇总"]
+
+    EXECUTE -->|调用| RUN_PYTEST
+    RUN_PYTEST -->|调用pytest.main执行显式nodeids| PYTEST
+    RESULT -. "后续课程可旁路观察运行事实" .-> QUALITY_FUTURE
+    PYTEST_END -. "后续课程可消费测试与产物事实" .-> QUALITY_FUTURE
+```
+
+本图只供教师复核：`ORCHESTRATION` 是本课增量，TestContext 与业务链用于确认继承关系未被删除。第 14 课与质量报告继续保持虚线，避免把未来证据流程提前塞回本课。
+
+读图规则：
+
+1. 本图继承第 12 课主图，不删除 TestContext 三种模式、cleanup / close、ContextVar、领域 Task、BaseTask 兼容门面和 Capability 组合边界。
+2. `partition_pytest_args()`、权威收集和 `split_test_cases()` 都由 Runner 调用；`PytestArgumentPlan`、`CollectionResult`、cases元组、C、P、S 是返回对象或集合，不是调用者。cases中的每项携带nodeid与markers，C只保存从cases提取出的nodeid集合。
+3. `split_test_cases()`读取cases中的markers完成分类；`C = P ⊎ S`证明的是nodeid执行计划的唯一、互斥与完整，不证明所有插件组合下最终实际 call 项绝不偏离。
+4. 未提供 `-n` 时完整 C 进入单一 `serial-pool`；提供任何非空值（包括字符串 `0`）时进入两阶段，但 `-n 0` 不保证创建并发 worker。
+5. 执行池使用显式 nodeid 再调用 pytest，pytest 仍会完成正常导入、收集准备与生命周期；这不等于 Runner 重新解释已识别选择条件。
+6. 池级执行事实只连接一个第 14 课虚线接口。本课不展开退出码归并、JUnit、Allure 或 Runner execution result。
+7. Quality 与报告仍是后续课程虚线接口，不位于业务Response、Assertions或pytest teardown主链中。
+
+### 15.3 函数调用链补图：谁调用谁
 
 ```mermaid
 flowchart TD
@@ -926,7 +1163,7 @@ flowchart TD
     CLI["cli.main()，也是根入口导出的 main"]
     RUN["runner.run()"]
     PARTITION["partition_pytest_args()"]
-    COLLECT["collect_test_case_items()"]
+    COLLECT["run_orchestration.pytest_execution<br/>.collect_test_case_items()"]
     PYTEST_PLAN["pytest.main()，形成权威计划"]
     SPLIT["scheduling.split_test_cases()"]
     EXECUTE["execute_pool()"]
@@ -944,9 +1181,9 @@ flowchart TD
     RUN_PYTEST -->|调用| PYTEST_POOL
 ```
 
-每条实线只表示函数调用。`partition_pytest_args()`、`collect_test_case_items()` 和 `split_test_cases()` 都返回对象给 `runner.run()`；它们彼此不按图中编号互相调用。
+每条实线只表示函数调用。`partition_pytest_args()`、`run_orchestration.pytest_execution.collect_test_case_items()` 和 `scheduling.split_test_cases()` 都返回对象给 `runner.run()`；它们彼此不按图中编号互相调用。这里不是返回列表的 `master_service.collect_test_case_items()`。
 
-### 15.2 对象流：计划怎样变化
+### 15.4 对象流补图：计划怎样变化
 
 ```mermaid
 flowchart LR
@@ -957,9 +1194,12 @@ flowchart LR
     COLLECTION_INPUT["test_path + collection_args"]
     COLLECTION["CollectionResult"]
     CASES["CollectedTestCase 元组，nodeid + markers"]
+    ALL_NODEIDS["完整 nodeid 元组 C"]
     PARALLEL["parallel nodeid 元组 P"]
     SERIAL["serial nodeid 元组 S"]
-    POOL_INPUT["执行池显式 nodeid 参数"]
+    ONE_POOL_INPUT["未传 -n<br/>C 作为单一 serial-pool 输入"]
+    PARALLEL_INPUT["提供 -n 值<br/>P 作为 parallel-pool 输入<br/>0不保证并发worker"]
+    SERIAL_INPUT["提供 -n 值<br/>S 作为 serial-pool 输入"]
 
     ARGV --> CLI_RESULT
     CLI_RESULT --> TEST_PATH
@@ -968,15 +1208,17 @@ flowchart LR
     ARG_PLAN --> COLLECTION_INPUT
     COLLECTION_INPUT --> COLLECTION
     COLLECTION --> CASES
+    CASES --> ALL_NODEIDS
     CASES --> PARALLEL
     CASES --> SERIAL
-    PARALLEL --> POOL_INPUT
-    SERIAL --> POOL_INPUT
+    ALL_NODEIDS -->|未传 -n| ONE_POOL_INPUT
+    PARALLEL -->|提供 -n 值| PARALLEL_INPUT
+    SERIAL -->|提供 -n 值| SERIAL_INPUT
 ```
 
-这里的箭头只表示输入被解析、转换或传递成下一个对象。它不表示 `PytestArgumentPlan` 自己调用 `CollectionResult`，也不表示两个池在同一时刻执行。
+这里的箭头只表示输入被解析、转换或传递成下一个对象。`parallel_cases` 与 `serial_cases` 在两种模式下都会计算，但未传 `-n` 时执行阶段忽略 P/S，直接把完整 C 交给唯一的 `serial-pool`；提供 `-n` 值时才分别把 P、S 交给两个阶段。它不表示 `PytestArgumentPlan` 自己调用 `CollectionResult`，也不表示两个池在同一时刻执行；`-n 0` 更不能证明 parallel 阶段存在并发 worker。
 
-### 15.3 控制结果：何时停止、展示或执行
+### 15.5 控制结果补图：何时停止、展示或执行
 
 ```mermaid
 flowchart TD
@@ -989,9 +1231,9 @@ flowchart TD
     SPLIT_FAIL["ValueError 异常终止"]
     ONLY{"collect-only?"}
     SHOW["展示计划与两池数量后返回 0"]
-    HAS_WORKERS{"传入 -n?"}
+    HAS_WORKERS{"numprocesses为非空字符串?"}
     ONE_POOL["全部 C 进入一个 serial-pool"]
-    PARALLEL_POOL["P 进入 parallel-pool，空则跳过"]
+    PARALLEL_POOL["P 进入parallel-pool，空则跳过<br/>值0不保证并发worker"]
     CONTINUE{"parallel 结果允许继续?"}
     SERIAL_POOL["S 进入 serial-pool，空则跳过"]
     STOP_SERIAL["停止，serial-pool 不执行"]
@@ -1018,7 +1260,7 @@ flowchart TD
 
 这张图只表示控制分支和结果，不表示对象流。当前 `split_test_cases()` 位于 Runner 主执行 `try` 之外；如果重复 nodeid 或守恒门禁触发 `ValueError`，异常会直接向调用方传播，不会被翻译成标准 Runner 退出码。正常权威收集已先拒绝重复 nodeid，这一分支仍是分池算法面对损坏或注入计划时的防御边界。`parallel 结果允许继续` 的详细退出码规则是下一课内容。
 
-### 15.4 集合关系
+### 15.6 集合关系补图
 
 ```text
 权威计划 C
@@ -1058,7 +1300,7 @@ C = P ⊎ S
 
 ### 误区六：带 serial marker 就一定有第二个执行池
 
-错误。只有传入 `-n` 才执行并发优先、串行收尾；未传时全部 nodeid 进入一个普通串行池。
+错误。只有提供 `-n` 值才进入 parallel-first、serial 收尾两阶段；未传时全部 nodeid 进入一个普通串行池。`-n 0` 虽进入两阶段，但不保证创建并发 worker。
 
 ### 误区七：serial pool 是全局互斥锁
 
@@ -1091,11 +1333,11 @@ C = P ⊎ S
 ```text
 run_master.py 是稳定根入口。cli.parse_args() 先把 target、-n、--dist 和 serial marker 等 Runner 参数取出，未知参数保留给 pytest。runner.run() 再调用 partition_pytest_args()，把已识别选择参数只放进权威收集，把 JUnit、Allure 和 worker 等执行参数放进正式执行；未知插件参数为兼容而两边共享。
 
-collect_test_case_items() 使用 --collect-only、-q 和清空 addopts 的参数调用 pytest.main()。_CaseCollector 从 session.items 取得每个最终测试项的 nodeid 和 iter_markers() 结果，形成 CollectionResult。控制台文本只用于展示和诊断，不是计划来源。
+run_orchestration.pytest_execution.collect_test_case_items() 使用 --collect-only、-q 和清空 addopts 的参数调用 pytest.main()。_CaseCollector 从 session.items 取得每个最终测试项的 nodeid 和 iter_markers() 结果，形成 CollectionResult。控制台文本只用于展示和诊断，不是计划来源；master_service.collect_test_case_items() 只是兼容门面，返回 CollectedTestCase 列表。
 
 scheduling.split_test_cases() 对同一份 CollectedTestCase 序列做纯分类。带指定 serial marker 的进入 S，其余进入 P，并检查 nodeid 唯一、P 与 S 交集为空、两池并集等于权威集合 C，也就是 C = P ⊎ S。
 
-collect-only 在分池后打印计划并停止，不执行 fixture setup、测试体或 HTTP。未传 -n 时全部 C 进入一个普通串行池；传入 -n 时 P 使用 xdist 先执行，结果允许继续后 S 不带 xdist 执行。执行池接收显式 nodeid，不再接收已识别选择条件，但 pytest 仍会完成显式 nodeid 的正常收集准备。
+collect-only 在分池后打印计划并停止，不执行 fixture setup、测试体或 HTTP。未传 -n 时全部 C 进入一个普通串行池；提供 -n 值时 P 先进入带该 xdist 参数的 parallel 阶段，结果允许继续后 S 不带 xdist 执行。`-n 0` 仍选择两阶段，但不保证并发。执行池接收显式 nodeid，不再接收已识别选择条件，但 pytest 仍会完成显式 nodeid 的正常收集准备。
 
 本课只证明计划和调度边界。池级原始退出码、JUnit、Allure 和 Runner 最终执行事实在第 14 课展开。
 ```
@@ -1106,14 +1348,10 @@ collect-only 在分池后打印计划并停止，不执行 fixture setup、测�
 
 1. 本轮测试全集由谁形成？A 控制台解析 / B pytest 权威收集（B）
 2. `-k` 当前进入哪一阶段？A 只进权威收集 / B 只进正式执行（A）
-3. `--junitxml` 当前进入哪一阶段？A 权威选择 / B 正式执行（B）
-4. 未识别插件参数怎样处理？A 丢弃 / B 两阶段共享（B）
-5. `P ∩ S` 应等于什么？A `C` / B 空集（B）
-6. 未传 `-n` 时 serial marker 会创建第二个池吗？A 会 / B 不会（B）
-7. collect-only 会执行 fixture setup 吗？A 会 / B 不会（B）
-8. 唯一权威收集表示执行池不再处理显式 nodeid 吗？A 是 / B 否（B）
-9. serial pool 能锁住另一个 Jenkins Job 吗？A 能 / B 不能（B）
-10. 计划顺序能否保证 xdist 完成顺序？A 能 / B 不能（B）
+3. `P ∩ S` 应等于什么？A `C` / B 空集（B）
+4. 未传 `-n` 时 serial marker 会创建第二个池吗？A 会 / B 不会（B）
+5. collect-only 会执行 fixture setup 吗？A 会 / B 不会（B）
+6. 唯一权威收集表示执行池不再对显式 nodeid 做正常收集准备吗？A 是 / B 否（B）
 
 ---
 
@@ -1135,32 +1373,32 @@ collect-only 在分池后打印计划并停止，不执行 fixture setup、测�
 
 ---
 
-## 20. 验收标准
+## 20. 教师验收清单与课后题库（不占课堂时间）
 
-完成本课后，应能回答：
+本节不要求在课堂逐题作答。教师从清单中观察复述质量，题库用于课后抽查或下一课开场回顾。
+
+### 20.1 教师验收清单
+
+合格复述应包含：
+
+- nodeid + marker 的结构化计划；
+- 已识别选择参数只进入权威收集；
+- `P ∩ S = ∅`、`P ∪ S = C` 和 nodeid 唯一；
+- 未传 `-n` 时完整 C 进入单一执行池，提供 `-n` 值时 P/S 才分别进入两个阶段；`-n 0` 不保证并发 worker；
+- collect-only 不进入 setup、call、teardown；
+- 执行池消费显式 nodeid，但 pytest 仍做正常准备；
+- 退出与报告证据留到第 14 课。
+
+### 20.2 课后题库
 
 1. 为什么选择条件不能在两个池中重新解释？
 2. CLI 参数分相和 pytest 参数分相分别解决什么问题？
 3. `PytestArgumentPlan` 的四个字段是什么？
 4. `CollectionResult.cases` 为什么比控制台 collected 文本更权威？
-5. `_CaseCollector` 从哪里取得 nodeid 和 markers？
+5. `master_service.collect_test_case_items()` 与 `run_orchestration.pytest_execution.collect_test_case_items()` 的返回合同有什么区别？
 6. 为什么 marker 分类必须发生在权威收集之后？
-7. `C = P ⊎ S` 包含哪三个检查？
-8. 未传 `-n` 与传入 `-n` 的执行方式有什么区别？
-9. 为什么“唯一权威收集”不等于“pytest 只收集一次”？
-10. collect-only 为什么不能证明 fixture 或真实接口可用？
-11. 当前 30 条离线测试证明了哪些调度合同？
-12. 哪些退出码会阻断 serial pool，为什么本课不展开最终合并？
-
-合格答案必须包含：
-
-- nodeid + marker 的结构化计划；
-- 已识别选择参数只进入权威收集；
-- `P ∩ S = ∅`、`P ∪ S = C` 和 nodeid 唯一；
-- `-n` 是两阶段执行开关；
-- collect-only 不进入 setup、call、teardown；
-- 执行池消费显式 nodeid，但 pytest 仍做正常准备；
-- 退出与报告证据留到第 14 课。
+7. serial pool 为什么不是跨 Jenkins Job 的全局锁，计划顺序为什么也不保证 xdist 完成顺序？
+8. 当前 30 条测试能证明哪些调度合同，哪些退出码和报告证据仍必须留到第 14 课？
 
 ---
 
@@ -1181,18 +1419,16 @@ collect-only 在分池后打印计划并停止，不执行 fixture setup、测�
 parallel 与 serial 各自返回什么原始退出码？
 哪些退出码允许继续，哪些必须停止？
 JUnit 保存什么统计事实？
-Allure 为什么每池写临时 raw，最后只合并一次？
+Allure 为什么每池写临时 raw，并在每个池结束时分别归并，最后最多生成一次 HTML/history？
 Runner execution result 与 pytest 原始事实是什么关系？
 ```
 
-第 14 课进入：
+第 14 课接口保持为一个折叠节点：
 
 ```text
-PoolExecutionResult
--> pytest 原始退出码
--> Runner 最终退出码
--> JUnit / Allure
--> 第二周答辩
+池级执行事实
+-. 第14课展开 .->
+退出码、JUnit、Allure与Runner execution result
 ```
 
-Runner 的调度目标是“不丢、不重、分对池”；第 14 课的证据目标是“不篡改原始结果，并让后续系统能够消费”。
+Runner 的调度目标是“执行计划不丢、不重、分对池”；第 14 课的证据目标是“不篡改原始结果，并让后续系统能够消费”。
