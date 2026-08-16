@@ -466,6 +466,7 @@ Test -> Task ->（领域 Request 方法或 Request Client）-> BaseRequest
 - `common/test_context.py`
 - `common/context_executor.py`
 - `module/conftest.py`
+- `module/material_library/test_seedance_2_5_virtual_asset_library.py`（仅静态阅读，禁止课堂执行）
 - `tests/test_test_context.py`
 - `tests/quality/test_quality_context_executor.py`
 
@@ -501,19 +502,28 @@ TestContext -> 为后续 Task / Request 提供变量
 - `common/task_capabilities/media_generation.py`
 - `common/task_capabilities/billing.py`
 - `module/smoke/task.py`
+- `module/video_model/task.py`
+- `module/material_library/task.py`
+- `module/image_model/task.py`
 
-**课堂实践**：给出三个新业务动作，在“领域 Task / 复用或窄扩展现有 Capability / 新建窄 Capability”三种结论中选择；同时指出现有 BaseTask 方法只是兼容入口，不得向 BaseTask 增加新领域入口。
+**课堂实践**：给出三个新业务动作，在“领域 Task / 复用或窄扩展现有 Capability / 新建窄 Capability”三种结论中选择；同时区分当前兼容链与推荐的新能力链。新 Capability 不增加 BaseTask 入口，而由需要它的领域 Task 显式构造或注入后组合使用。
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest `
-  tests/test_base_task.py `
-  tests/test_smoke_billing_assertions.py `
-  tests/test_smoke_billing_interval.py -q
+  tests/test_base_task.py -q
 ```
+
+该命令作为课前核心证据运行，共 22 条测试。`tests/test_smoke_billing_assertions.py` 和 `tests/test_smoke_billing_interval.py` 的 11 条测试只证明 Decimal 账单断言边界，作为选读证据，不计入课堂默认命令，也不用于证明 Capability 的 HTTP 委托。
+
+**课后产出**：
+
+1. 完成三个新业务动作的能力落位表，并写出因果理由。
+2. 分开画出能力来源、当前实际兼容调用链与推荐的新 Capability 接入链；推荐设计使用虚线并注明当前暂无生产实例。
+3. 完成一次三分钟复述，明确区分继承关系与函数调用链。
 
 ### 第 13 课：Runner 像车站调度系统
 
-**核心问题**：很多测试一起执行时，怎样保证不丢、不重，并让必须串行的测试最后单独运行？
+**核心问题**：很多测试一起执行时怎样保证不丢、不重；启用 `-n` 时怎样让普通测试并发执行、serial 测试独立收尾，未启用时为什么完整计划进入一个普通串行池？
 
 **通俗理解**：先确定完整乘客名单，再把普通乘客分到多条并行通道，把特殊乘客安排到专用通道；不能每到一个站重新点名。
 
@@ -521,8 +531,8 @@ TestContext -> 为后续 Task / Request 提供变量
 
 - CLI 参数与 pytest 透传参数。
 - `partition_pytest_args()` 如何区分选择参数和执行参数。
-- `collect_test_case_items()` 为什么是唯一权威收集。
-- `split_test_cases()` 如何划分并发池和串行池。
+- `run_orchestration.pytest_execution.collect_test_case_items()` 为什么是唯一权威收集，并与返回列表的 `master_service.collect_test_case_items()` 区分。
+- `run_orchestration.scheduling.split_test_cases()` 如何形成 P/S；未传 `-n` 时执行阶段为什么仍使用完整 C。
 - 集合守恒：并集等于收集集合，交集为空。
 
 **代码入口**：
@@ -533,14 +543,11 @@ TestContext -> 为后续 Task / Request 提供变量
 - `run_orchestration/pytest_execution.py`
 - `run_orchestration/scheduling.py`
 
-**课堂实践**：
+**课堂实践**：执行 `course/第13课-Runner像车站调度系统.md` 第 13.2 节的完整安全命令，不直接运行省略隔离步骤的简化 pytest 命令。该命令保存并清空 `PYTEST_ADDOPTS`，通过 `-o addopts=` 覆盖项目默认参数，把 `--basetemp` 和外层 Allure raw 放在仓库根目录内的本次专用临时目录，清理前对父目录两侧执行 `TrimEnd` 校验，并在结束后恢复进程环境。核心目标仍是以下三个文件的 30 条离线测试：
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest `
-  tests/test_master_service_parallel_serial.py `
-  tests/test_run_orchestration_boundaries.py `
-  tests/test_run_orchestration_public_contract.py -q
-```
+- `tests/test_master_service_parallel_serial.py`
+- `tests/test_run_orchestration_boundaries.py`
+- `tests/test_run_orchestration_public_contract.py`
 
 **课后产出**：绘制“权威收集 → 分池 → 执行”的集合流转图。
 
@@ -556,21 +563,16 @@ TestContext -> 为后续 Task / Request 提供变量
 - pytest 原始退出码如何合并。
 - Runner execution result 的职责。
 - JUnit 与 Allure 分别解决什么问题。
-- Allure 为什么分池写 raw，最后统一合并。
+- Allure 为什么分池写 raw，并在每个池结束时累积到最终 raw 目录，最后只生成一次可选 HTML/history。
 
 **代码入口**：
 
 - `run_orchestration/artifacts.py`
 - `run_orchestration/allure_lifecycle.py`
+- `run_orchestration/pytest_execution.py`
 - `run_orchestration/runner.py`
 
-**课堂实践**：
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest `
-  tests/test_allure_run_lifecycle.py `
-  tests/test_allure_history_report.py -q
-```
+**课堂实践**：执行 `course/第14课-退出码、JUnit、Allure与第二周答辩.md` 第 14.1 节的完整安全命令。命令保存并清空 `PYTEST_ADDOPTS`，通过 `-o addopts=` 覆盖项目默认参数，精确运行 30 条退出码、PoolExecutionResult、execution-result、JUnit 与 Allure 生命周期离线测试，使用仓库内专用 `--basetemp`，并关闭真实 HTML/history 生成。
 
 **第二周串讲主线**：
 
@@ -588,7 +590,13 @@ TestContext 可选地包围多步骤业务流程：
   测试结束 -> LIFO cleanup
 
 Test Case -> pytest 权威收集 -> 并发池 / 串行池
-          -> 退出码 -> JUnit / Allure / Runner 产物
+          ├-> pytest 池级原始退出码 -> PoolExecutionResult -> Runner 最终退出码
+          ├-> JUnit 池级统计
+          └-> Allure 池级 raw -> 每池 merge_pool -> 最终 raw
+                                      -> 最后一次可选 HTML/history
+
+CollectionResult + PoolExecutionResult + Runner 最终退出码
+-> Runner execution result
 ```
 
 **周验收**：
@@ -617,21 +625,22 @@ Test Case -> pytest 权威收集 -> 并发池 / 串行池
 
 - `common/runtime_hooks/`
 - `common/base_request.py` 中 RuntimeObserver 的使用。
+- `common/request_middleware.py` 中 RuntimeObservationMiddleware 的 request 事件入口。
 - `quality/runtime_adapter.py`
 
 **课堂实践**：
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest `
-  tests/quality/test_common_runtime_hooks.py `
-  tests/quality/test_runtime_adapter.py -q
-```
+执行 `course/第15课-Runtime Hooks是旁观者接口.md` 第 15.1 节的完整安全命令。命令精确运行以下 10 条离线测试，禁用第三方 pytest 插件自动加载，清空项目默认 addopts，并使用仓库内专用 `--basetemp`：
+
+- `tests/quality/test_common_runtime_hooks.py`：默认 Noop、operation / stream lease 和业务异常优先；
+- `tests/quality/test_runtime_adapter.py`：Adapter 映射与 request metrics 局部 fail-open；
+- `tests/quality/test_common_quality_boundary.py`：`common` 无静态 Quality import，且 Quality 不可导入时内存 HTTP 仍可工作。
 
 **课后产出**：画出 `common -> 中性协议 <- quality adapter`，明确不存在 `common -> quality` 依赖。
 
 ### 第 16 课：Quality 开关、运行身份与生命周期
 
-**核心问题**：Quality 从哪里开启，一次运行、一个执行池和一个 worker 怎样获得可关联的身份？
+**核心问题**：Quality 从哪里开启，Runner 怎样在关闭时不新增副作用，并为一次运行和真正执行的各池建立可关联的父级身份？
 
 **通俗理解**：质检系统接入生产线前，必须先决定本轮是否启用，并给整批货、每条生产线和每个工位分配不会混淆的编号。
 
@@ -639,41 +648,39 @@ Test Case -> pytest 权威收集 -> 并发池 / 串行池
 
 - `quality/config.py` 如何解析 Quality、Semantic、Metrics 和 Flaky 的独立开关与依赖关系。
 - `create_quality_run_lifecycle()` 如何根据配置返回 `NoopQualityRunLifecycle` 或 `EnabledQualityRunLifecycle`。
-- Noop 路径为什么不创建 run ID、质量目录、JUnit 补充参数或质量产物。
+- Noop 路径为什么不创建新 run ID、质量目录、JUnit 补充参数或质量产物，同时也不负责清洗外部已有 Quality 环境变量。
 - Enabled 生命周期的 `prepare()`、`ensure_junit_args()`、`stage_environment()` 和 `finalize()`。
-- `run_id` 表示一次完整运行，`execution_id` 表示一个执行池或阶段，`worker_id` 表示 pytest master 或 xdist worker。
+- Runner 只有在权威收集成功且非 collect-only 后才创建 Quality 生命周期。
+- 无 `-n` 时完整集合进入 `serial-pool`；启用 `-n` 时才按 `parallel-pool` 与 `serial-pool` 计划执行，空池或终止池不进入对应 stage environment。
+- `run_id` 表示一次完整运行，当前 Runner 直接用语义池名作为 `execution_id`；`worker_id` 由第 17 课 pytest 插件在具体进程内确定。
 - `quality_stage_environment()` 如何把 parent run ID 和当前 execution ID 传入 pytest 执行阶段。
-- `quality/identifiers.py` 如何生成稳定 run、case、invocation、request event 和 failure 标识，随机值不能替代可关联身份。
-- Quality 开启时为什么需要确保存在 JUnit 产物，为后续 Case 与失败证据关联提供输入。
+- `quality/identifiers.py` 提供哪些标识符工具，以及为什么当前 Runner 主链不能虚构为调用了 `build_execution_id()`。
+- Quality 开启时为什么只是在参数层确保请求 JUnit 路径，不能据此断言 XML 文件已经生成。
 
 **代码入口**：
 
 - `quality/config.py`
 - `run_orchestration/quality_lifecycle.py`
 - `run_orchestration/environment.py`
+- `run_orchestration/runner.py`
+- `run_orchestration/pytest_execution.py`
 - `quality/identifiers.py`
 - `quality/runtime_context.py`
+- `quality/pytest_plugin_runtime.py`（仅静态确认下一课的 `worker_id` 边界）
 
-**课堂实践**：分别构造 Quality 关闭、配置错误和正常开启三种场景，判断生命周期类型、环境变量和应产生的身份。
+**课堂实践**：教师课前运行独立讲义第 15.1 节的完整安全命令。学生只预测并解释“Quality 关闭但外部已有旧身份”和“Enabled 单池”两个核心场景；“Enabled 双池”和“主开关非法”只作为教师题库。命令覆盖 `test_quality_config.py`、`test_quality_lifecycle.py`、`test_quality_identifiers.py` 和 `test_quality_run_master.py`，当前离线证据为 55 条通过；不访问真实 API。
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest `
-  tests/quality/test_quality_config.py `
-  tests/quality/test_quality_lifecycle.py `
-  tests/quality/test_quality_identifiers.py -q
-```
-
-**课后产出**：绘制以下身份链，并标出 Noop 分支不会产生哪些对象：
+**课后产出**：绘制以下调用与身份链，并标出 Noop 分支不会产生哪些对象：
 
 ```text
-quality/config.py
--> create_quality_run_lifecycle
-   ├─ 关闭或不可用 -> NoopQualityRunLifecycle
-   └─ 开启 -> EnabledQualityRunLifecycle
-              -> run_id
-              -> execution_id
-              -> pytest stage environment
-              -> worker_id 在 pytest 进程内确定
+Runner -> create_quality_run_lifecycle()
+          ├─ 配置关闭或普通初始化异常 -> 返回Noop生命周期
+          └─ 有效开启 -> 返回Enabled生命周期
+
+Enabled父级配置 ==> 单一run_id
+真正执行池的stage_id ==> execution_id
+run_id + execution_id + output_dir ==> pytest stage environment
+stage environment -. 第17课pytest插件读取 .-> worker_id
 ```
 
 ### 第 17 课：pytest 插件把生命周期写成 worker 原始账本

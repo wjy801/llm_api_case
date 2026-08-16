@@ -9,16 +9,16 @@
 | 建议时长 | 60～90 分钟 |
 | 核心问题 | 多个模块都需要媒体生成和账单查询时，代码应该放在哪里？ |
 | 讲解重点 | 兼容门面、领域 Task、组合式 Capability、调用链、workload/control |
-| 代码入口 | `common/base_task.py`、`common/task_capabilities/`、`module/smoke/task.py`、`module/video_model/task.py` |
-| 轻量验证 | `tests/test_base_task.py`、两份 Smoke billing assertion 测试 |
+| 代码入口 | `common/base_task.py`、`common/task_capabilities/`、`module/smoke/task.py`、`module/video_model/task.py`、`module/material_library/task.py`、`module/image_model/task.py` |
+| 轻量验证 | 必讲 `tests/test_base_task.py`；两份 Smoke billing assertion 测试作为选读证据 |
 | 安全边界 | 使用 Fake Request Client 和内存 Response，不访问真实模型、账单或 usage 接口 |
-| 课后产出 | 能力落位决策树、两条真实调用链和三分钟复述 |
+| 课后产出 | 能力落位表、能力来源与实际兼容调用链、推荐新能力链、三分钟复述 |
 
 ### 1.1 学完本课，你应该能够
 
 1. 解释 BaseTask 为什么是兼容门面，而不是新增领域逻辑的默认扩展点。
 2. 沿源码复述 BaseTask 如何把媒体和账单能力委托给两个窄 Capability。
-3. 区分继承关系、函数调用链和 Request Client 对象流。
+3. 区分继承关系、函数调用链，以及 Request Client 作为参数的依赖传递。
 4. 根据变化范围判断新动作进入领域 Task，还是复用或扩展窄 Capability。
 5. 区分 workload 与 control 流量，并说明该标签不改变 HTTP 业务控制流。
 
@@ -30,30 +30,32 @@
 - 不展开 Runner 的权威收集与分池；第 13 课学习。
 - 不执行真实媒体生成、余额、usage 或计费校验。
 - 不修改当前继承结构和公共方法签名。
-- 不把 Assertions、Request 端点或 Test 静态输入塞进 Capability。
+- 不把最终 Assertions、pytest 场景输入或 Session 生命周期塞进 Capability；已有 Capability 可以持有其稳定共享能力所需的 path 配置。
 
 ### 1.3 课堂必讲路径
 
 | 环节 | 对应章节 | 建议时间 |
 | --- | --- | ---: |
-| 问题、约束与三种角色 | 第 2～5 节 | 12～15 分钟 |
-| 媒体兼容链与复合流程 | 第 6～8 节 | 18～21 分钟 |
-| Billing 与 workload/control | 第 9～10 节 | 12～15 分钟 |
-| 落位决策与反模式 | 第 11～12 节 | 10～12 分钟 |
-| 离线证据、活动、总图和验收 | 第 13～17、20 节 | 14～17 分钟 |
-| 课堂小测 | 第 18 节 | 3～5 分钟 |
+| 问题、约束与三种角色 | 第 2～5 节 | 12～14 分钟 |
+| 当前兼容链与推荐新能力链 | 第 6～8 节 | 18～20 分钟 |
+| Billing 与 workload/control | 第 9～10 节 | 10～12 分钟 |
+| 落位决策、反模式与课堂活动 | 第 11～12、14 节 | 11～13 分钟 |
+| 核心离线证据、第 11 课边界回顾、本课增量主图与继承补图 | 第 13.1～13.3、15.1、15.3 节 | 13～15 分钟 |
+| 必讲误区、复述与课堂验收 | 第 16 节必讲项、第 17～18 节 | 8～10 分钟 |
 | 缓冲与提问 | 全课 | 5 分钟 |
 
-总计约 74～90 分钟。第 13 节命令不额外计时；第 8.4、9.4 和 10.4 节可选讲。
+总计约 77～89 分钟。第 13 节命令课前运行，不占课堂时间；第 8.4、9.4、10.4、13.4、15.2 和 15.4 节为选读。第 16 节课堂只讲误区一、三、五、九，其余进入题库。
 
 ### 1.4 课堂最短路径
 
 ```text
 第 2～5 节：分清门面、领域 Task、Capability
--> 第 6～8 节：追踪媒体兼容链
+-> 第 6～8 节：区分当前兼容链与推荐新能力链
 -> 第 9～10 节：追踪 Billing 与流量角色
--> 第 11、14 节：完成三个动作的落位判断
--> 第 15、17、18、20 节：更新关系图组、复述、小测、验收
+-> 第 11～12、14 节：完成三个动作的落位判断并识别反模式
+-> 第 13.1～13.3 节：读取核心离线证据
+-> 第 15.1、15.3 节：区分调用链与继承关系
+-> 第 16 节必讲误区、17～18 节：复述并完成课堂验收
 ```
 
 ---
@@ -225,7 +227,25 @@ MediaGenerationCapability
 BillingCapability
 ```
 
-它们是 dataclass 对象，不继承 BaseTask。BaseTask 在需要时构造对象并显式传入 Request Client。
+它们是 frozen dataclass 组合对象，不继承 BaseTask。涉及 HTTP 或 Polling 的终端门面方法按需构造对象，并把 Request Client 显式传入 Capability；`format_response_body()`、`get_request_id_from_response()` 等静态适配则直接调用 BillingCapability 的类级 helper，不需要持有实例状态。
+
+当前生产源码中，只有 `BaseTask` 直接构造这两个 Capability；尚无“领域 Task 直接构造或注入新 Capability”的生产实例。因此必须区分：
+
+```text
+能力来源（源码事实，不是调用链）：
+领域 Task --继承--> BaseTask
+
+实际兼容调用链（源码事实）：
+Test / 领域 Task 场景方法
+-> BaseTask 兼容方法（可由领域 Task 实例继承获得）
+-> 已有 Capability
+-> Request Client
+
+推荐新能力链（设计规范，当前暂无生产实例）：
+领域 Task 本地方法 -> 显式构造或注入窄 Capability -> Request Client
+```
+
+推荐链不是要求所有领域 Task 都持有 Capability。只有满足第 11 节跨模块稳定复用条件的新能力，才采用该组合方式；单领域逻辑仍直接留在领域 Task。
 
 Capability 不拥有：
 
@@ -246,7 +266,7 @@ BaseRequest 或其子类实例
 
 ---
 
-## 6. BaseTask 怎样构造窄 Capability
+## 6. 当前兼容链与推荐的新能力链
 
 ### 6.1 MediaGenerationCapability
 
@@ -274,7 +294,37 @@ usage_records_path
 
 Capability 本身不保存 Request Client；每次方法调用显式接收 client。
 
-### 6.3 为什么不是 BaseTask 多重继承
+### 6.3 推荐的新 Capability 怎样接入领域 Task
+
+新共享能力一旦满足抽取条件，接入顺序应是：
+
+```text
+在 common/task_capabilities/ 定义职责单一的 Capability
+-> 由需要该能力的领域 Task 显式构造，或由测试/fixture 创建后通过构造参数传入
+-> 领域 Task 的本地业务方法委托 Capability
+-> Capability 显式接收 Request Client
+-> Capability 调用 request_client.post()/get()/poll_get()
+```
+
+fixture 只负责显式创建 Capability 或 Task，再由测试代码通过构造参数完成装配；pytest 不会自动向任意普通 Task 对象注入 fixture。
+
+例如未来真的实现 `ContentModerationCapability` 时，推荐关系是：
+
+```text
+ImageTask.moderate_content()
+-> ImageTask 持有或接收 ContentModerationCapability
+-> ContentModerationCapability.submit_and_poll(request_client, payload)
+-> Request Client
+
+VideoTask.moderate_content()
+-> VideoTask 持有或接收同一个窄 Capability 类型
+-> ContentModerationCapability.submit_and_poll(request_client, payload)
+-> Request Client
+```
+
+这是推荐设计示意，不是当前源码调用链。新能力不得为了提供公共入口而再向 `BaseTask` 增加 `moderate_content()`；否则所有领域 Task 又被迫继承一个并非都需要的方法。
+
+### 6.4 为什么不是 BaseTask 多重继承
 
 组合关系：
 
@@ -295,17 +345,21 @@ BaseTask
 
 ## 7. 简单媒体调用的真实路径
 
-以继承入口 `create_chat_completion()` 为例：
+以继承入口 `create_chat_completion()` 为例，先只看函数调用：
 
 ```text
 Test 或 SmokeTask 场景方法
--> BaseTask.create_chat_completion()
--> BaseTask._media_capability()
--> MediaGenerationCapability.create_chat_completion()
--> request_client.post("/v1/chat/completions", json=payload)
--> BaseRequest.request()
--> Response
+-> 调用 BaseTask.create_chat_completion()
+
+BaseTask.create_chat_completion()
+├─ 调用 self._media_capability()
+└─ 调用该工厂返回对象的
+   MediaGenerationCapability.create_chat_completion()
+   -> 调用 request_client.post("/v1/chat/completions", json=payload)
+   -> BaseRequest.post() 调用 BaseRequest.request()
 ```
+
+`_media_capability()` 返回 Capability 对象，不会调用 `create_chat_completion()`；后两个调用都是 `BaseTask.create_chat_completion()` 方法体发起的。把它们写成 `_media_capability() -> Capability.create_chat_completion()` 会虚构调用边。
 
 ### 7.1 Capability 调用的是通用 Request Client 方法
 
@@ -333,7 +387,17 @@ MaterialLibraryTask.create_ark_virtual_portrait_group()
 
 ### 7.3 Response 返回给谁
 
-Capability 返回原始 Response；BaseTask 门面继续返回同一个 Response。最终业务断言仍由 Test 或 Assertions 完成。
+返回链与上面的调用链方向相反：
+
+```text
+BaseRequest.request()
+-> 返回原始 Response 给 BaseRequest.post()
+-> 返回同一个 Response 给 MediaGenerationCapability.create_chat_completion()
+-> 返回同一个 Response 给 BaseTask.create_chat_completion()
+-> 返回给最初的 Test 或 SmokeTask 场景方法
+```
+
+Response 是返回对象，不是下一个调用者。最终业务断言仍由 Test 或 Assertions 完成。
 
 ---
 
@@ -343,7 +407,7 @@ Capability 返回原始 Response；BaseTask 门面继续返回同一个 Response
 
 ### 8.1 BaseTask 门面做什么
 
-BaseTask 创建 MediaGenerationCapability，并传入三个绑定 callback：
+`BaseTask.create_and_poll_media_generation()` 先调用 `_media_capability()` 获得一个 Capability 对象，再调用该对象的复合方法，并传入三个绑定 callback：
 
 ```text
 create = self.create_media_generation
@@ -364,6 +428,8 @@ poll = self.poll_media_generation_result
 ### 8.3 为什么传 callback
 
 callback 保留门面方法与子类可能的定制点，同时让复合流程由 Capability 统一组织。当前默认 callback 最终仍会回到 MediaGenerationCapability 的单步方法。
+
+当前默认实现还有一个容易忽略的边界：三个 BaseTask 单步 callback 各自在执行时再次调用 `_media_capability()`，因此 create、extract、poll 不依赖“同一个 Capability 实例”保存状态。这里复用的是稳定合同与配置，不是对象身份；Capability 本身是 frozen、无 Request Client 状态的组合对象。
 
 这不是：
 
@@ -448,7 +514,7 @@ BaseTask 仍保留等待后查询、参数分派和 pytest skip 等兼容逻辑�
 - media task create；
 - media polling。
 
-MediaGenerationCapability 使用 `RuntimeTrafficRole.WORKLOAD`。
+MediaGenerationCapability 中进入 HTTP、Polling 或外层 Async Task scope 的操作使用 `RuntimeTrafficRole.WORKLOAD`。纯 ID 提取等本地方法不会因为属于该 Capability 就自动产生 workload 请求。
 
 ### 10.2 control
 
@@ -458,7 +524,7 @@ MediaGenerationCapability 使用 `RuntimeTrafficRole.WORKLOAD`。
 - usage records；
 - usage settlement polling。
 
-BillingCapability 使用 `RuntimeTrafficRole.CONTROL`。
+BillingCapability 中余额、usage HTTP 请求和结算 Polling 的观察元数据使用 `RuntimeTrafficRole.CONTROL`。Key 查找、request ID 提取、Response 格式化和单纯等待本身不创建带 control 角色的请求。
 
 ### 10.3 角色不会改变什么
 
@@ -493,6 +559,8 @@ workload/control 标签不会自动改变：
          -> 至少两个模块已稳定复用，且规则因同一原因变化吗？
             ├─ 否 -> 先留在领域 Task，等待证据
             └─ 是 -> 新建或扩展职责单一的窄 Capability
+                     -> 由需要它的领域 Task 显式构造或注入后组合使用
+                     -> 不增加 BaseTask 入口
 ```
 
 ### 11.1 何时留在领域 Task
@@ -513,7 +581,19 @@ workload/control 标签不会自动改变：
 4. 不需要大量领域条件分支；
 5. 依赖可以通过参数显式传入。
 
-### 11.3 为什么不再向 BaseTask 加方法
+### 11.3 新 Capability 由谁接入
+
+Capability 只定义共享机制，不主动进入所有模块。需要它的领域 Task 才是接入所有者：
+
+```text
+领域 Task 决定何时调用、传什么领域参数
+-> Capability 执行跨模块稳定共享机制
+-> Request Client 负责 HTTP、Retry、Polling 和 Middleware
+```
+
+领域 Task 显式构造适合配置固定且对象轻量的 Capability；需要替换 Fake、共享配置或独立测试时，可以由测试或 fixture 显式创建 Capability/Task，再通过构造参数完成装配。无论采用哪种方式，依赖都必须在领域 Task 的构造或本地方法中可见。
+
+### 11.4 为什么不再向 BaseTask 加方法
 
 BaseTask 的目标是保持兼容面稳定。新增公共实现进入 BaseTask 会扩大所有子类的认知和回归范围，即使某些子类永远不会使用它。
 
@@ -554,7 +634,7 @@ VideoTask -> ImageTask -> SmokeTask
 
 ---
 
-## 13. 轻量验证：33 条离线测试
+## 13. 轻量验证：22 条核心测试与 11 条选读测试
 
 ### 13.1 安全命令
 
@@ -570,7 +650,7 @@ try {
   $env:QUALITY_ENABLE = '0'
   $evidenceRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('api-case-lesson12-' + [guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Path $evidenceRoot -ErrorAction Stop | Out-Null
-  & .\.venv\Scripts\python.exe -m pytest tests/test_base_task.py tests/test_smoke_billing_assertions.py tests/test_smoke_billing_interval.py --basetemp "$evidenceRoot\pytest-temp" --alluredir "$evidenceRoot\allure-results" -p no:cacheprovider -q
+  & .\.venv\Scripts\python.exe -m pytest tests/test_base_task.py --basetemp "$evidenceRoot\pytest-temp" --alluredir "$evidenceRoot\allure-results" -p no:cacheprovider -q
   $pytestExitCode = $LASTEXITCODE
 }
 finally {
@@ -598,14 +678,10 @@ if ($pytestExitCode -ne 0) {
 ### 13.2 当前结果
 
 ```text
-33 passed
+22 passed
 ```
 
-分布：
-
-- `tests/test_base_task.py`：22 条；
-- `tests/test_smoke_billing_assertions.py`：6 条；
-- `tests/test_smoke_billing_interval.py`：5 条。
+课堂核心证据只运行 `tests/test_base_task.py` 的 22 条测试。它们直接服务本课“兼容门面、Capability 委托、Request Client 边界和真实类身份”的主线。
 
 ### 13.3 22 条 BaseTask 测试证明什么
 
@@ -621,7 +697,15 @@ if ($pytestExitCode -ne 0) {
 
 这些测试主要从公共行为观察结果；“BaseTask 方法具体委托哪个 Capability”还需要结合当前源码确认。
 
-### 13.4 11 条 billing assertion 测试证明什么
+### 13.4 11 条 billing assertion 测试证明什么（选读）
+
+这 11 条测试不占课堂时间。需要课后核对 Assertions 边界时，再运行：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest `
+  tests/test_smoke_billing_assertions.py `
+  tests/test_smoke_billing_interval.py -q
+```
 
 两份测试只验证 SmokeAssertions 的 Decimal 账单区间：
 
@@ -630,7 +714,7 @@ if ($pytestExitCode -ne 0) {
 - 越界值失败；
 - 多次 usage 求和使用相同容差。
 
-它们用于说明 Billing 流程最终仍需 Assertions，但不直接证明 BillingCapability 的 HTTP 委托。
+它们用于说明 Billing 流程最终仍需 Assertions，但不直接证明 BillingCapability 的 HTTP 委托，因此不能作为本课“Capability 委托成立”的主证据。
 
 ### 13.5 不能证明什么
 
@@ -678,9 +762,9 @@ image、video、smoke 都提出一个尚未实现的新需求：
 端点和状态合同与现有媒体任务生命周期一致。
 ```
 
-判断：窄扩展现有 `MediaGenerationCapability`，由需要该动作的领域 Task 组合使用。
+判断：窄扩展现有 `MediaGenerationCapability`，由需要该动作的领域 Task 通过本地方法显式组合使用。
 
-原因：需求跨模块，且取消属于既有媒体任务生命周期责任；无需新建 Capability，更不能向 BaseTask 增加新入口。
+原因：需求跨模块，且取消属于既有媒体任务生命周期责任；无需新建 Capability，更不能向 BaseTask 增加新入口。当前源码尚无领域 Task 直接组合 Capability 的生产实例，因此这是推荐落地方式，不是对现有调用链的描述。
 
 ### 14.3 动作 C
 
@@ -691,9 +775,9 @@ image 与 video 都提出独立于媒体生成的新内容安全审核流程：
 现有 MediaGenerationCapability 与 BillingCapability 均无法表达。
 ```
 
-判断：新建职责单一的 `ContentModerationCapability`，由 ImageTask 和 VideoTask 显式组合。
+判断：新建职责单一的 `ContentModerationCapability`，由 ImageTask 和 VideoTask 显式构造或注入后组合。
 
-原因：已经出现跨模块稳定复用，但责任既不属于媒体生成生命周期，也不属于 Billing；仍不得向 BaseTask 增加公共入口。
+原因：已经出现跨模块稳定复用，但责任既不属于媒体生成生命周期，也不属于 Billing；仍不得向 BaseTask 增加公共入口。该 Capability 目前不存在，课堂只设计依赖方向，不把它画成当前源码实线。
 
 ### 14.4 验收重点
 
@@ -707,68 +791,171 @@ image 与 video 都提出独立于媒体生成的新内容安全审核流程：
 
 ---
 
-## 15. 第十二版累积关系图组
+## 15. 第十二版累积链路总图：继承 TestContext 边界，展开 Task 与 Capability
 
-调用链、对象流、继承关系和观察关系回答的是四个不同问题，不能用同一种实线串成一条含义不明的流水线。本节拆成四张图；每张图只表达一种关系。
+累积图的原则不是提前画完未来课程，而是让已掌握边界保持稳定，再增量展开本课约束。因此第 15.1 节继承第 11 课的 TestContext 与 ContextVar 成果，只展开本课新增的 Task、BaseTask 与 Capability 关系；运行编排和质量报告仅保留后续课程接口。第 15.2～15.4 节是对象、继承和观察关系补图，不能替代累积主图。
 
-### 15.1 函数调用链：谁调用谁
+### 15.1 累积主图：继承第 11 课，只增量展开 Task 与 Capability
+
+本图以第 11 课累积图为底稿，继续保留 fixture 模式、当前手动模式、不使用 TestContext 模式、cleanup 栈和 ContextVar 传播。为控制课堂负荷，第 11 课已经讲清的内部步骤折叠在稳定节点中；本课只展开 BaseTask、领域 Task、Capability 及其进入 Request Client 的真实边界。第 13～22 课只保留两个虚线接口，不提前展开内部节点。
+
+课堂讲图按约 13～15 分钟控制：第 11 课稳定区只用约 2 分钟确认三种模式、cleanup 栈和 ContextVar 仍然存在；约 9～11 分钟讲本课业务增量与三条 Request 分支；最后约 1～2 分钟说明未来课程只保留接口。教师不逐边重讲已经在第 11 课验收过的细节。
 
 ```mermaid
 flowchart TD
-    subgraph DOMAIN_PATH["领域 Request 调用链"]
-        DOMAIN_TEST["Test"]
-        DOMAIN_TASK["领域 Task.domain_method()"]
-        DOMAIN_REQUEST["领域 Request.domain_method()"]
-        DOMAIN_VERB["request_client.post() / get()<br/>BaseRequest 实现"]
-        DOMAIN_BASE_REQUEST["BaseRequest.request()"]
+    subgraph CONTEXT["第 11 课稳定边界（保留，细节折叠）"]
+        PYTEST["pytest 收集到目标测试项"]
+        USE{"本测试怎样使用 TestContext?"}
+        FIXTURE["fixture 模式（推荐）<br/>fixture setup 创建并 yield TestContext"]
+        MANUAL["当前手动模式<br/>setup_method 创建 TestContext 与 Request<br/>同一 Request 作为 cleanup callback 参数"]
+        NONE["不使用 TestContext"]
+        TEST["Test<br/>场景、输入与预期"]
+        VARS["fixture 变量流<br/>完整 Response：extract / require<br/>SSE：Task 消费关闭后由 Test set"]
+        STACK["当前实例 cleanup 栈<br/>add_cleanup 只负责压栈"]
+        CLEANUP["TestContext.cleanup()<br/>按 LIFO pop；失败继续执行<br/>栈清空后汇总异常"]
+        CALL_END["Test call 阶段结束<br/>正常返回或抛异常"]
+        FIXTURE_END["fixture teardown<br/>finally 调用 context.cleanup()"]
+        MANUAL_END["teardown_method<br/>try 调用 self.test_context.cleanup()"]
+        NONE_END["普通 pytest teardown<br/>没有 TestContext cleanup"]
+        CLIENT_CLOSE["manual finally<br/>self.request.close()"]
+        PYTEST_END["pytest teardown 结束<br/>或报告 cleanup 异常"]
+        CONTEXTVAR["ContextVar 传播（第 11 课稳定）<br/>提交线程 copy_context → worker context.run → Future<br/>不会自动复制 TestContext 变量字典"]
 
-        DOMAIN_TEST -->|调用| DOMAIN_TASK
-        DOMAIN_TASK -->|调用| DOMAIN_REQUEST
-        DOMAIN_REQUEST -->|调用| DOMAIN_VERB
-        DOMAIN_VERB -->|调用| DOMAIN_BASE_REQUEST
+        PYTEST -->|根据 fixture 声明或测试代码选择| USE
+        USE -->|声明 fixture| FIXTURE
+        USE -->|setup_method 手动创建| MANUAL
+        USE -->|均未使用| NONE
+        FIXTURE -->|yield 同一个 TestContext 对象| TEST
+        MANUAL -->|使用 self.test_context 与 self.request| TEST
+        NONE -->|运行原有测试链| TEST
+        TEST -->|fixture 模式按响应形态读写动态值| VARS
+        VARS -->|后续步骤读取变量| TEST
+        TEST -->|fixture 或手动模式：资源创建后 add_cleanup| STACK
+        TEST -->|其他正常或异常出口结束 call 阶段| CALL_END
+        CALL_END -->|fixture 模式：pytest 恢复 fixture| FIXTURE_END
+        CALL_END -->|手动模式：pytest 调用 teardown_method| MANUAL_END
+        CALL_END -->|不使用模式| NONE_END
+        FIXTURE_END -->|调用| CLEANUP
+        MANUAL_END -->|try 调用| CLEANUP
+        STACK -->|提供 LIFO callback| CLEANUP
+        CLEANUP -->|fixture 调用：返回或抛 ContextCleanupError| PYTEST_END
+        CLEANUP -->|手动调用：正常或异常后都进入 finally| CLIENT_CLOSE
+        CLIENT_CLOSE -->|close 完成后结束或继续抛 cleanup 异常| PYTEST_END
+        NONE_END -->|完成原有 teardown| PYTEST_END
+        PYTEST -. "线程任务启用时使用独立传播机制" .-> CONTEXTVAR
     end
 
-    subgraph CAPABILITY_PATH["兼容门面与 Capability 调用链"]
-        CAPABILITY_CALLER["Test 或领域 Task"]
-        FACADE_METHOD["BaseTask 兼容方法"]
-        CAPABILITY_METHOD["MediaGenerationCapability.method()<br/>或 BillingCapability.method()"]
-        CAPABILITY_VERB["request_client.post() / get()<br/>BaseRequest 实现"]
-        BASE_REQUEST["BaseRequest.request()"]
-        CAPABILITY_POLL["request_client.poll_get()<br/>BaseRequest 实现"]
-        POLL_POLICY["BaseRequest._poll_get_with_policy()"]
+    subgraph BUSINESS["本课增量：Task、Capability 与 Request Client"]
+        DOMAIN_TASK["领域 Task 本地方法<br/>新领域逻辑默认落点"]
+        DOMAIN_REQUEST["领域 Request<br/>BaseRequest 子类"]
+        FACADE["BaseTask 兼容方法<br/>稳定签名、默认值与适配"]
+        FACTORY["BaseTask._media_capability()<br/>或 _billing_capability()"]
+        CAPABILITY["MediaGenerationCapability<br/>或 BillingCapability"]
+        NEW_CAPABILITY["未来新窄 Capability<br/>当前暂无生产实例"]
 
-        CAPABILITY_CALLER -->|调用| FACADE_METHOD
-        FACADE_METHOD -->|调用| CAPABILITY_METHOD
-        CAPABILITY_METHOD -->|同步请求方法调用| CAPABILITY_VERB
-        CAPABILITY_VERB -->|调用| BASE_REQUEST
-        CAPABILITY_METHOD -->|轮询方法调用| CAPABILITY_POLL
-        CAPABILITY_POLL -->|调用| POLL_POLICY
+        REQUEST["BaseRequest.request()"]
+        POLL["BaseRequest._poll_get_with_policy()"]
+        NO_ATTACH["BaseRequest._request_without_attach()"]
+        SINGLE["BaseRequest._send_single_group(context)<br/>固定只调用一次 _send()"]
+        WITH_RETRY["BaseRequest._send_with_retry()"]
+        EXECUTOR["RetryExecutor.execute<br/>send_once = BaseRequest._send"]
+        SEND["BaseRequest._send(context)<br/>Middleware 边界"]
+        SESSION["requests.Session.request()"]
+        RESPONSE["requests.Response"]
+        RESULT["完整 Response 或领域结果"]
+        SSE_OWNER["上层 Task 持有 stream=True Response<br/>负责消费并关闭"]
+        ASSERTIONS["领域 Assertions<br/>结构与业务判断"]
+
+        TEST -->|调用领域动作| DOMAIN_TASK
+        TEST -->|也可调用既有兼容入口| FACADE
+        DOMAIN_TASK -->|领域端点调用| DOMAIN_REQUEST
+        DOMAIN_TASK -->|调用继承获得的既有入口| FACADE
+        FACADE -->|调用 Capability 工厂| FACTORY
+        FACTORY -->|返回组合对象| FACADE
+        FACADE -->|调用工厂返回对象的方法| CAPABILITY
+        CAPABILITY -->|request_client.post / get| REQUEST
+        CAPABILITY -->|request_client.poll_get| POLL
+        DOMAIN_REQUEST -->|self.post / get| REQUEST
+        DOMAIN_REQUEST -->|self.poll_get| POLL
+        DOMAIN_TASK -. "推荐：本地构造或注入" .-> NEW_CAPABILITY
+        NEW_CAPABILITY -. "推荐调用窄 Request Client 接口" .-> REQUEST
+
+        REQUEST -->|无 Retry：调用 _build_request_context 并接收 context 后调用| SINGLE
+        SINGLE -->|固定一次调用| SEND
+        REQUEST -->|配置 Retry 时调用| WITH_RETRY
+        WITH_RETRY -->|调用 execute，传入 send_once=_send| EXECUTOR
+        EXECUTOR -->|每次尝试调用| SEND
+
+        POLL -->|每轮查询调用| NO_ATTACH
+        NO_ATTACH -->|无 Retry：构造 context 后调用| SINGLE
+        NO_ATTACH -->|有 Retry：调用| WITH_RETRY
+
+        SEND -->|before Middleware 后调用| SESSION
+        SESSION -->|返回后执行 after Middleware| RESPONSE
+        RESPONSE -->|普通请求沿调用栈返回| RESULT
+        RESPONSE -->|Polling 每轮返回给 _request_without_attach| NO_ATTACH
+        NO_ATTACH -->|返回 Response 与 logger 给 evaluator| POLL
+        POLL -->|终态 Response 返回| RESULT
+        POLL -->|最终 PollingTimeoutError 等异常沿调用栈抛出| CALL_END
+        RESPONSE -->|stream=True：未消费流返回上层 Task| SSE_OWNER
+        SSE_OWNER -->|消费并关闭后返回 chunks 或领域结果| TEST
+        RESULT -->|返回原 Test| TEST
+        TEST -->|接收完整结果后调用| ASSERTIONS
+        ASSERTIONS -->|正常返回或抛 AssertionError| CALL_END
     end
+
+    RUN_FUTURE["运行编排（第 13～14 课）<br/>权威收集、分池、退出与产物"]
+    QUALITY_FUTURE["质量与报告（第 15～22 课）<br/>旁路观察、可信治理与汇总"]
+
+    RUN_FUTURE -. "后续课程展开；本课只接收目标测试项" .-> PYTEST
+    RESPONSE -. "后续课程可旁路观察运行事实" .-> QUALITY_FUTURE
+    PYTEST_END -. "后续课程可消费测试与产物事实" .-> QUALITY_FUTURE
 ```
 
-这张图的每条箭头都只表示“源节点调用目标节点”。分支表示方法族的两种可能出口，不表示一次请求同时经过同步与 Polling 两条链。`BaseTask 兼容方法 -> Capability.method()` 仅概括直接委托的终端方法：create-and-poll 的真实编排还会经过 callback，部分 Billing 入口还会经过 BaseTask 的参数分派、Key 查找或 skip 翻译等适配，详见第 8、9 节。`BaseRequest 实现` 写在 Request Client 方法节点内部，只说明运行时方法归属，不额外画一条“归属”箭头。图中没有 Response 和 Assertions，因为它不表达对象流。Capability 调用的是 Request Client 的通用方法，不会先调用领域 Request 的同名方法。
+读图规则：
 
-### 15.2 对象流：数据怎样变化
+1. 第 11 课的三种 TestContext 模式、cleanup 栈和 ContextVar 传播仍在主图中；本课只折叠其内部细节，不删除既有边界。
+2. 当前能力来源是“领域 Task --继承--> BaseTask”，继承关系仍由第 15.3 节补图表达；运行时只有 Test 或领域 Task 实际调用兼容方法时才进入 BaseTask 链。
+3. BaseTask 兼容方法调用 Capability 工厂，接收返回对象后再调用其业务方法；工厂本身不调用 Capability 方法。
+4. 普通请求无 Retry 时：`request()` 调用 `_build_request_context()`并接收 context，再调用 `_send_single_group(context)`；`_send_single_group()`固定只调用一次 `_send()`。
+5. 普通请求有 Retry 时：`request()`直接调用 `_send_with_retry()`，后者调用 `RetryExecutor.execute(send_once=_send)`；不会先经过 `_send_single_group()`。每次 `_send()`返回 Response 或把传输异常交回 RetryExecutor；可重试且预算充足时再次尝试，只有不可重试、次数耗尽或时间预算不足后的最终未恢复异常才向外抛出。主图刻意不把一次尝试的 Session 异常直接连到 Test call 结束。
+6. Polling 每轮由 `_poll_get_with_policy()`调用 `_request_without_attach()`；后者再按是否配置 Retry 选择 `_send_single_group()`或 `_send_with_retry()`，不会回到 `BaseRequest.request()`。
+7. Retry 和 Polling 由 Request Client 按策略执行；SSE 只通过 `stream=True`取得未消费 Response，再由上层 Task 负责消费和关闭。Response 或领域结果返回 Test 后，Test 才调用 Assertions。
+8. Test call 正常结束或最终未恢复的请求、Polling、业务或断言异常向外抛出后，pytest 才进入对应 teardown；Assertions、cleanup 栈和 Request Client 都不会直接启动 pytest teardown。
+9. 第 13～22 课只保留两个虚线接口。虚线表示后续课程或尚未落地的推荐关系，不是本课需要展开的真实内部调用链。
+
+### 15.2 对象流：参数、上下文与返回值（选读）
 
 ```mermaid
 flowchart LR
     STATIC_INPUT["Test 静态输入"]
     PAYLOAD["payload 字典"]
-    REQUEST_DATA["HTTP 请求数据"]
-    RESPONSE_DATA["HTTP 响应数据"]
-    RESPONSE_OBJECT["requests.Response 对象"]
-    EXPECTATION["Assertions 的实际输入"]
+    PATH_KWARGS["path + kwargs"]
+    CONTEXT["RequestContext"]
+    SEND_INPUT["method + url + kwargs"]
+    RESPONSE["requests.Response"]
+    TEST_INPUT["Test 接收的完整结果"]
+    ASSERT_INPUT["Assertions 实际输入"]
 
     CREATE_RESPONSE["异步创建 Response"]
     TASK_ID["task_id 值"]
     POLL_INPUT["Polling 查询输入"]
     FINAL_RESPONSE["最终 Response"]
 
-    STATIC_INPUT --> PAYLOAD --> REQUEST_DATA --> RESPONSE_DATA --> RESPONSE_OBJECT --> EXPECTATION
-    CREATE_RESPONSE --> TASK_ID --> POLL_INPUT --> FINAL_RESPONSE
+    STATIC_INPUT -->|构造| PAYLOAD
+    PAYLOAD -->|作为 json 等调用级参数| PATH_KWARGS
+    PATH_KWARGS -->|构造| CONTEXT
+    CONTEXT -->|发送前读取| SEND_INPUT
+    SEND_INPUT -->|Session 返回| RESPONSE
+    RESPONSE -->|沿调用栈逐层返回| TEST_INPUT
+    TEST_INPUT -->|Test 传入| ASSERT_INPUT
+
+    CREATE_RESPONSE -->|提取字段| TASK_ID
+    TASK_ID -->|构造路径或参数| POLL_INPUT
+    POLL_INPUT -->|达到终态后获得| FINAL_RESPONSE
 ```
 
-这里的箭头只表示数据或对象流转，不表示 `payload` 直接调用 Response，也不表示 Assertions 是 BaseRequest 的内部步骤。Billing 的 `±0.01` 判断接收 Response 对象，但仍属于 Assertions。
+这里的箭头只表示数据构造、作为输入和对象返回，不表示 `payload`、RequestContext 或 Response 会调用下一个函数。RequestContext 是每次请求独立创建的可变载体，Middleware 可以写入其 attributes；独立不等于不可变。Billing 的 `±0.01` 判断接收 Response 对象，但仍属于 Assertions。
 
 ### 15.3 继承关系：能力从哪里获得
 
@@ -788,12 +975,12 @@ flowchart BT
 
 虚线只表示类继承与 MRO，不表示运行时一定先调用子类方法再调用 BaseTask。只有 Test 调用继承方法，或领域方法显式调用 `self.create_and_poll_media_generation()` 时，才进入第 15.1 节的门面调用链。
 
-### 15.4 观察关系：运行时角色怎样标记
+### 15.4 观察关系：运行时角色怎样标记（选读）
 
 ```mermaid
 flowchart LR
-    MEDIA["MediaGenerationCapability 操作"]
-    BILLING["BillingCapability 操作"]
+    MEDIA["MediaGenerationCapability<br/>直接 HTTP / Polling 或外层 Async Task scope"]
+    BILLING["BillingCapability<br/>HTTP / Polling scope"]
     WORKLOAD["workload 观察角色"]
     CONTROL["control 观察角色"]
     HOOKS["common.runtime_hooks"]
@@ -804,11 +991,13 @@ flowchart LR
     CONTROL -. 旁路观察 .-> HOOKS
 ```
 
-虚线表示 metadata 与旁路观察，不是 HTTP 调用。Quality 关闭时，该观察关系不应改变业务 Response 和原始异常。
+虚线表示 metadata 与旁路观察，不是 HTTP 调用。直接媒体单步方法进入 HTTP 或 Polling scope，复合 create-and-poll 进入外层 Async Task scope；嵌套单步 scope 会复用活动 operation。Billing control 当前标记实际的 HTTP 或 Polling 观察操作。本地 Key 查找、ID 提取、格式化和单纯等待不自动产生流量角色。Runtime Hooks 的普通 `Exception` 由安全包装隔离；Quality 关闭时使用 Noop Hooks，均不应改变业务 Response 和原始业务异常。
 
 ---
 
 ## 16. 常见误区
+
+课堂必讲误区一、三、五、九，分别守住 BaseTask、组合关系、抽象时机和 Capability 粒度四条边界。其余六项作为课后题库，不逐条占用课堂时间。
 
 ### 误区一：多个领域 Task 继承 BaseTask，所以新方法都加 BaseTask
 
@@ -859,27 +1048,55 @@ BaseTask 是兼容门面。它保留现有文本、图片、异步媒体和 Bill
 
 新领域行为默认进入对应模块 Task。VideoTask 可以包装模型专用 PollingPolicy 并复用公共媒体流程；MaterialLibraryTask 通过 MaterialLibraryRequest 表达素材领域端点；SmokeTask 保存流式消费和 Smoke 场景。领域 Task 继承 BaseTask 是能力来源关系，不是固定函数调用链。
 
-BaseTask 通过组合构造 MediaGenerationCapability 和 BillingCapability。媒体 Capability 执行文本、图片、异步创建、task ID 提取和 Polling；BillingCapability 执行余额、usage、结算轮询和 request ID 提取。Capability 显式接收 Request Client，调用通用 post、get、poll_get，不拥有 Session、Test 输入和最终断言。
+BaseTask 通过组合按需构造 MediaGenerationCapability 和 BillingCapability；少数静态适配直接调用 BillingCapability helper。媒体 Capability 执行文本、图片、异步创建、task ID 提取和 Polling；BillingCapability 执行余额、usage、结算轮询和 request ID 提取。涉及请求的 Capability 方法显式接收 Request Client，调用通用 post、get、poll_get，不拥有 Session、Test 输入和最终断言。
 
 create_and_poll_media_generation 是复合链：BaseTask 把 create、extract、poll 三个绑定 callback 交给媒体 Capability，由 Capability 按创建、提取 ID、轮询顺序执行。Billing 门面还保留参数分派、Key 缺失到 pytest.skip 的翻译等兼容适配，所以不能说 BaseTask 已经只是空壳。
 
 只有多个模块已经稳定复用、合同能够清楚命名、并因同一原因变化时，才新建或扩展窄 Capability。单领域、模型专用或仍在变化的逻辑留在领域 Task。已有公共流程优先复用，不复制，也不重复抽象。
 
-workload 表示模型或媒体主业务调用，control 表示余额和 usage 等辅助查询。它们是运行时观察角色，不改变 HTTP 方法、Retry、Polling、Response 或断言结果。
+当前能力来源是“领域 Task --继承--> BaseTask”，这不是函数调用链。实际兼容调用链是“Test / 领域 Task 场景方法 -> BaseTask 兼容方法（可由领域 Task 实例继承获得）-> 已有 Capability -> Request Client”。未来新增窄 Capability 时，不再增加 BaseTask 入口，而由需要它的领域 Task 在本地方法中显式构造或注入后委托。当前仓库还没有这条推荐链的生产实例，所以关系图必须用虚线表示设计规范。
+
+Media workload 标记实际的 HTTP、Polling 或 Async Task 观察操作；Billing control 当前标记实际的 HTTP 或 Polling 观察操作。本地 Key 查找、ID 提取、格式化和单纯等待不自动产生流量角色。角色只提供运行时观察语义，不改变 HTTP 方法、Retry、Polling、Response 或断言结果。
 ```
 
 ---
 
-## 18. 课堂小测
+## 18. 课堂验收：小测与复述
+
+本节合并原课堂小测与开放式验收。课堂只完成六个核心问题和一次复述，其余问题进入课后题库。
+
+### 18.1 六个核心问题
 
 1. 新视频模型专用 payload 默认放哪里？A BaseTask / B VideoTask（B）
-2. BaseTask 当前主要角色？A 兼容门面 / B 所有新逻辑仓库（A）
-3. Capability 与 BaseTask 是什么关系？A 组合 / B 继承（A）
-4. MediaGenerationCapability 调用什么？A 领域 Request 同名方法 / B Request Client 的通用方法（B）
-5. 两段相似代码足以抽 Capability 吗？A 足够 / B 不足够（B）
-6. ImageTask 为空能否改成 `ImageTask = BaseTask`？A 能 / B 不能（B）
-7. 余额查询属于什么角色？A workload / B control（B）
-8. control 标签会改变 Response 吗？A 会 / B 不会（B）
+2. 当前已有媒体入口的能力来源和实际调用链分别是什么？A 能力来源是领域 Task --继承--> BaseTask；实际调用是 Test / 领域 Task 场景方法 -> BaseTask 兼容方法 -> 已有 Capability -> Request Client / B 继承本身就是调用链（A）
+3. 未来新增窄 Capability 应怎样接入？A 给 BaseTask 增加公共方法 / B 由需要它的领域 Task 显式构造或注入（B）
+4. Capability 与 BaseTask、领域 Task 的关系是什么？A 组合 / B Capability 继承（A）
+5. 两段相似代码足以抽 Capability 吗？A 足够 / B 还需要跨模块稳定复用和相同变化原因（B）
+6. workload/control 是否覆盖 Capability 内所有方法？A 是 / B Media workload 只标记实际的 HTTP、Polling 或 Async Task 观察操作，Billing control 当前只标记实际的 HTTP 或 Polling 观察操作（B）
+
+### 18.2 合格复述
+
+复述必须包含：
+
+- BaseTask 的兼容职责；
+- 领域 Task 是新逻辑默认落点；
+- 能力来源是领域 Task --继承--> BaseTask，该关系不是函数调用；
+- 实际兼容调用链是 Test / 领域 Task 场景方法 -> BaseTask 兼容方法（可由领域 Task 实例继承获得）-> 已有 Capability -> Request Client；
+- 推荐新能力链是领域 Task 本地方法 -> 显式构造或注入窄 Capability -> Request Client；
+- 推荐链当前没有生产实例，图中必须使用虚线；
+- 跨模块稳定复用才进入窄 Capability；
+- Capability 通过组合使用，不进入领域 Task 的继承树；
+- Media workload 标记实际的 HTTP、Polling 或 Async Task 观察操作，Billing control 当前标记实际的 HTTP 或 Polling 观察操作；
+- Assertions 保留最终业务判断。
+
+### 18.3 课后题库（不占课堂时间）
+
+1. create-and-poll 为什么传入三个 callback？
+2. BaseTask 在 Billing 链中仍保留哪些参数适配和 pytest 翻译？
+3. 当前两个 Capability 分别负责什么？
+4. Capability 的 Request Client 路径与领域 Request 路径有什么区别？
+5. 22 条 BaseTask 核心测试能证明什么，不能证明什么？
+6. 为什么 11 条 billing assertion 测试不能证明 Capability 的 HTTP 委托？
 
 ---
 
@@ -888,7 +1105,7 @@ workload 表示模型或媒体主业务调用，control 表示余额和 usage �
 ### 19.1 必做内容
 
 1. 为三个新业务动作填写“领域 Task / 复用或窄扩展现有 Capability / 新建窄 Capability”及因果理由。
-2. 画出 BaseTask → Capability → Request Client 与领域 Task → 领域 Request 两条链。
+2. 分开画出“领域 Task --继承--> BaseTask”的能力来源、当前实际兼容调用链和推荐的新 Capability 接入链；推荐链使用虚线，并注明当前暂无生产实例。
 3. 完成一次三分钟复述，必须区分继承与调用。
 
 ### 19.2 不要求完成
@@ -902,47 +1119,19 @@ workload 表示模型或媒体主业务调用，control 表示余额和 usage �
 
 ---
 
-## 20. 验收标准
-
-完成本课后，应能回答：
-
-1. BaseTask 为什么称为兼容门面？
-2. 为什么新领域逻辑不继续加入 BaseTask？
-3. 领域 Task 与 Capability 的选择条件是什么？
-4. 继承关系和函数调用链有什么区别？
-5. 当前两个 Capability 分别负责什么？
-6. 简单媒体调用的真实路径是什么？
-7. create-and-poll 为什么传入三个 callback？
-8. Capability 是否调用领域 Request 方法？
-9. BaseTask 在 Billing 链中仍保留哪些适配？
-10. workload 与 control 怎样区分？
-11. 33 条离线测试能证明什么，不能证明什么？
-12. 为什么 billing assertion 不属于 BillingCapability？
-
-合格复述必须包含：
-
-- BaseTask 的兼容职责；
-- 领域 Task 是新逻辑默认落点；
-- 跨模块稳定复用才进入窄 Capability；
-- 组合而非 Capability 继承；
-- Request Client 通用方法路径；
-- 领域 Request 方法是另一条有效路径；
-- workload/control 只是观察角色；
-- Assertions 保留最终业务判断。
-
----
-
-## 21. 下一课接口
+## 20. 下一课接口
 
 到本课为止，我们已经知道单个用例怎样：
 
 ```text
-发请求
--> Retry / Polling / SSE
--> 保存上下文
--> 调用领域 Task 或公共 Capability
--> 完成断言与清理
+Test
+-> 领域 Task 或 BaseTask 兼容入口
+-> 领域 Request 或窄 Capability
+-> Request Client
+-> Response 与 Assertions
 ```
+
+Retry 和 Polling 由 Request Client 按策略执行；SSE 通过 `stream=True`取得流式 Response，再由上层 Task 负责消费和关闭。TestContext 是跨步骤保存动态值和注册 cleanup 的可选容器。这些机制不是每个用例都会依次经过的固定线性步骤。
 
 但很多用例一起运行时，还需要回答：
 
