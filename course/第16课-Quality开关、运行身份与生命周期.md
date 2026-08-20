@@ -39,15 +39,15 @@
 | 环节 | 对应章节 | 建议时间 |
 | --- | --- | ---: |
 | 第 15 课承接、身份类比与 TOC 约束 | 第 2～4 节 | 8～9 分钟 |
-| 主开关、子开关依赖与配置对象 | 第 5～7 节 | 11～13 分钟 |
+| 主开关、子开关依赖与配置对象 | 第 5～7 节，6.3 只作教师备注 | 9～11 分钟 |
 | 生命周期类型、工厂与 Runner 调用顺序 | 第 8～10 节 | 14～16 分钟 |
-| run / execution / worker、环境与 JUnit 边界 | 第 11～13 节 | 13～15 分钟 |
-| Noop 副作用与精确 fail-open | 第 14 节 | 7～8 分钟 |
+| run / execution / worker、环境与 JUnit 边界 | 第 11～13 节，11.2 与 12.2 只作教师备注 | 11～13 分钟 |
+| Noop 副作用与精确 fail-open | 第 14 节，14.3 只作教师备注 | 6～7 分钟 |
 | 离线证据与两个核心场景 | 第 15 节、第 16.1～16.2 节 | 8～9 分钟 |
-| 累积图、复述与 3 道核心小测 | 第 17～20 节 | 9～10 分钟 |
+| 本课增量图、复述与 3 道核心小测 | 第 17～20 节 | 9～10 分钟 |
 | 缓冲与提问 | 全课 | 5 分钟 |
 
-总计约 75～85 分钟。第 16.3～16.4 节只作为教师题库；第 18 节只穿插必讲误区，其余作为课后自查；第 20.3 节教师清单不逐条占用课堂时间。
+总计约 70～80 分钟。第 6.3、11.2、12.2 和 14.3 节只作为教师备注；第 16.3～16.4 节只作为教师题库；第 18 节只穿插必讲误区，其余作为课后自查；第 20.3 节教师清单不逐条占用课堂时间。
 
 ### 1.4 课堂最短路径
 
@@ -248,17 +248,11 @@ QUALITY_METRICS_ENABLE=sometimes
 -> metrics_warning记录非法值
 ```
 
-### 6.3 Flaky 数据库路径的特殊边界
+### 6.3 教师备注：Flaky 数据库路径 warning
 
-只有 Quality 与 Flaky history 都有效开启，并且 history 开关本身解析成功时，才进入数据库路径检查。此时以下问题会产生 warning：
+本课只需要一个结论：Flaky history 的路径风险会形成 warning，但不会反向改变父级 Quality 生命周期是否开启。它属于“子能力输入合同有风险”，不是本课身份链的主节点。
 
-- 路径缺失；
-- 不是绝对路径；
-- 网络共享未完成 SQLite 锁审查；
-- 父目录不存在或不可写；
-- 已存在路径不是普通文件。
-
-当前实现中，路径 warning 不会反向把 `flaky_history_enabled` 改成 False。它表达“能力已请求开启，但输入合同存在风险”，后续 Flaky 阶段仍需 fail-open 处理。不要把 warning 误读成配置对象已经关闭 history。
+完整路径校验清单留到第 21 课 Flaky 治理讲解；课堂复述不要求记忆路径缺失、绝对路径、网络共享、父目录权限和普通文件等细节。
 
 ---
 
@@ -299,9 +293,9 @@ resolve_parent_quality_config()
 
 即使 Quality 关闭，父级解析也可以返回绝对 `output_dir` 配置事实；但 Noop 生命周期不会因此创建该目录。
 
-### 7.4 配置对象不等于 `QualityRunContext`
+### 7.4 配置对象不等于 pytest worker 上下文
 
-`QualityRunContext(run_id, execution_id, worker_id, output_dir)` 是 pytest 进程内使用的运行上下文，由第 17 课插件建立。第 16 课只把父级身份通过 stage environment 送到 pytest 边界，不提前创建 worker 上下文。
+第 16 课只把父级身份通过 stage environment 送到 pytest 边界，不提前创建 worker 级运行上下文。pytest 进程内怎样补齐 worker 身份和采集原始账本，留到第 17 课展开。
 
 ---
 
@@ -446,7 +440,7 @@ finally:
     -> quality_run_lifecycle.finalize(...)
 ```
 
-`prepare()` 在 Runner 的池执行 `try/finally` 之前调用；当前 Enabled 实现会自行捕获普通初始化异常，但这不等于 Runner 对任意自定义生命周期都提供相同保护。进入 `finally` 后，Runner 先调用 Allure finalize，再调用 Quality finalize；前一个调用若以未隔离的 `BaseException` 退出，后一个调用不会执行。
+`prepare()` 在 Runner 的池执行 `try/finally` 之前调用；当前 Enabled 实现会自行捕获普通初始化异常，但这不等于 Runner 对任意自定义生命周期都提供相同保护。进入 `finally` 后，Runner 会按固定顺序收口外层产物；这些收口动作的边角异常不作为本课主线展开。
 
 ### 10.3 无 `-n` 与启用 `-n`
 
@@ -497,21 +491,11 @@ resolve_parent_quality_config()
    └─ 未配置 -> new_parent_run_id()
 ```
 
-### 11.2 Jenkins 与本地格式
+### 11.2 教师备注：Jenkins 与本地 run ID 形态
 
-当 `JOB_NAME` 和 `BUILD_NUMBER` 同时存在：
+课堂只需要记住：未配置 `QUALITY_RUN_ID` 时，父级生命周期会生成一个新的 run ID；同一次 Runner 运行内只生成一次。Jenkins 环境变量同时存在时会参与命名，本地运行会走本地命名前缀。
 
-```text
-<sanitized-job>-<build>-<UTC timestamp>-<uuid前8位>
-```
-
-否则：
-
-```text
-local-<UTC timestamp>-<uuid前8位>
-```
-
-`new_parent_run_id()` 只有在两个 Jenkins 字段都存在时才把它们交给 `build_run_id()`；单独存在其中一个时，会走本地格式。
+具体字符串格式和清洗规则不进入三分钟复述，也不作为本课核心验收点。
 
 ### 11.3 “稳定”不等于跨运行固定
 
@@ -539,14 +523,9 @@ local-<UTC timestamp>-<uuid前8位>
 
 Runner 直接把这些 `stage_id` 传给 `stage_environment()`。
 
-### 12.2 `build_execution_id()` 是可用工具，但不是当前调用节点
+### 12.2 教师备注：`build_execution_id()` 不是当前主链
 
-```python
-build_execution_id("parallel pool", 1)
-# -> "parallel-pool-1"
-```
-
-该函数会清洗阶段名并要求 index 大于等于 1，但当前 Runner 主链没有调用它。真实测试还明确断言执行池身份中不存在 `-pool-1`。
+项目里存在 `build_execution_id()` 工具函数，但当前 Runner 主链没有调用它。课堂只需要判断真实执行池身份是 `parallel-pool` 或 `serial-pool`，不要把工具函数测试通过误画成 Runner 调用节点。
 
 ### 12.3 execution身份必须与run身份组合理解
 
@@ -619,15 +598,14 @@ Runner stage environment
 -> run_id + execution_id进入pytest边界
 ```
 
-第 17 课的 pytest 插件才会：
+第 17 课才会在具体 pytest 进程内补齐 `worker_id` 并采集 worker 原始账本。本课不展开不同执行模式下的 worker 来源、Collector 或 Adapter 内部接线。
+
+因此当前图只能画到：
 
 ```text
-非xdist执行 -> worker_id=master
-xdist worker -> workerinput中的workerid，例如gw0
--> 构造QualityRunContext(run_id, execution_id, worker_id, output_dir)
+stage environment
+-. 第17课插件补齐worker身份并采集原始账本 .-> pytest Quality插件
 ```
-
-`QualityRunContext` 是 pytest 进程内对象，不是 `stage_environment()` 的返回数据，也不是 Runner 的 `PoolExecutionResult`。
 
 ---
 
@@ -658,9 +636,11 @@ xdist worker -> workerinput中的workerid，例如gw0
 
 环境恢复保证的是状态收口，不是把 pytest 异常转换成成功。
 
-### 14.3 `BaseException` 不在普通降级范围
+### 14.3 教师备注：`BaseException` 与 finally 顺序
 
-生命周期内部主要捕获 `Exception`，不保证隔离 `KeyboardInterrupt`、`SystemExit`。Runner 会把池执行阶段的这类中断标记为 `INTERRUPTED` 后重抛；如果中断发生在池执行 `try/finally` 建立之前，不能声称 Quality finalize 一定执行。即使已经进入 Runner `finally`，Allure finalize 仍先执行；它若抛出未捕获的 `BaseException`，后续 Quality finalize 也会被跳过。
+课堂只需要记住：本课所谓 fail-open 主要针对普通 `Exception`，不能扩大成 `KeyboardInterrupt`、`SystemExit` 等 `BaseException` 都会被隔离。
+
+Allure finalize 与 Quality finalize 的先后、以及 `BaseException` 在不同 finally 边界上的传播，作为教师追问保留，不进入三分钟复述。
 
 ### 14.4 生命周期状态不是测试通过状态
 
@@ -687,14 +667,20 @@ pytest 返回测试失败退出码，但执行池正常返回时，生命周期�
 
 ### 15.1 安全命令
 
-该命令只运行四个精确离线文件。教师应课前原样预跑；课堂只观察第 15.3 节核心证据，不逐行讲解脚本。命令清空项目默认 addopts、禁用第三方插件自动加载、使用仓库内专用 `--basetemp`，并在结束后恢复进程环境和安全清理临时目录。
+该命令只运行四个精确离线文件。教师应课前原样预跑；课堂只观察第 15.3 节核心证据，不逐行讲解脚本。
+
+安全边界来自三层：
+
+- `API_CASE_DOTENV_PATH=.env.example` 与 `QUALITY_ENABLE=0` 避免读取开发者真实环境并默认关闭 Quality；
+- `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`、`-o addopts=` 和精确测试文件避免加载无关插件或执行业务用例；
+- `tests/conftest.py` 的 `isolate_framework_runner_artifacts` 会把 Runner 默认 Allure 与 execution-result 产物重定向到 `tmp_path`，`--basetemp` 只负责 pytest 临时目录隔离，不能单独证明 Runner 产物隔离。
 
 ```powershell
 $environmentNames = @(
-  'API_CASE_DOTENV_PATH',
-  'QUALITY_ENABLE',
-  'PYTHONDONTWRITEBYTECODE',
-  'PYTEST_DISABLE_PLUGIN_AUTOLOAD'
+  "API_CASE_DOTENV_PATH",
+  "QUALITY_ENABLE",
+  "PYTHONDONTWRITEBYTECODE",
+  "PYTEST_DISABLE_PLUGIN_AUTOLOAD"
 )
 $previousEnvironment = @{}
 foreach ($name in $environmentNames) {
@@ -705,34 +691,34 @@ foreach ($name in $environmentNames) {
     )
 }
 
-$trimSeparators = [char[]]@('\', '/')
-$repositoryRoot = (Get-Item -LiteralPath '.').FullName.TrimEnd($trimSeparators)
+$trimSeparators = [char[]]@("\", "/")
+$tempParent = (Resolve-Path -LiteralPath $env:TEMP -ErrorAction Stop).Path.TrimEnd($trimSeparators)
 $tempRoot = Join-Path `
-  $repositoryRoot `
-  ('.api-case-lesson16-' + [guid]::NewGuid().ToString('N'))
-$pytestTemp = Join-Path $tempRoot 'pytest'
-New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+  $tempParent `
+  ("llm_api_case_lesson16_" + [guid]::NewGuid().ToString("N"))
+$pytestTemp = Join-Path $tempRoot "pytest"
+New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
 $pytestExitCode = 1
 
 try {
   [Environment]::SetEnvironmentVariable(
-    'API_CASE_DOTENV_PATH',
-    (Resolve-Path -LiteralPath '.env.example' -ErrorAction Stop).Path,
+    "API_CASE_DOTENV_PATH",
+    (Resolve-Path -LiteralPath ".env.example" -ErrorAction Stop).Path,
     [EnvironmentVariableTarget]::Process
   )
   [Environment]::SetEnvironmentVariable(
-    'QUALITY_ENABLE',
-    '0',
+    "QUALITY_ENABLE",
+    "0",
     [EnvironmentVariableTarget]::Process
   )
   [Environment]::SetEnvironmentVariable(
-    'PYTHONDONTWRITEBYTECODE',
-    '1',
+    "PYTHONDONTWRITEBYTECODE",
+    "1",
     [EnvironmentVariableTarget]::Process
   )
   [Environment]::SetEnvironmentVariable(
-    'PYTEST_DISABLE_PLUGIN_AUTOLOAD',
-    '1',
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+    "1",
     [EnvironmentVariableTarget]::Process
   )
 
@@ -758,13 +744,13 @@ finally {
 
   if (Test-Path -LiteralPath $tempRoot) {
     $resolvedTempRoot =
-      (Get-Item -LiteralPath $tempRoot).FullName.TrimEnd($trimSeparators)
+      (Resolve-Path -LiteralPath $tempRoot -ErrorAction Stop).Path.TrimEnd($trimSeparators)
     $resolvedParent =
       (Split-Path -Parent $resolvedTempRoot).TrimEnd($trimSeparators)
     $resolvedLeaf = Split-Path -Leaf $resolvedTempRoot
     if (
-      $resolvedParent -eq $repositoryRoot -and
-      $resolvedLeaf -like '.api-case-lesson16-*'
+      $resolvedParent -eq $tempParent -and
+      $resolvedLeaf -like "llm_api_case_lesson16_*"
     ) {
       Remove-Item -LiteralPath $resolvedTempRoot -Recurse -Force
     }
@@ -888,298 +874,154 @@ QUALITY_ENABLE=sometimes
 
 ---
 
-## 17. 第十六版累积链路总图：Runner在执行池外层建立可选Quality生命周期
+## 17. 第十六版本课增量图：只展开 Quality 生命周期
 
-本图继承第 15 课的业务控制链、Runtime Hooks 旁路，以及第 14 课的 pytest、Runner、JUnit、Allure 和 execution-result 边界。本课只展开 Quality 配置、生命周期和父级身份；第 17 课的 pytest 插件、worker 身份与 Adapter 绑定仍保持折叠。
+本节只保留第 16 课新增节点：Quality 配置、生命周期对象、父级 `run_id`、执行池 `execution_id`、JUnit 参数准备、stage environment 和 finalize 委托。第 14～15 课已有的业务链、Runtime Hooks 内部、Allure 明细和 Runner execution-result 细节不在本图重复展开。
 
-`-->` 表示函数调用、异常或生命周期控制；`==>` 表示对象输入、返回值、环境值或事实产物；`-.->` 表示类型/依赖、配置条件、可选产物或后续课程接口。
+本节使用两张图，避免把“函数调用”和“控制结果”画成同一种关系：
+
+- 17.1 只表示主调用与对象流。
+- 17.2 只表示门禁、跳过和降级等控制结果。
+
+### 17.1 主调用与对象流图
+
+本图中：`-->` 只表示函数调用；`==>` 只表示对象、参数、环境值或事实输入输出；`-.->` 表示后续课程接口或可选委托，不表示本课必经调用。
 
 ```mermaid
 flowchart TD
-    ENTRY["本地命令或 Jenkins"]
-    MODE{"选择执行入口"}
+    RUNNER["Runner<br/>收集成功且非 collect-only 后进入执行阶段"]
+    FACTORY["create_quality_run_lifecycle()"]
+    PREVIEW["load_quality_config()<br/>轻量配置预览"]
+    RESOLVE["resolve_parent_quality_config()<br/>解析绝对 output_dir 与父级 run_id"]
+    LIFECYCLE["QualityRunLifecycle 对象<br/>Noop 或 Enabled"]
+    ENABLED_HOLDS["Enabled 生命周期持有父级配置<br/>self._config"]
+    PARENT_CONFIG["父级 QualityRuntimeConfig<br/>enabled + output_dir + run_id"]
 
-    subgraph DIRECT["直接 pytest 路径（既有边界）"]
-        DIRECT_CMD["直接 pytest"]
-        DIRECT_PYTEST["pytest.main / pytest CLI"]
-        DIRECT_EXIT["本次 pytest 原始退出码"]
-        DIRECT_JUNIT["JUnit XML<br/>仅传入 --junitxml 时"]
-        DIRECT_RAW["Allure raw<br/>仅传入 --alluredir 时"]
-        DIRECT_ALLURE_LIFECYCLE["module/conftest.py<br/>直接pytest的Allure生命周期"]
-        DIRECT_ALLURE_VIEW["直接pytest的Allure HTML / history<br/>满足条件才生成"]
+    PREPARE["lifecycle.prepare(start_time)"]
+    ENSURE_JUNIT["lifecycle.ensure_junit_args(pytest_args)"]
+    PREPARED_ARGS["处理后的 pytest base args<br/>保留已有 JUnit 或补默认路径"]
+    POOL_ARGS["本池最终 pytest args"]
+    STAGE["lifecycle.stage_environment(execution_id)"]
+    EXECUTION_ID["当前 execution_id<br/>serial-pool 或 parallel-pool"]
+    STAGE_CONTEXT["quality_stage_environment(self._config, execution_id)<br/>context manager"]
+    STAGE_ENV["context enter 设置临时环境<br/>QUALITY_ENABLE / QUALITY_RUN_ID / QUALITY_EXECUTION_ID / QUALITY_OUTPUT_DIR"]
+    EXECUTE["execute_pool(stage_id, nodeids, args)"]
+    PYTEST_POOL["pytest 执行池"]
+    RESTORE["context finally<br/>按保存的旧值恢复环境"]
 
-        DIRECT_CMD -->|启动| DIRECT_PYTEST
-        DIRECT_PYTEST ==>|返回| DIRECT_EXIT
-        DIRECT_PYTEST -. "按参数写入" .-> DIRECT_JUNIT
-        DIRECT_PYTEST -. "按参数写入" .-> DIRECT_RAW
-        DIRECT_PYTEST -. "有--alluredir且非跳过场景：sessionstart prepare" .-> DIRECT_ALLURE_LIFECYCLE
-        DIRECT_RAW ==>|作为最终生成输入| DIRECT_ALLURE_LIFECYCLE
-        DIRECT_ALLURE_LIFECYCLE -. "sessionfinish finalize且生成条件满足" .-> DIRECT_ALLURE_VIEW
-    end
+    FINALIZE["lifecycle.finalize(...)"]
+    EXPECTED["expected_case_count"]
+    POOL_RESULTS["已产生的 PoolExecutionResult"]
+    FINAL_STATUS["RunLifecycleStatus<br/>FINISHED / PARTIAL / INTERRUPTED"]
+    QUALITY_BACKEND["Quality 归并与治理<br/>第 18～21 课展开"]
+    NEXT_PLUGIN["pytest Quality 插件<br/>第17课补齐 worker 身份并采集原始账本"]
 
-    subgraph RUNNER_PATH["项目 Runner 与并列执行事实（既有边界）"]
-        RUN_MASTER["run_master.py"]
-        RUNNER["run_orchestration.runner.run()"]
-        COLLECT["权威收集函数"]
-        COLLECTION["CollectionResult<br/>测试项 + 收集原始退出码"]
-        COLLECTION_OK{"收集原始退出码为0？"}
-        COLLECT_ONLY_GATE{"是否 collect-only？"}
-        FAILED_COLLECTION_WRITE["收集失败且非collect-only<br/>空池execution-result payload"]
-        COLLECT_ONLY_RETURN["collect-only直接返回收集原始退出码<br/>不写execution-result"]
-        POOL_MODE{"是否启用 -n？"}
-        ONE_POOL["无 -n<br/>完整 C 进入 serial-pool"]
-        TWO_POOLS["启用 -n<br/>P 进入 parallel-pool<br/>S 进入 serial-pool"]
-        ACTUAL_POOLS["真实执行池<br/>仅非空且未被终止<br/>stage_id + nodeids"]
-        EXECUTE["execute_pool(stage_id, nodeids, args)"]
-        PYTEST_POOL["pytest.main()<br/>执行显式 nodeid 池"]
-        POOL_RAW["pytest 池级原始退出码"]
-        POOL_RESULT["全部 PoolExecutionResult<br/>含 COMPLETED / ERROR / NOT_RUN"]
-        MERGED_EXIT["写入前项目级归并退出码<br/>_final_exit_code()"]
+    RUNNER --> FACTORY
+    FACTORY --> PREVIEW
+    FACTORY -. "预览 enabled 时调用" .-> RESOLVE
+    RESOLVE ==> PARENT_CONFIG
+    FACTORY ==> LIFECYCLE
+    PARENT_CONFIG ==> ENABLED_HOLDS
+    ENABLED_HOLDS ==> LIFECYCLE
 
-        JUNIT_POOL["JUnit 池级 XML"]
-        ALLURE_POOL_RAW["本池隔离 Allure raw"]
-        ALLURE_MERGE["merge_pool(stage_id)"]
-        FINAL_RAW["最终 Allure raw"]
-        ALLURE_FINALIZE["Allure finalize()<br/>Runner 主路径 finally"]
-        ALLURE_VIEW["Allure HTML / history<br/>满足条件才生成"]
+    RUNNER --> PREPARE
+    RUNNER --> ENSURE_JUNIT
+    ENSURE_JUNIT ==> PREPARED_ARGS
+    PREPARED_ARGS ==> POOL_ARGS
+    POOL_ARGS ==> EXECUTE
 
-        EXEC_PAYLOAD["execution-result payload"]
-        WRITE_BOUNDARY["execution-result 写入边界"]
-        EXEC_RESULT["Runner execution result"]
-        WRITE_FAIL["普通写入异常"]
-        RETURN_EXIT["Runner 项目级实际返回码"]
+    RUNNER --> STAGE
+    EXECUTION_ID ==> STAGE
+    STAGE ==> STAGE_CONTEXT
+    STAGE_CONTEXT ==> STAGE_ENV
+    STAGE_ENV ==> PYTEST_POOL
+    RUNNER --> EXECUTE
+    EXECUTE --> PYTEST_POOL
+    STAGE_CONTEXT ==> RESTORE
 
-        RUN_MASTER -->|调用| RUNNER
-        RUNNER -->|调用| COLLECT
-        COLLECT ==>|返回| COLLECTION
-        COLLECTION ==>|收集事实输入| COLLECTION_OK
-        COLLECTION_OK -->|否，且非collect-only| FAILED_COLLECTION_WRITE
-        COLLECTION_OK -->|否，且collect-only| COLLECT_ONLY_RETURN
-        COLLECTION_OK -->|是| COLLECT_ONLY_GATE
-        COLLECT_ONLY_GATE -->|是| COLLECT_ONLY_RETURN
-        COLLECT_ONLY_GATE -->|否| POOL_MODE
-        POOL_MODE -->|无 -n| ONE_POOL
-        POOL_MODE -->|启用 -n| TWO_POOLS
-        ONE_POOL ==>|提供| ACTUAL_POOLS
-        TWO_POOLS ==>|提供| ACTUAL_POOLS
-        ACTUAL_POOLS ==>|stage_id 与 nodeids| EXECUTE
-        EXECUTE -->|调用| PYTEST_POOL
-        PYTEST_POOL ==>|正常返回 int| POOL_RAW
-        EXECUTE ==>|返回池事实| POOL_RESULT
-        POOL_RAW ==>|写入 raw_pytest_exit_code| POOL_RESULT
-        RUNNER ==>|空池或终止后构造 NOT_RUN| POOL_RESULT
-        POOL_RESULT ==>|全部池结果归并| MERGED_EXIT
-
-        PYTEST_POOL -. "按 JUnit 参数写入" .-> JUNIT_POOL
-        PYTEST_POOL -. "按本池 --alluredir 写入" .-> ALLURE_POOL_RAW
-        EXECUTE -->|finally 调用| ALLURE_MERGE
-        ALLURE_POOL_RAW ==>|提供本池文件| ALLURE_MERGE
-        ALLURE_MERGE ==>|逐池归并| FINAL_RAW
-        RUNNER -->|主路径 finally 第1个调用| ALLURE_FINALIZE
-        FINAL_RAW ==>|作为生成输入| ALLURE_FINALIZE
-        ALLURE_FINALIZE -. "配置、CLI 与生成均成功" .-> ALLURE_VIEW
-
-        COLLECTION ==>|计划与收集事实| EXEC_PAYLOAD
-        POOL_RESULT ==>|全部池事实| EXEC_PAYLOAD
-        MERGED_EXIT ==>|payload.final_exit_code| EXEC_PAYLOAD
-        EXEC_PAYLOAD ==>|作为写入输入| WRITE_BOUNDARY
-        FAILED_COLLECTION_WRITE ==>|作为写入输入| WRITE_BOUNDARY
-        COLLECT_ONLY_RETURN ==>|形成直接返回事实| RETURN_EXIT
-        WRITE_BOUNDARY -. "写入成功才生成" .-> EXEC_RESULT
-        WRITE_BOUNDARY ==>|写入成功：返回原项目码<br/>正常归并码或收集原始码| RETURN_EXIT
-        WRITE_BOUNDARY -->|普通写入异常| WRITE_FAIL
-        WRITE_FAIL ==>|按0/1与2/3/4/5规则形成| RETURN_EXIT
-    end
-
-    subgraph QUALITY_RUN["第 16 课新增：Quality配置、生命周期与父级身份"]
-        FACTORY["create_quality_run_lifecycle()"]
-        PREVIEW["load_quality_config()<br/>轻量配置预览"]
-        NOOP["NoopQualityRunLifecycle"]
-        RESOLVE["resolve_parent_quality_config()"]
-        PARENT_CONFIG["父级 QualityRuntimeConfig<br/>绝对 output_dir + 单一 run_id"]
-        ENABLED["EnabledQualityRunLifecycle"]
-        LIFECYCLE["所选 QualityRunLifecycle 对象"]
-        LIFECYCLE_PROTOCOL["QualityRunLifecycle Protocol"]
-
-        PREPARE["lifecycle.prepare(start_time)"]
-        ENSURE_JUNIT["lifecycle.ensure_junit_args(pytest_args)"]
-        PREPARED_ARGS["Quality处理后的base args<br/>保留已有或补默认 JUnit 路径"]
-        POOL_ARGS["本池最终 pytest args<br/>无-n直接使用；-n再构造并改JUnit后缀"]
-        STAGE["lifecycle.stage_environment(execution_id)"]
-        EXECUTION_ID["当前 execution_id<br/>parallel-pool 或 serial-pool"]
-        STAGE_ENV["本池临时环境<br/>enable + run_id + execution_id + output_dir"]
-        RESTORE_ENV["退出 with 后恢复进入前环境"]
-        FINALIZE["lifecycle.finalize(start_time,<br/>expected_case_count, pool_results, status)"]
-        FINAL_STATUS["RunLifecycleStatus<br/>FINISHED / PARTIAL / INTERRUPTED"]
-        QUALITY_BACKEND["Quality归并与治理<br/>第 18～21 课展开"]
-
-        FACTORY -->|调用轻量预览| PREVIEW
-        PREVIEW ==>|返回预览配置| FACTORY
-        FACTORY -->|预览关闭、父级最终关闭，或任一步普通异常被捕获：构造| NOOP
-        FACTORY -->|预览enabled=True：调用| RESOLVE
-        RESOLVE ==>|返回父级配置| PARENT_CONFIG
-        PARENT_CONFIG ==>|返回到工厂| FACTORY
-        FACTORY -->|父级config.enabled=True：构造| ENABLED
-        NOOP ==>|工厂返回| LIFECYCLE
-        ENABLED ==>|工厂返回| LIFECYCLE
-        NOOP -. "结构化实现" .-> LIFECYCLE_PROTOCOL
-        ENABLED -. "结构化实现" .-> LIFECYCLE_PROTOCOL
-
-        RUNNER -->|收集成功且非 collect-only 后调用| FACTORY
-        LIFECYCLE ==>|由Runner持有| RUNNER
-        RUNNER -->|调用| PREPARE
-        RUNNER -->|每个计划池调用| ENSURE_JUNIT
-        ENSURE_JUNIT ==>|返回| PREPARED_ARGS
-        PREPARED_ARGS ==>|Runner继续形成parallel或serial参数| POOL_ARGS
-        POOL_ARGS ==>|作为 args 输入| EXECUTE
-        ACTUAL_POOLS ==>|当前 stage_id| EXECUTION_ID
-        EXECUTION_ID ==>|作为参数| STAGE
-        RUNNER -->|仅非空且未终止的池 with 调用| STAGE
-        PARENT_CONFIG ==>|提供父级配置| STAGE
-        STAGE ==>|Enabled进入上下文时设置；Noop无动作| STAGE_ENV
-        STAGE_ENV ==>|作为进程环境输入| PYTEST_POOL
-        RUNNER -->|在stage上下文内调用| EXECUTE
-        STAGE -->|Enabled上下文退出时finally恢复| RESTORE_ENV
-        RUNNER -->|Allure finalize未阻断后，第2个调用| FINALIZE
-        COLLECTION ==>|提供 expected_case_count| FINALIZE
-        POOL_RESULT ==>|提供已产生的池结果| FINALIZE
-        RUNNER ==>|按执行结果或异常设置| FINAL_STATUS
-        FINAL_STATUS ==>|提供生命周期状态| FINALIZE
-        FINALIZE -. "仅Enabled委托；后续课展开" .-> QUALITY_BACKEND
-    end
-
-    subgraph BUSINESS["业务执行链（保持原控制权）"]
-        TEST["Test<br/>场景、输入与预期"]
-        TASK["领域 Task / BaseTask 兼容入口"]
-        REQUEST["领域 Request 或窄 Capability"]
-        BASE["BaseRequest.request()"]
-        POLLING["BaseRequest.poll_get()<br/>独立 Polling 入口"]
-        REQUEST_BRANCH["原请求分支<br/>无 Retry 或 _send_with_retry()"]
-        SEND["每次 attempt 的 _send(context)<br/>Middleware + Session.request"]
-        SSE["Task 内 SSE 消费循环<br/>解析、检查并关闭 Response"]
-        ASSERTIONS["Assertions<br/>结构与业务判断"]
-        CALL_END["Test call 阶段结束"]
-        TEARDOWN["pytest teardown<br/>cleanup / close / 资源附件"]
-
-        TEST -->|调用| TASK
-        TASK -->|调用| REQUEST
-        REQUEST -->|普通或 stream 请求调用| BASE
-        REQUEST -->|Polling 场景调用| POLLING
-        BASE -->|调用无 Retry 或 Retry 分支| REQUEST_BRANCH
-        REQUEST_BRANCH -->|每次 attempt 调用| SEND
-        SEND ==>|attempt Response| REQUEST_BRANCH
-        REQUEST_BRANCH ==>|最终 Response| BASE
-        BASE ==>|Response 返回| REQUEST
-        POLLING ==>|最终 Response 返回| REQUEST
-        REQUEST ==>|Response 或领域结果返回| TASK
-        TASK ==>|普通路径返回| TEST
-        TASK -->|stream=True 时消费并关闭| SSE
-        SSE ==>|chunks 或领域结果返回| TEST
-        TEST -->|调用| ASSERTIONS
-        ASSERTIONS -->|正常完成 call 阶段| CALL_END
-        ASSERTIONS -->|抛 AssertionError| CALL_END
-        REQUEST_BRANCH -->|最终未恢复异常沿调用栈抛出| CALL_END
-        POLLING -->|最终异常沿调用栈抛出| CALL_END
-        CALL_END -->|pytest 生命周期进入| TEARDOWN
-    end
-
-    subgraph RUNTIME["第 15 课既有：Runtime Hooks 旁路"]
-        OBSERVER["RuntimeObserver<br/>normalize / start 门面"]
-        OP_OBSERVATION["RuntimeOperationObservation<br/>由 BaseRequest 局部变量持有"]
-        POLL_OBSERVATION["RuntimePollingObservation<br/>由 poll_get() 局部变量持有"]
-        REQUEST_MIDDLEWARE["RuntimeObservationMiddleware"]
-        COMMON_LIFECYCLE["common.runtime_hooks.lifecycle<br/>安全调用与 lease"]
-        PROVIDER["Runtime Hooks Provider<br/>当前 ContextVar 实现"]
-        STARTING_HOOKS["开始时固定的 Hooks 对象"]
-        RUNTIME_NOOP["NoopRuntimeHooks<br/>默认无后端副作用"]
-        RUNTIME_PROTOCOL["RuntimeHooks Protocol<br/>中性合同"]
-        ADAPTER["QualityRuntimeHooks<br/>外部可选 Adapter"]
-
-        BASE -->|调用 normalize_metadata / start_operation| OBSERVER
-        POLLING -->|调用 normalize_metadata / start_polling| OBSERVER
-        OBSERVER -->|调用 begin_operation / begin_polling_session| COMMON_LIFECYCLE
-        OBSERVER ==>|构造并返回| OP_OBSERVATION
-        OBSERVER ==>|构造并返回| POLL_OBSERVATION
-        BASE -->|最终 Response 调用 finish_response| OP_OBSERVATION
-        BASE -->|异常分支调用 finish_error| OP_OBSERVATION
-        POLLING -->|状态、等待、成功或异常调用| POLL_OBSERVATION
-        POLL_OBSERVATION -->|观察并结束 polling / operation| COMMON_LIFECYCLE
-        OP_OBSERVATION -->|普通完成或异常时结束 operation| COMMON_LIFECYCLE
-        OP_OBSERVATION -->|2xx + stream + owned 时绑定流| COMMON_LIFECYCLE
-        SSE -->|observe_stream_line；消费结束 finish_stream| COMMON_LIFECYCLE
-        SEND -->|对应Middleware阶段实际执行时调用| REQUEST_MIDDLEWARE
-        REQUEST_MIDDLEWARE -->|started / succeeded / failed| COMMON_LIFECYCLE
-        RUNTIME_NOOP ==>|默认实例存入| PROVIDER
-        ADAPTER -. "外层可选绑定；common不静态依赖quality" .-> PROVIDER
-        COMMON_LIFECYCLE -->|无active operation时读取| PROVIDER
-        PROVIDER ==>|返回| STARTING_HOOKS
-        COMMON_LIFECYCLE ==>|固定到lease或RequestContext| STARTING_HOOKS
-        COMMON_LIFECYCLE -->|普通Exception中性降级调用| STARTING_HOOKS
-        COMMON_LIFECYCLE -. "依赖方法签名" .-> RUNTIME_PROTOCOL
-        RUNTIME_NOOP -. "结构化实现" .-> RUNTIME_PROTOCOL
-        ADAPTER -. "quality依赖common合同" .-> RUNTIME_PROTOCOL
-    end
-
-    subgraph NEXT_PLUGIN["第 17 课接口：pytest进程内身份与采集（折叠）"]
-        PYTEST_PLUGIN["pytest Quality插件"]
-        RUN_CONTEXT["QualityRunContext<br/>run + execution + worker + output_dir"]
-        WORKER_ID["worker_id<br/>非xdist为master<br/>xdist读取workerinput"]
-        WORKER_INPUT["xdist workerinput<br/>controller传递父级runtime config"]
-        WORKER_LEDGER["worker Collector与原始账本<br/>第17课展开"]
-
-        STAGE_ENV -. "插件读取父级环境" .-> PYTEST_PLUGIN
-        DIRECT_PYTEST -. "插件独立加载配置；缺省身份可生成run_id + manual-pytest" .-> PYTEST_PLUGIN
-        PYTEST_PLUGIN -. "具体执行进程确定worker身份" .-> WORKER_ID
-        PYTEST_PLUGIN -. "非xdist读取配置并构造" .-> RUN_CONTEXT
-        PYTEST_PLUGIN -. "xdist controller写入" .-> WORKER_INPUT
-        WORKER_INPUT -. "xdist worker读取并构造" .-> RUN_CONTEXT
-        WORKER_ID -. "作为构造字段" .-> RUN_CONTEXT
-        PYTEST_PLUGIN -. "具体执行进程configure_collector(run_context)" .-> WORKER_LEDGER
-        RUN_CONTEXT -. "作为Collector输入" .-> WORKER_LEDGER
-        PYTEST_PLUGIN -. "具体执行进程bind_runtime_hooks(QualityRuntimeHooks)" .-> ADAPTER
-    end
-
-    ENTRY -->|选择| MODE
-    MODE -->|直接执行| DIRECT_CMD
-    MODE -->|项目 Runner| RUN_MASTER
-    DIRECT_PYTEST -->|执行测试项| TEST
-    PYTEST_POOL -->|执行显式测试项| TEST
+    RUNNER --> FINALIZE
+    EXPECTED ==> FINALIZE
+    POOL_RESULTS ==> FINALIZE
+    FINAL_STATUS ==> FINALIZE
+    FINALIZE -. "仅 Enabled 委托" .-> QUALITY_BACKEND
+    STAGE_ENV -. "第17课读取父级环境" .-> NEXT_PLUGIN
 ```
 
-课堂只沿 `QUALITY_RUN` 新增分支和 `NEXT_PLUGIN` 接口读图；直接 pytest、Runner 证据、业务链和 Runtime Hooks 只用于确认边界，不重新逐节点讲解。
+### 17.2 门禁与控制结果图
 
-### 17.1 读图规则
+本图只表示判断、跳过和降级结果，不表示函数调用。`-.->` 在本图中统一表示控制结果。
 
-1. 直接 pytest 不调用 Runner 的 `create_quality_run_lifecycle()`，但 Quality 插件是另一条独立入口：Quality 有效开启时，它可以自行补 `run_id` 与 `execution_id=manual-pytest`。这不能反推为经过了 Runner 生命周期。
-2. `load_quality_config()` 返回配置事实，生命周期工厂返回 Noop 或 Enabled 对象，pytest 插件以后才创建 `QualityRunContext`；三者不是同一个对象。
-3. `prepare()`、`ensure_junit_args()`、`stage_environment()` 和 `finalize()` 都由 Runner 调用。`ensure_junit_args()` 按计划池准备参数；`stage_environment()` 只包住非空且未被终止的真实执行池。二者是兄弟调用，不是前者调用后者。
-4. 无 `-n` 时完整测试集合进入一个 `serial-pool`；启用 `-n` 时才拆为 `parallel-pool` 与 `serial-pool`。当前 Runner 直接把这两个语义池名作为 `execution_id`，没有调用 `build_execution_id()`。
-5. stage environment 只提供 run、execution 和输出目录等父级信息。`worker_id` 由第 17 课 pytest 插件在具体 pytest 进程内确定，生命周期不能提前伪造。
-6. `ensure_junit_args()` 只保证执行参数请求一个 JUnit 路径；JUnit 文件仍由 pytest 写入，文件是否生成取决于对应 pytest 执行。
-7. `PoolExecutionResult`、JUnit、Allure raw、Quality产物和 Runner execution result 是并列事实分支。`RunLifecycleStatus.FINISHED` 只表示生命周期完整走到结束，不表示测试通过。
-8. Quality 生命周期和 Runtime Hooks 都是业务链侧边能力；Response、领域结果、AssertionError 和最终未恢复异常不经过 Quality 节点。
+```mermaid
+flowchart TD
+    COLLECTION["权威收集结果"]
+    COLLECT_OK{"收集原始退出码为 0？"}
+    COLLECT_ONLY{"是否 collect-only？"}
+    NO_LIFECYCLE["不创建 Quality 生命周期"]
+    CREATE_LIFECYCLE["创建 QualityRunLifecycle"]
 
-### 17.2 本课新增节点的最小闭环
+    PREVIEW_ENABLED{"预览配置 enabled？"}
+    PARENT_ENABLED{"父级配置仍 enabled？"}
+    NOOP["Noop 生命周期<br/>不新增身份、JUnit 参数或 stage env"]
+    ENABLED["Enabled 生命周期<br/>准备父级 run_id 与输出目录"]
+
+    POOL_PLAN["计划池"]
+    POOL_RUN{"本池非空且未被前池终止？"}
+    ENTER_STAGE["进入 stage environment<br/>当前 execution_id"]
+    NOT_RUN["形成 NOT_RUN 池事实<br/>不进入 stage environment"]
+
+    RUNNER_FINALLY["Runner finally"]
+    OUTER_FINALIZERS["外层产物收口<br/>本课不展开细节"]
+    QUALITY_FINALIZE["Quality finalize<br/>按已执行池输入委托后续阶段"]
+
+    COLLECTION -.-> COLLECT_OK
+    COLLECT_OK -. "否" .-> NO_LIFECYCLE
+    COLLECT_OK -. "是" .-> COLLECT_ONLY
+    COLLECT_ONLY -. "是" .-> NO_LIFECYCLE
+    COLLECT_ONLY -. "否" .-> CREATE_LIFECYCLE
+
+    CREATE_LIFECYCLE -.-> PREVIEW_ENABLED
+    PREVIEW_ENABLED -. "否或普通异常" .-> NOOP
+    PREVIEW_ENABLED -. "是" .-> PARENT_ENABLED
+    PARENT_ENABLED -. "否或普通异常" .-> NOOP
+    PARENT_ENABLED -. "是" .-> ENABLED
+
+    POOL_PLAN -.-> POOL_RUN
+    POOL_RUN -. "是" .-> ENTER_STAGE
+    POOL_RUN -. "否" .-> NOT_RUN
+
+    RUNNER_FINALLY -.-> OUTER_FINALIZERS
+    OUTER_FINALIZERS -. "流程到达Quality收口" .-> QUALITY_FINALIZE
+```
+
+### 17.3 读图规则
+
+1. 第 16 课图只讲 Runner 外层生命周期，不重复第 14 课 Runner execution-result 细节，也不重复第 15 课 Runtime Hooks 内部对象。
+2. 直接 pytest 不调用 Runner 的 `create_quality_run_lifecycle()`；它是第 17 课 pytest 插件的并列入口，本课只保留为后续接口。
+3. `load_quality_config()` 返回配置事实，生命周期工厂返回 Noop 或 Enabled 对象，pytest 插件以后才补齐 worker 身份；三者不是同一个对象。
+4. `ensure_junit_args()` 与 `stage_environment()` 都由 Runner 调用；前者准备 pytest 参数，后者只包住真实执行池。
+5. `stage_environment()` 只提供父级 run、当前 execution 和输出目录；`worker_id`、Collector、Adapter 和 worker JSONL 都不在本课展开。
+6. JUnit 参数只是写入请求，不证明 JUnit 文件已经生成。
+7. `RunLifecycleStatus.FINISHED` 只表示当前生命周期完整走到结束，不表示 pytest 全部通过。
+
+### 17.4 本课新增节点的最小闭环
 
 ```text
-收集成功且非collect-only
--> Runner创建Quality生命周期
--> 轻量预览选择Noop或Enabled
--> Enabled解析一个父级run_id
--> Runner对每个计划池准备JUnit参数
--> 非空且未终止的池以当前语义池名作为execution_id进入临时环境
--> pytest执行池
--> 环境恢复
--> Runner finally先调用Allure finalize
--> 前一步未阻断时再调用Quality finalize
+收集成功且非 collect-only
+-> Runner 创建 QualityRunLifecycle
+-> 轻量预览选择 Noop 或 Enabled
+-> Enabled 解析一个父级 run_id
+-> Runner 对每个计划池准备 JUnit 参数
+-> 非空且未终止的池以当前语义池名作为 execution_id 进入临时环境
+-> pytest 执行池
+-> 退出 stage context 后恢复环境
+-> Runner finally 中按固定顺序进入 Quality finalize
 
 父级临时环境
--. 第17课pytest插件读取 .->
-QualityRunContext + worker_id + worker原始账本
+-. 第17课插件补齐worker身份并采集原始账本 .->
+pytest Quality插件
 ```
 
 ---
-
 ## 18. 常见误区
 
 ### 18.1 “`QUALITY_ENABLE=1`，所有子能力就一定开启”
@@ -1221,9 +1063,9 @@ QualityRunContext + worker_id + worker原始账本
 ```text
 Quality默认关闭。Runner只有在权威收集成功且不是collect-only时，才创建QualityRunLifecycle。工厂先轻量读取配置：关闭或普通初始化异常返回Noop；有效开启才解析绝对输出目录，并为整次Runner运行保留一个父级run_id，再返回Enabled生命周期。
 
-Runner调用prepare，然后对每个计划池准备JUnit参数；只有非空且未被前池终止的池才进入stage environment并执行pytest。无-n时，全部测试进入serial-pool；启用-n时，parallel与serial测试按计划进入各自语义池。当前Runner直接把parallel-pool或serial-pool作为execution_id，不调用build_execution_id。stage environment临时设置enable、run_id、execution_id和output_dir，执行结束后恢复原环境。
+Runner 调用 prepare，然后对每个计划池准备 JUnit 参数；只有非空且未被前池终止的池才进入 stage environment 并执行 pytest。无 `-n` 时，全部测试进入 `serial-pool`；启用 `-n` 时，parallel 与 serial 测试按计划进入各自语义池。当前 Runner 直接把 `parallel-pool` 或 `serial-pool` 作为 `execution_id`。stage environment 临时设置 enable、run ID、execution ID 和 output dir，执行结束后恢复原环境。
 
-worker_id不由Runner生命周期生成。第17课pytest插件进入具体进程后，非xdist使用master，xdist worker读取workerinput，再与run_id和execution_id组成QualityRunContext。补JUnit参数不等于文件已生成；FINISHED不等于测试通过。Noop不新增Quality副作用，但也不清理外部旧变量；Enabled的fail-open范围也不能扩大为所有错误都不影响Runner。
+`worker_id` 不由 Runner 生命周期生成。第 17 课 pytest 插件会在具体进程内补齐 worker 身份并采集 worker 原始账本，本课只保留这个虚线接口。补 JUnit 参数不等于文件已生成；`FINISHED` 不等于测试通过。Noop 不新增 Quality 副作用，但也不清理外部旧变量；Enabled 的 fail-open 范围不能扩大为所有错误都不影响 Runner。
 ```
 
 ---
@@ -1291,26 +1133,22 @@ Runner执行门禁
 -> 环境恢复与finalize
 ```
 
-但父级身份进入 pytest 进程后，仍有四个问题没有回答：
+但父级身份进入 pytest 进程后，仍有三个问题没有回答：
 
 ```text
-pytest插件在什么时点读取Quality配置和父级环境？
-非xdist与xdist worker怎样确定worker_id？
-run + execution + worker怎样组成QualityRunContext？
-插件怎样安装Collector和Runtime Adapter，并在退出时收口worker原始账本？
+pytest 插件在什么时点读取 Quality 配置和父级环境？
+具体 pytest 进程怎样补齐 worker 身份？
+插件怎样把运行事件写成可归并的 worker 原始账本？
 ```
 
-第 17 课进入 pytest 插件与 worker 原始账本：
+第 17 课进入 pytest 插件与 worker 原始账本，但第 16 课只保留虚线接口：
 
 ```text
 stage environment
--. pytest插件读取 .->
+-. 第17课插件补齐worker身份并采集原始账本 .->
 pytest Quality插件
-├─ 构造QualityRunContext(run_id, execution_id, worker_id, output_dir)
-├─ configure_collector(run_context) -> worker原始账本
-└─ bind_runtime_hooks(QualityRuntimeHooks) -> Runtime Adapter
 ```
 
-直接 pytest 是并列插件入口：它不经过 Runner 生命周期，但 Quality 有效开启时，插件可以补齐手动 `run_id` 与 `execution_id=manual-pytest`；xdist controller 则先通过 `workerinput` 把父级配置传给 worker。两条路径都在第 17 课展开。
+直接 pytest 是并列插件入口：它不经过 Runner 生命周期。它怎样补齐手动身份，以及多进程执行怎样避免 worker 账本串线，都在第 17 课展开。
 
 第 16 课解决“Runner是否启用Quality、父级身份怎样进入执行池”；第 17 课解决“pytest进程怎样把父级身份补成worker上下文，并把运行事件写成可归并的原始账本”。
