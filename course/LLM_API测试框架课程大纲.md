@@ -679,7 +679,7 @@ Runner -> create_quality_run_lifecycle()
 
 Enabled父级配置 ==> 单一run_id
 真正执行池的stage_id ==> execution_id
-run_id + execution_id + output_dir ==> pytest stage environment
+QUALITY_ENABLE=1 + QUALITY_RUN_ID + QUALITY_EXECUTION_ID + QUALITY_OUTPUT_DIR ==> pytest stage environment
 stage environment -. 第17课pytest插件读取 .-> worker_id
 ```
 
@@ -698,7 +698,7 @@ stage environment -. 第17课pytest插件读取 .-> worker_id
 - pytest report 的 JUnit properties 如何写入 `quality_case_id` 和 `quality_invocation_id`。
 - worker 只写 Case、Request、Integrity 三类分片。
 - FailureRecord 不是 worker 原始分片，而是归并阶段结合 Case、JUnit、Request 和 Integrity 证据生成的派生事实。
-- `QualityCollector`、JSONL 分片和原子写入为什么适合并发 worker。
+- `QualityCollector`、JSONL 分片、进程内锁、追加写入和按 worker 文件隔离为什么适合并发 worker。
 
 **代码入口**：
 
@@ -711,15 +711,7 @@ stage environment -. 第17课pytest插件读取 .-> worker_id
 - `quality/storage.py`
 - `quality/models.py`
 
-**课堂实践**：阅读插件和 Collector 测试，追踪一次参数化 Case 从 nodeid 到 case ID、invocation ID、JUnit properties 和 worker JSONL 的全过程。
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest `
-  tests/quality/test_quality_pytest_plugin.py `
-  tests/quality/test_quality_junit.py `
-  tests/quality/test_quality_collector.py `
-  tests/quality/test_quality_storage.py -q
-```
+**课堂实践**：执行 `course/第17课-pytest插件把生命周期写成worker原始账本.md` 第 15.1 节的核心安全命令，不直接运行省略隔离步骤的简化 pytest 命令。课堂阅读插件和 Collector 测试，追踪一次参数化 Case 从 nodeid 到 case ID、invocation ID、JUnit properties 和 worker JSONL 的全过程；xdist 证据只使用讲义第 15.2 节教师选讲命令。
 
 **课后产出**：绘制“run/execution/worker identity → pytest hook / Runtime Hooks → Collector → Case/Request/Integrity worker JSONL”，并为 JUnit properties 和归并阶段 FailureRecord 输出预留节点。
 
@@ -740,7 +732,7 @@ stage environment -. 第17课pytest插件读取 .-> worker_id
 - Classifier 如何结合错误类型、消息、断言位置和请求指标生成 FailureCategory、owner domain、confidence 与稳定 failure fingerprint。
 - `merge_quality_facts()` 返回 `None` 时才完全停止 Quality 下游。
 - 教学图必须先判断 `merge_result is None`；只有取得成功归并结果后，才表达该结果中已经完成 FailureRecord 分类。
-- 返回结果但完整性为 FAILED 时，Semantic、Metrics、Flaky 仍会执行各自的可信性校验，并生成失败、降级或 no-data 证据；此时不能产出可信指标或导入可信 Flaky 样本。
+- 返回结果但 P0 完整性为 FAILED 时，manifest status 仍可能是 `complete`；Semantic 主要校验 P0 manifest 提交状态、run ID 和请求文件哈希，Metrics 与 Flaky 则明确拒绝 P0 `integrity_status=FAILED`。必须区分 manifest 提交状态、P0 完整性状态和各下游自己的输入门槛。
 
 **代码入口**：
 
@@ -750,16 +742,9 @@ stage environment -. 第17课pytest插件读取 .-> worker_id
 - `quality/classifier.py`
 - `run_orchestration/quality_pipeline.py`
 
-**课堂实践**：比较完整分片和缺失分片的归并结果，再为同一 Case 构造不同 JUnit/Request 证据，观察分类结果与稳定指纹。
+**课堂实践**：执行 `course/第18课-Aggregator先判断账本能不能信.md` 第 13.1 节的核心安全命令，不直接运行省略隔离步骤的简化 pytest 命令。随后阅读 `tests/quality/test_quality_classifier.py` 中同一默认 `_evidence()` 的四个变体，先预测 configuration、unknown、transient 和稳定 fingerprint，再对照断言；命令同时覆盖 `merge_result is None` 的 pipeline 边界。
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest `
-  tests/quality/test_quality_aggregator.py `
-  tests/quality/test_quality_junit.py `
-  tests/quality/test_quality_classifier.py -q
-```
-
-**课后产出**：在总图中分别增加“merge_result 是否为 None”和“integrity_status 是否满足下游可信性要求”，并画出 `JUnit properties -> JUnitCaseEvidence -> Aggregator -> Classifier -> FailureRecord`；禁止把归并、完整性判断和分类规则合并成一个黑盒节点。
+**课后产出**：在总图中分别增加“merge_result 是否为 None”、manifest 提交状态、P0 `integrity_status` 和本课关注的 P0 可信性门槛，并画出 `JUnit properties -> JUnitCaseEvidence -> Aggregator -> Classifier -> FailureRecord`；禁止把归并、完整性判断和分类规则合并成一个黑盒节点。
 
 ### 第 19 课：Semantic 把多个请求还原成一次业务调用
 
@@ -906,7 +891,7 @@ Quality config
             ├─ 返回 None -> 完全停止 Quality 下游
             └─ 返回结果 -> 结果中已包含 FailureRecord
                     -> integrity_status 可能为 FAILED
-                    -> 下游继续自校验并产生正常、失败、降级或 no-data 证据
+                    -> 下游按各自门槛处理：Semantic 校验 manifest/run/request hash，Metrics/Flaky 拒绝 P0 FAILED
   -> Semantic
   -> Metrics
   -> Flaky 历史与状态识别
@@ -920,7 +905,7 @@ Quality config
 - 能解释请求失败不等于测试失败。
 - 能说明测试失败不等于 Flaky。
 - 能从一个 Metrics 字段反推它依赖的原始事实。
-- 能区分 merge 返回 `None` 的完全中止与完整性 FAILED 时的阶段降级。
+- 能区分 merge 返回 `None` 的完全中止与返回结果但 P0 完整性 FAILED 时各下游门槛不同。
 - 能解释 run ID、execution ID、worker ID、case ID 和 invocation ID 的作用域。
 - 能在一次性数据库副本上完成健康检查、历史查询、状态查询和一项带审计字段的 Flaky 治理动作。
 
