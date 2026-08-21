@@ -1,536 +1,1133 @@
-# 第 03 课：Runner 权威执行与稳定身份
+# 第 3 课：Runner 权威执行与稳定身份
 
-> 本课只解决一个问题：当一轮测试被拆成并行池、串行池和多个 pytest（Python 测试工具）worker（独立执行进程）后，怎样证明计划分池没有丢失或重复，并为判断“哪些池留下了结果、Case（一次 pytest 用例调用）/Request（Case 中一次接口调用的请求事实）属于哪次调用、Runner 最终怎样返回”提供可复核依据。核心结论是：Runner（项目的测试运行编排者）的权威集合保护计划范围，五级身份（从整轮运行到本次 Case 调用的分层标识）为 Case/Request 提供归属键；账页是否完整留到后续课程判断。
+> 建议时长：75 分钟
+>
+> 本课范围：权威 Case 集合、并行/串行分池、pytest 退出事实、五级身份、worker 原始账页与 JUnit 身份。
+>
+> 本课不展开：Aggregator 的完整归并规则、Metrics、Flaky、Allure 内部生命周期和完整源码调用链。
 
-## 1. 课程信息
+## 1. 先说结论
 
-| 项目 | 内容 |
+Runner 的核心价值不是“把 pytest 跑得更快”，而是在并发开始前冻结一份权威执行计划，并在执行结束后保留可审计的池级事实。
+
+稳定身份的核心价值也不是“多加几个 ID 字段”，而是让每一条分散在不同进程、不同文件和不同产物中的事实，都能回答：
+
+1. 它属于哪一轮运行？
+2. 它来自哪个执行阶段？
+3. 它由哪个 worker 写出？
+4. 它对应哪个长期稳定的测试定义？
+5. 它对应本轮哪一次具体参数化调用？
+
+整节课只围绕一条主线展开：
+
+~~~text
+先确定“谁应该执行”
+-> 再保证并行池和串行池不重、不漏
+-> 执行时保留每个池的原始 pytest 结果
+-> 用稳定身份标记分散的 Case 事实
+-> 为后续 JUnit 与 Aggregator 对账提供可靠输入
+~~~
+
+需要先明确一个能力边界：Runner 能证明计划是什么、计划怎样分池、各池返回了什么；它单独不能证明每个 Case 事实都已完整落盘。完整性结论还需要后续 Aggregator 结合 Case 分片、预期数量和 JUnit 进行对账。
+
+## 2. 学完本课应建立的认识
+
+本课不要求记忆文件或函数。重点是理解以下设计判断：
+
+- 为什么并发执行前必须先形成唯一的权威 Case 集合。
+- 为什么 `|P| + |S| = |C|` 不能代替真正的集合守恒检查。
+- 为什么 pytest 原始退出码、Runner 项目级退出码和质量诊断不是同一层事实。
+- `run_id`、`execution_id`、`worker_id`、`case_id`、`invocation_id` 分别解决什么归属问题。
+- 参数化用例为什么既需要稳定的 `case_id`，又需要本轮具体的 `invocation_id`。
+- 当前实现在哪些情况下停止后续执行、降级质量观察或保留原始错误。
+
+## 3. 从一个并发场景开始
+
+假设一次回归测试收集到 8 个 pytest 收集项：
+
+- 6 个收集项可以并行执行。
+- 2 个收集项带有 `serial` 标记，只能串行执行。
+- 并行池由两个 xdist worker 执行。
+- 其中一个测试定义经过参数化展开，形成两个带不同参数后缀的收集项。
+- 并行池出现普通断言失败，串行池仍然需要执行。
+
+先解释四个初学者容易陌生的词：
+
+| 术语 | 本课中的含义 |
 | --- | --- |
-| 建议时长 | 75 分钟 |
-| 核心问题 | 并行与串行混合执行时，怎样证明计划集合没有丢失或重复，并为后续发现事实串线提供稳定归属键？ |
-| 课程位置 | 第 2 课先解决复杂调用怎样正确结束；本课开始解决这些调用并发执行后怎样保持事实归属 |
-| 前置要求 | 理解 Case 是一次 pytest（Python 测试工具）用例调用及其最终测试事实；不要求预先理解 pytest 插件（扩展 pytest 生命周期的组件）或 pytest-xdist（pytest 的并发执行插件） |
-| 本课主线 | pytest 权威收集 → C（权威 Case 集合）/P（并行计划集合）/S（串行计划集合）守恒 → pytest 返回码与 Runner 池结果 → 五级身份归属 |
-| 最终结论 | “应该执行谁”由权威集合回答；“执行怎样结束”由 pytest 返回码和 Runner 池结果回答；“事实属于谁”由五级身份回答 |
+| 测试定义 | 源码中的测试函数或测试方法，例如 `test_chat` |
+| pytest 收集项 | pytest 应用参数化和选择规则后得到的可执行项；每个收集项具有完整 nodeid |
+| Case 调用 | 本轮实际执行一个 pytest 收集项所形成的用例调用；它可能产生 setup、call、teardown 多条 phase 事实 |
+| nodeid | pytest 为一个可执行测试项生成的定位字符串，例如 `module/test_chat.py::test_chat[model-a]` |
+| marker | pytest 附加在测试项上的标记；本框架用 `serial` 标记决定是否进入串行池 |
+| xdist worker | pytest-xdist 启动的执行进程，常见身份为 `gw0`、`gw1` |
+| JUnit | pytest 输出的 XML 测试证据，记录 Case 名称、状态、耗时和错误等信息 |
+| JSONL | 一行保存一条 JSON 记录的文件格式；不同 worker 用它分别写原始 Case 账页 |
+| Integrity | Quality 对缺失、冲突或采集失败等可信度问题留下的诊断记录 |
 
-### 1.1 本课学习结果
+下文未加限定的“Case”指本轮的一次 Case 调用；“测试定义”指源码中的稳定定义；`C`、`P`、`S` 的直接元素则是参数展开后的 pytest 收集项 nodeid。三者不能混用。
 
-本课结束后，学习者应能：
+如果没有权威计划和稳定身份，执行后会立即出现四类问题：
 
-1. 解释为什么执行前必须先形成唯一的权威 `nodeid`（pytest 为已收集用例调用生成的文本标识）集合。
-2. 使用集合关系说明并行池与串行池的计划守恒，而不是只比较数量。
-3. 区分 `pytest.main()`（pytest 的同进程调用入口）原始调用返回码、执行池结果和 Runner 项目级 `final_exit_code`（Runner 归并各池后形成的最终退出码）。
-4. 说明五级身份字段分别解决什么归属问题。
-5. 解释参数化 Case 为什么需要同时保留稳定定义身份与本轮调用身份。
-6. 说明未运行、池内错误和 Runner 外层异常三类出口分别还能保留什么事实。
+### 3.1 计划问题
 
-### 1.2 本课刻意不展开
+到底是哪 8 个收集项被纳入计划？某个计划项没有产物，是没有被选中、被分池时遗漏，还是执行时丢失？
 
-- 不讲 pytest-xdist 的调度算法、进程通信或负载均衡。
-- 不展开 pytest 全部 Hook（生命周期回调）机制。
-- 不讲 Allure（测试报告工具）合并和历史报告内部实现。
-- 不展开 JSONL（一行一个 JSON 对象的文本格式）Schema（记录结构约束）；本课只说明身份怎样进入原始账页。
-- 不讲 Aggregator（后续归并并检查多份原始账页的组件）如何对账；那是第 5 课的约束。
-- 不把“计划集合守恒”夸大为“每个 Case 必然成功执行”。
+### 3.2 归属问题
 
-### 1.3 75 分钟讲授路线
+`gw0` 和 `gw1` 都写出 Case 记录时，怎样判断它们属于同一轮运行、同一个执行池，而不是上一次残留的数据？
 
-| 时间 | 内容 | 本段要形成的认识 |
-| ---: | --- | --- |
-| 0～6 分钟 | 先给结论，区分计划完整与执行成功 | 分池正确不能由最终数量猜测 |
-| 6～14 分钟 | 第一性原理与 TOC（约束理论：用当前瓶颈决定分析顺序） | 先解除计划基准约束，再追随瓶颈到事实归属 |
-| 14～28 分钟 | pytest 权威收集与 C/P/S 集合守恒 | `nodeid` 集合是 Runner 显式收集计划的事实来源 |
-| 28～44 分钟 | pytest 返回码、池结果与 `final_exit_code` | 分清原始调用事实、Runner 编排事实和持久化文件 |
-| 44～61 分钟 | 五级身份与两个最小写出证据 | 从运行、阶段、worker、Case 到本次调用逐级定位 |
-| 61～70 分钟 | 三层失败出口 | 只区分未运行、池内错误和 Runner 外层异常 |
-| 70～75 分钟 | 设计边界与收束 | 用三条核心链连接下一课 |
+### 3.3 参数化问题
 
-### 1.4 核心实现思路摘要
+`test_chat[model-a]` 和 `test_chat[model-b]` 是同一个测试定义的两个调用。长期比较时它们应该共享稳定 Case 身份；本轮执行时又必须能够区分。
 
-Runner 先清空 pytest 配置中的 `addopts`（pytest 从配置自动追加的命令行选项）并调用权威收集：正常返回非 0 且非 `collect-only`（只收集、不执行测试的模式）时尝试写空池结果文件；返回 0 时才形成权威 Case 集合并进入分池。执行池结果先追加到内存，执行路径只有走到写入点且写入成功才持久化。Quality（可选质量采集扩展）只在启用且 worker 采集上下文建立成功时，才把 `execution_id`（执行池或阶段身份）作为五级身份的一部分写入 Case/Request。设计合同要求执行池只消费权威 `nodeid`；当前实现仍会接收共享的未知或插件参数并重新读取 `addopts`，两者都可能改变实际集合。当前 `addopts` 未启用 `-k/-m`，Jenkins 主路径（`Jenkinsfile` 中 Real Smoke 的标准调用路径）也没有传入扩大收集范围的未知参数，因此当前业务尚未触发；但这仍是未兑现的实现合同，不是正常能力边界。该设计适合并发/串行混合执行和需要机器对账的测试运行；对单进程、无历史审计的一次性脚本可能偏重。
+### 3.4 结论问题
 
----
+并行池失败、串行池通过、Quality 采集失败时，谁有权决定最终退出码？如果诊断模块覆盖 pytest 结果，执行事实就会被观察系统篡改。
 
-## 2. 先说结论：先固定执行集合，再谈并发
+因此，真正的问题不是“怎样启动两个 pytest 进程”，而是：
 
-并行执行最危险的错误，不是“跑得慢”，而是没有一个可复核的基准说明到底应该跑谁。
+> 怎样让执行计划、运行过程和机器产物共享同一套可复核的事实坐标？
 
-如果先启动多个执行进程，再从各自结果倒推计划，就会形成循环证明：
+## 4. 第一性原理：并发正确性先需要一个不变的参照物
 
-```text
-各 worker 写出了若干结果
--> 用这些结果推断本轮应该执行哪些 Case
--> 再用推断出的集合证明结果完整
-```
+### 4.1 任务本质
 
-这条链无法发现“从一开始就没有被分配的 Case”，也无法证明两个池没有重复执行同一个 Case。
+并发把一份工作拆到多个进程中，但验证并发是否正确，必须依赖拆分前的一份不变参照物。
 
-当前实现反过来做：
+在本框架中，这份参照物就是 pytest 权威收集得到的计划集合 `C`。Runner 不是自己扫描文件、猜测测试函数，也不是让每个执行池自行发现目标。它先调用 pytest 的正式收集机制，再把收集结果中的 nodeid 作为后续执行的显式目标。
 
-```text
-pytest 清空配置 addopts，按 Runner 显式收集参数完成一次返回码为 0 的权威收集
--> 得到唯一、无重复的 nodeid 集合 C
--> 从 C 派生并行集合 P 与串行集合 S
--> 把明确的 nodeid 列表作为各执行池的主要输入
--> 成功形成并追加的池结果先留在内存；正常路径才尝试写入文件
-```
+因果链如下：
 
-这里的 `nodeid` 是 pytest 对一个已收集用例调用的文本标识，例如测试文件、类、方法和参数标识的组合。它是本课比较集合时的基本单位。
+~~~text
+选择条件、marker 和 pytest 插件可能改变实际收集结果
+-> 目录扫描或函数名推断无法代表 pytest 真正会执行的集合
+-> Runner 必须先取得 pytest 的权威收集结果 C
+-> 并行池 P 与串行池 S 只能从 C 中派生
+-> 后续执行以已冻结的 nodeid 作为显式计划目标
+-> 产物才能回到同一份计划上对账
+~~~
 
-“先有 C，再有 P 和 S”确立了 Runner 的计划基准，但不能推出 pytest 的最终执行集合只含对应池成员。执行池以权威计划中的明确 `nodeid` 为主要输入；执行阶段的 `addopts`，以及同时进入收集和执行的未知或插件参数，仍可能重新筛选或扩大实际集合。因此，C/P/S 守恒只证明 Runner 计划正确，不保证 pytest 最终只执行对应池成员。这是当前实现偏离“执行池只消费权威 nodeid”设计合同的地方，不是有意开放的能力。
+这里冻结的是 Runner 的**计划目标**，不是对执行阶段最终集合的绝对保证。权威收集显式使用 `-o addopts=` 清空配置中的 addopts；实际执行会重新加载 pytest 配置与插件，未知插件参数也会同时进入收集和执行阶段。因此，执行阶段仍可能受插件或配置行为影响，最终是否与 `C` 一致必须由后续执行证据对账，而不能仅凭 nodeid 参数宣称。
 
----
+### 4.2 TOC：本课最大的理解约束
 
-## 3. 第一性原理与 TOC：约束怎样从唯一基准转移到事实归属
+本课最大的理解约束不是并行语法，而是学习者容易把“执行了相同数量的测试”误认为“执行了正确的测试集合”。
 
-### 3.1 从最终目标倒推必要条件
+数量只回答“有几个”，集合才回答“是哪几个”。只要这个约束没有解除，讲 worker、JSONL 或 JUnit 都只是增加字段，无法证明执行正确性。
 
-我们希望最终能够复核：
+所以本课的引入顺序是：
 
-1. 哪些 Case 应该执行。
-2. 哪些 Case 被分到并行池，哪些被分到串行池。
-3. 哪个池实际运行、未运行或发生执行错误。
-4. 每条 Case/Request 事实属于哪轮、哪个池、哪个 worker、哪个调用。
-5. pytest 的原始退出事实有没有被质量模块覆盖。
+~~~text
+权威集合
+-> 集合守恒
+-> 池级执行事实
+-> 五级身份
+-> worker 账页与 JUnit 证据
+~~~
 
-要得到这些答案，至少需要两个不可替代的条件：
+## 5. 整体实现思路
 
-```text
-唯一计划基准
-+
-稳定归属身份
-=
-可对账的并发执行事实
-```
+当前实现可以压缩成三个相互衔接的责任层：
 
-只有计划，没有身份，会看到数量却无法把事实放回正确 Case。只有身份，没有权威计划，会知道一条记录来自谁，却不知道是否少执行了谁。
+| 层次 | 核心输入 | 核心责任 | 输出 |
+| --- | --- | --- | --- |
+| 权威计划层 | 测试目标、pytest 选择参数 | 用 pytest 正式收集 Case，形成并校验 `C`、`P`、`S` | 权威 nodeid 与分池计划 |
+| 执行事实层 | 计划 nodeid、执行参数 | 把计划 nodeid 作为显式目标交给 pytest，保留池状态、原始退出码和项目级退出码 | `execution-result.json`、JUnit 路径 |
+| 身份观察层 | 父运行身份、阶段身份、worker 与测试项 | 建立五级身份，写出按 execution/worker 隔离的 Case 分片，并给 JUnit 增加身份 | Case JSONL、JUnit identity properties |
 
-### 3.2 障碍到设计的因果链
+~~~mermaid
+flowchart TD
+    A[测试目标与选择参数] --> B[pytest 权威收集]
+    B --> C{收集退出码是否为 0}
+    C -- 否 --> D[保留收集退出事实并停止]
+    C -- 是 --> E[权威集合 C]
+    E --> F[按 serial marker 分池]
+    F --> G[并行池 P]
+    F --> H[串行池 S]
+    G --> I[池级 pytest 执行]
+    H --> I
+    I --> J[原始池退出码与项目级 final_exit_code]
 
-```text
-一轮运行被拆成多个执行池和 worker
--> 结果文件与进程不再只有一份
--> 文件存在不能证明计划完整，数量相同也不能证明集合相同
--> 必须先由 pytest 收集形成唯一 nodeid 集合
--> 分池必须满足不相交与并集守恒
--> Case/Request 执行事实还必须带稳定身份
--> Aggregator 才可能在后续按身份对账
-```
+    I --> K[run_id / execution_id]
+    K --> L[worker_id]
+    L --> M[case_id / invocation_id]
+    M --> N[worker Case JSONL]
+    M --> O[JUnit identity properties]
 
-### 3.3 TOC：先解除计划基准，再追随瓶颈到事实归属
+    E --> P[后续 expected Case count]
+    J --> Q[Runner 执行事实]
+    N --> R[后续 Aggregator 对账输入]
+    O --> R
+    P --> R
+~~~
 
-本课开始时最大的理解约束不是 xdist 如何分发任务，而是学习者容易把“并发输出的结果集合”当成“原始计划集合”。建立唯一计划基准后，瓶颈不会消失，而会转移到“分散事实怎样稳定归属”。
+图中的执行事实和质量事实是并行关系：Quality 观察 pytest，但无权改写 pytest 的原始退出事实。
 
-因此本课按以下顺序引入对象：
+## 6. 模块级精简教学代码
 
-1. 先引入 pytest 收集和 `nodeid`，建立 C，解除“没有唯一计划基准”的约束。
-2. 再引入 marker（用例标记）、P 与 S，证明计划分池守恒。
-3. 基准固定后，瓶颈转移到“多个池和 worker 的事实属于谁”，于是引入执行状态与五级身份。
-4. 最后只确认五级身份怎样进入 worker 质量事实和 JUnit（pytest 输出的标准机器可读测试结果），不提前展开后续归并逻辑。
+下面是一份**教学重构代码**，不是仓库中的完整文件，也不能直接替换当前实现。
 
-教学层面的当前约束是认知吞吐：异常点继续逐条增加，学习者反而无法记住边界。因此后半段只保留“未运行、池内错误、Runner 外层异常”三层出口，不按内部组件展开失败清单。
+原实现需要解决的约束包括：pytest 参数在收集期与执行期的边界、权威收集、marker 分池、并行与串行阶段编排、原始退出码保留、Quality 可选接入、xdist 身份传播、Case 分片和 JUnit 身份。
 
-如果一开始就讲插件 Hook、ContextVar（随当前执行上下文保存值的 Python 机制）和 JSONL，注意力会被实现名词消耗，仍然看不见真正的约束。
+这份教学代码：
 
----
+- 保留了参数规划与收集异常、权威集合、集合守恒、池级状态、Runner 总出口、中断状态、五级身份、写盘隔离、JSONL/JUnit 输出和下游边界。
+- 把实际分散在 Runner、调度器、pytest 执行封装和 Quality pytest 插件中的职责放到一个教学骨架里。
+- 省略了 CLI、Allure、路径后缀处理、完整异常文本、Pydantic 校验、原子写实现、Semantic 采集和失败分类。
+- 省略内容不会改变“谁拥有执行事实”“身份怎样形成”以及“正常与失败怎样退出”等架构事实。
 
-## 4. 权威集合：pytest 收集拥有 Runner 显式计划的“有哪些 Case”事实
+代码中的文件分隔注释表示不同真实模块。它们被放进同一个代码块，是为了显式展示 `pytest_main()` 之后由 pytest 驱动的插件与 hook 链；这不是把这些函数伪装成仓库中的单一文件。
 
-### 4.1 为什么 Runner 不自己解析测试文件
+~~~python
+# 教学重构：用于表达 Runner + 稳定身份的端到端主控制流
 
-pytest 的收集结果受多种条件影响：测试发现规则、`-k` 表达式、`-m` marker 选择、忽略项、取消选择项和插件行为。Runner 若重新实现一套文件扫描规则，就会出现两套“应该执行谁”的定义。不过，本课的“权威”有明确输入边界：它针对 Runner 显式传给收集阶段的参数，不等于 pytest 配置中所有可能生效的选择条件。
+from dataclasses import dataclass
+from datetime import timedelta
+from enum import Enum
+from pathlib import Path
 
-当前 `partition_pytest_args` 将参数分成：
 
-- 收集参数：会影响选择集合的参数。
-- 执行参数：并发数、JUnit 路径、Allure 目录等只影响执行方式的参数。
-- 选择参数：需要保存在 Runner 执行事实中的选择条件。
+TERMINATING_EXIT_CODES = {2, 3, 4, 5}
 
-未知或插件参数不会被 Runner 自作聪明地解释，而是同时传给收集与执行，以保留 pytest 已有行为。执行时，这些参数与池内明确 `nodeid` 一起交给 pytest；若参数自身具有选择语义，或表示额外测试路径，就可能重新筛选或扩大该池的实际执行集合。这个处理不是证明所有插件参数都安全，而是避免 Runner 假装完整复刻 pytest 参数系统。
 
-### 4.2 权威收集的当前实现事实
+@dataclass(frozen=True)
+class CollectedCase:
+    nodeid: str
+    markers: frozenset[str]
 
-`collect_test_case_items` 调用 pytest 的 `--collect-only`，由一个最小收集插件读取 `session.items`，记录每项的 `nodeid` 与 marker。
 
-调用收集时，Runner 额外传入 `-o addopts=`，显式清空上述配置选项。这样得到的 C 服从 Runner 显式收集参数，而不会把配置中的 `addopts` 混入计划基准。
+class PoolStatus(str, Enum):
+    NOT_RUN = "NOT_RUN"
+    COMPLETED = "COMPLETED"
+    ERROR = "ERROR"
 
-但执行池再次调用 pytest 时没有清空 `addopts`。pytest 会重新读取配置；如果其中含有 `-k`、`-m` 等选择条件，即使 Runner 已把明确 `nodeid` 交给执行池，实际执行仍可能再次被筛选。因此：
 
-这里必须把合同、实现和当前业务分开：
+@dataclass(frozen=True)
+class PoolResult:
+    stage_id: str
+    planned_nodeids: tuple[str, ...]
+    status: PoolStatus
+    raw_pytest_exit_code: int | None = None
+    junit_path: str | None = None
 
-| 层级 | 事实判断 |
-| --- | --- |
-| 设计合同 | 正式执行只消费权威 `nodeid`，每个 `nodeid` 最多执行一次 |
-| 当前实现 | 执行阶段没有清空 `addopts`，共享的未知或插件参数也与池内 `nodeid` 一起传给 pytest，仍可能筛选或扩大实际集合 |
-| 当前业务 | `pytest.ini` 的 `addopts` 只有 Allure 输出目录；Jenkins Real Smoke 主路径传入同一个 `SMOKE_TARGET`，另外只增加可选并发参数和 JUnit 输出参数，尚未触发集合扩大 |
-| 结论 | 这是未兑现的实现合同，不是正常能力边界；C/P/S 守恒只能证明 Runner 计划正确 |
 
-收集阶段同时保存：
+@dataclass(frozen=True)
+class RunIdentity:
+    run_id: str
+    execution_id: str
+    worker_id: str
+    output_dir: Path
 
-- `raw_pytest_exit_code`：同进程 `pytest.main()` 收集调用的原始返回码；字段沿用 exit code 命名，但不是独立操作系统进程退出码。
-- `cases`：权威 `CollectedTestCase`（Runner 保存单个已收集用例及其 marker 的数据对象）元组。
-- `stdout`（标准输出流）与 `stderr`（标准错误流）：收集失败时的原始上下文。
 
-如果 pytest 产生重复 `nodeid`，当前 `_CaseCollector` 会记录重复 `nodeid` 并跳过重复 item，随后由 `collect_test_case_items` 直接报错，不让一个含歧义的计划进入分池。这只证明当前权威收集拒绝重复身份，不代表 pytest 永远不会因插件或参数产生重复项。这里保留为实现事实说明，不作为本课独立代码锚点。
+@dataclass(frozen=True)
+class CaseIdentity:
+    case_id: str
+    invocation_id: str
+    nodeid: str
+    param_hash: str
 
-### 4.3 收集终态不能被执行阶段改写
 
-当前 Runner 必须同时判断“调用怎样结束”和“是否为 `collect-only`（只收集、不执行）”：
+class EnabledQualityLifecycle:
+    """仅保留本课需要看到的 JUnit 参数边界。"""
+    enabled = True
 
-| 收集路径 | 能否进入分池执行 | 是否尝试写新的 `execution-result.json` |
-| --- | --- | --- |
-| 参数解析异常、收集调用抛异常或重复 `nodeid` 触发异常 | 不可以 | 不写新的文件 |
-| 收集调用正常返回非 0，且不是 `collect-only` | 不可以 | 写；`pool_results=[]`，保留收集返回码 |
-| `collect-only` 下收集调用正常返回 | 不执行 Case | 不写新的文件；返回收集码或展示分池数量 |
-| 收集调用返回 0，且不是 `collect-only` | 可以 | 进入执行；只有后续写入路径成功才形成当前文件 |
+    def ensure_junit_args(self, pytest_args):
+        args = list(pytest_args)
+        if junit_path_from(args) is not None:
+            return args
+        return args + [f"--junitxml={self.output_dir}/junit/quality.xml"]
 
-“没有收集到测试”的返回码 5 属于“正常返回非 0”：非 `collect-only` 时仍会写空池结果的 Runner 执行文件，但绝不能解释为全部测试通过。
 
----
+class NoopQualityLifecycle:
+    enabled = False
 
-## 5. 集合守恒：比较成员，不比较看起来相等的数量
+    def ensure_junit_args(self, pytest_args):
+        return list(pytest_args)
 
-### 5.1 三个集合
+
+def build_execution_plan(cases: tuple[CollectedCase, ...]):
+    """从同一份权威收集结果派生 P 和 S。"""
+    seen: set[str] = set()
+    parallel: list[str] = []
+    serial: list[str] = []
+
+    for case in cases:
+        if case.nodeid in seen:
+            raise ValueError("duplicate nodeid")
+        seen.add(case.nodeid)
+        target = serial if "serial" in case.markers else parallel
+        target.append(case.nodeid)
+
+    P, S = tuple(parallel), tuple(serial)
+    if set(P) & set(S):
+        raise ValueError("parallel and serial pools overlap")
+    if set(P) | set(S) != seen:
+        raise ValueError("pool union differs from authoritative plan")
+    return P, S
+
+
+def execute_pool(stage_id, planned_nodeids, pytest_args):
+    """把计划 nodeid 交给 pytest；这里只隔离 pytest 调用本身的异常。"""
+    nodeids = tuple(planned_nodeids)
+    junit_path = junit_path_from(pytest_args)  # 位于池内 try 之外
+    if not nodeids:
+        return PoolResult(
+            stage_id, (), PoolStatus.NOT_RUN, junit_path=junit_path
+        )
+
+    args = [*nodeids, *pytest_args]
+    try:
+        # pytest 在这里重新加载配置和 module/conftest.py；下半段展示
+        # Quality 插件怎样由 pytest 加载并通过 hooks 观察执行。
+        raw_exit = int(pytest_main(args))
+        return PoolResult(
+            stage_id=stage_id,
+            planned_nodeids=nodeids,
+            status=PoolStatus.COMPLETED,
+            raw_pytest_exit_code=raw_exit,
+            junit_path=junit_path,
+        )
+    except Exception as error:
+        return PoolResult(
+            stage_id=stage_id,
+            planned_nodeids=nodeids,
+            status=PoolStatus.ERROR,
+            raw_pytest_exit_code=None,
+            junit_path=junit_path,
+        )
+
+
+def run(test_target, pytest_args, *, numprocesses=None, dist=None):
+    """Runner：保留参数、收集、池执行和中断的真实失败归属。"""
+    try:
+        argument_plan = partition_pytest_args(pytest_args)
+    except ValueError:
+        return PYTEST_EXIT_USAGE_ERROR  # 4：参数规划失败，尚未收集
+
+    try:
+        collection = pytest_collect_only(
+            test_target,
+            argument_plan.collection_args,
+        )  # 内部固定传入 -o addopts=
+    except Exception:
+        return PYTEST_EXIT_TESTS_FAILED  # 1：权威收集调用本身异常
+
+    if collection.raw_pytest_exit_code != PYTEST_EXIT_OK:
+        final_exit = collection.raw_pytest_exit_code
+        if not argument_plan.collect_only:
+            final_exit = write_runner_fact_or_fail(
+                planned_nodeids=tuple(
+                    case.nodeid for case in collection.cases
+                ),
+                collection_exit_code=collection.raw_pytest_exit_code,
+                pool_results=(),
+                final_exit_code=final_exit,
+            )
+        return final_exit
+
+    C = tuple(case.nodeid for case in collection.cases)
+    P, S = build_execution_plan(collection.cases)
+    if argument_plan.collect_only:
+        return PYTEST_EXIT_OK  # 不创建新的 Quality 身份和产物
+
+    quality = create_quality_lifecycle()  # 关闭或配置失败时得到 Noop
+    start_time = now_utc()
+    quality.prepare(start_time)           # 内部 fail-open
+    pool_results: list[PoolResult] = []
+    run_status = FINISHED
+
+    try:
+        if not numprocesses:
+            # Enabled 生命周期在未提供 --junitxml 时注入默认路径；
+            # Noop 生命周期原样返回参数。
+            serial_args = quality.ensure_junit_args(
+                argument_plan.execution_args
+            )
+
+            # 环境上下文故障属于 Runner 总出口，不属于 execute_pool 的 ERROR。
+            with quality.stage_environment("serial-pool"):
+                pool_results.append(
+                    execute_pool("serial-pool", C, serial_args)
+                )
+        else:
+            parallel_args = quality.ensure_junit_args(
+                argument_plan.execution_args
+            )
+            parallel_args = build_parallel_args(
+                parallel_args,
+                numprocesses=numprocesses,
+                dist=dist,
+                junit_suffix="parallel",
+            )
+            if P:
+                with quality.stage_environment("parallel-pool"):
+                    parallel_result = execute_pool(
+                        "parallel-pool", P, parallel_args
+                    )
+            else:
+                parallel_result = not_run_pool(
+                    "parallel-pool", P, parallel_args
+                )
+            pool_results.append(parallel_result)
+
+            must_stop = (
+                parallel_result.status is PoolStatus.ERROR
+                or parallel_result.raw_pytest_exit_code
+                in TERMINATING_EXIT_CODES
+            )
+            serial_args = quality.ensure_junit_args(
+                argument_plan.execution_args
+            )
+            serial_args = build_serial_args(
+                serial_args, junit_suffix="serial"
+            )
+            if must_stop:
+                serial_result = not_run_pool(
+                    "serial-pool", S, serial_args
+                )
+            elif S:
+                # 普通测试失败 exit 1 不阻止串行池继续执行。
+                with quality.stage_environment("serial-pool"):
+                    serial_result = execute_pool(
+                        "serial-pool", S, serial_args
+                    )
+            else:
+                serial_result = not_run_pool(
+                    "serial-pool", S, serial_args
+                )
+            pool_results.append(serial_result)
+
+        final_exit = merge_raw_pytest_exit_codes(pool_results)
+        if any(r.status is PoolStatus.ERROR for r in pool_results):
+            run_status = PARTIAL
+        return write_runner_fact_or_fail(
+            planned_nodeids=C,
+            collection_exit_code=collection.raw_pytest_exit_code,
+            pool_results=tuple(pool_results),
+            final_exit_code=final_exit,
+        )
+    except (KeyboardInterrupt, SystemExit):
+        run_status = INTERRUPTED
+        raise  # 中断保持中断，不伪装成普通测试失败
+    except Exception:
+        run_status = PARTIAL
+        return PYTEST_EXIT_TESTS_FAILED
+    finally:
+        # Enabled 生命周期从非 NOT_RUN 池提取 execution_id 和 JUnit 路径；
+        # finalize 自身 fail-open，不覆盖上面的退出事实。
+        quality.finalize(
+            start_time=start_time,
+            expected_case_count=len(C),
+            pool_results=tuple(pool_results),
+            status=run_status,
+        )
+
+
+# ----- module/conftest.py -----
+# pytest_main() 执行 module 下的 nodeid 时，pytest 加载这个轻量插件入口。
+pytest_plugins = ("quality.pytest_plugin",)
+
+
+# ----- quality/pytest_plugin.py：真实 hook 名 pytest_configure -----
+def pytest_configure(config):
+    if config.option.collectonly:
+        return
+    try:
+        enabled = quality_enabled_from_env_or_workerinput(config)
+    except Exception as error:
+        warn("quality collection disabled", error)
+        return
+    if not enabled:
+        return
+
+    # 只有启用时才加载并注册较重的 runtime hooks。
+    runtime = import_module("quality.pytest_plugin_runtime")
+    if not config.pluginmanager.has_plugin("quality-runtime"):
+        config.pluginmanager.register(runtime, "quality-runtime")
+
+
+# ----- quality/pytest_plugin_runtime.py：真实 hook 名 pytest_configure -----
+def pytest_configure(config):
+    try:
+        runtime_config = resolve_runtime_config(config)
+    except Exception as error:
+        warn("quality collection disabled", error)
+        return
+    state = PluginState(config=runtime_config)
+    config._quality_plugin_state = state
+    if not runtime_config.enabled:
+        return
+
+    # controller 保留 state，供 pytest_configure_node 转发配置；
+    # controller 自己不建 collector，因此不会写 master Case 分片。
+    if is_xdist_controller(config):
+        return
+
+    try:
+        state.run_context = RunIdentity(
+            run_id=runtime_config.run_id,
+            execution_id=runtime_config.execution_id,
+            worker_id=xdist_worker_id_or_master(config),
+            output_dir=runtime_config.output_dir,
+        )
+        state.run_token = set_run_context(state.run_context)
+        state.collector = configure_collector(state.run_context)
+    except Exception as error:
+        reset_partially_created_context_and_collector(state)
+        warn("quality collector initialization failed", error)
+
+
+# ----- xdist controller hook：真实 hook 名 pytest_configure_node -----
+@pytest.hookimpl(optionalhook=True)
+def pytest_configure_node(node):
+    state = getattr(node.config, "_quality_plugin_state", None)
+    if state is None or not state.config.enabled:
+        return
+    node.workerinput["quality_runtime"] = {
+        "enabled": True,
+        "run_id": state.config.run_id,
+        "execution_id": state.config.execution_id,
+        "output_dir": str(state.config.output_dir),
+    }
+    # worker 启动后再次加载轻量插件；上面的 pytest_configure
+    # 从 workerinput 取回同一 run_id / execution_id，再建立 worker 上下文。
+
+
+def build_case_context(item, run_id):
+    normalized = normalize_nodeid(item.nodeid)
+    callspec = getattr(item, "callspec", None)
+    parameter_view = None
+    if callspec is not None:
+        parameter_view = {
+            "parameter_id": normalized.parameter_id,
+            "params": callspec.params,
+        }
+    param_hash = build_param_hash(parameter_view)  # 先脱敏、规范化，再截断
+    case_id = build_case_id(item.nodeid)
+    return CaseIdentity(
+        case_id=case_id,
+        invocation_id=build_invocation_id(run_id, case_id, param_hash),
+        nodeid=item.nodeid,
+        param_hash=param_hash,
+    )
+
+
+# ----- worker hookwrapper：真实 hook 名 pytest_runtest_protocol -----
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_protocol(item, nextitem):
+    state = item.config._quality_plugin_state
+    collector = state.collector
+    if collector is None:
+        yield
+        return
+
+    token = None
+    try:
+        case_context = build_case_context(
+            item, collector.run_context.run_id
+        )
+        token = set_case_context(case_context)
+    except Exception as error:
+        collector.capture_integrity(
+            source="pytest_plugin",
+            code="case_context_build_failed",
+            message=str(error),
+            severity="ERROR",
+        )
+
+    try:
+        yield  # pytest 在这里执行 setup -> call -> teardown
+    finally:
+        if token is not None:
+            reset_case_context(token)
+
+
+# ----- worker phase hook：真实 hook 名 pytest_runtest_logreport -----
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_logreport(report):
+    collector = get_collector()
+    if collector is None or report.when not in {"setup", "call", "teardown"}:
+        return
+
+    case_context = get_case_context()
+    if case_context is None:
+        collector.capture_integrity(
+            source="pytest_plugin",
+            code="case_context_build_failed",
+            message=f"case context missing for {report.when}",
+            severity="ERROR",
+        )
+        return
+
+    try:
+        end_time = now_utc()
+        duration_ms = max(report.duration * 1000, 0)
+        status = status_from_pytest(report)
+        result = CaseResult(
+            run_id=collector.run_context.run_id,
+            execution_id=collector.run_context.execution_id,
+            worker_id=collector.run_context.worker_id,
+            case_id=case_context.case_id,
+            invocation_id=case_context.invocation_id,
+            nodeid=case_context.nodeid,
+            param_hash=case_context.param_hash,
+            phase=report.when,
+            raw_status=status,
+            final_status=status,
+            duration_ms=duration_ms,
+            start_time=end_time - timedelta(milliseconds=duration_ms),
+            end_time=end_time,
+        )
+
+        # pytest 的 JUnit 插件把 user_properties 写入已注入路径的 XML。
+        add_junit_property(report, "quality_case_id", case_context.case_id)
+        add_junit_property(
+            report, "quality_invocation_id", case_context.invocation_id
+        )
+        collector.record_case(result)  # 安全入口，不直接 append_jsonl
+    except Exception as error:
+        collector.capture_integrity(
+            source="pytest_plugin",
+            code="case_write_failed",
+            related_id=case_context.invocation_id,
+            message=str(error),
+            severity="ERROR",
+        )
+
+
+# ----- quality/collector.py：写盘失败隔离 -----
+class QualityCollector:
+    def __init__(self, run_context):
+        self.run_context = run_context
+        suffix = f"{run_context.execution_id}-{run_context.worker_id}.jsonl"
+        self.paths = ShardPaths(
+            cases=run_context.output_dir / "shards" / f"cases-{suffix}",
+            integrity=run_context.output_dir / "shards" / f"integrity-{suffix}",
+        )
+        initialize_empty_shards(self.paths)  # 失败由 runtime pytest_configure 隔离
+
+    def record_case(self, result):
+        try:
+            append_jsonl(self.paths.cases, result)
+            return True
+        except Exception as error:
+            # Integrity 写入也有自己的 try/except；两次写盘都失败时只告警。
+            self.capture_integrity(
+                source="collector",
+                code="case_write_failed",
+                related_id=result.invocation_id,
+                message=str(error),
+                severity="ERROR",
+            )
+            return False
+~~~
+
+### 6.1 这段代码的输入与输出
+
+输入不是“一个测试目录”这么简单，而是：
+
+- 测试目标。
+- 影响选择结果的 pytest 参数。
+- 只影响执行方式的 pytest 参数。
+- 是否启用并行。
+- Quality 是否启用及其父运行身份。
+
+输出也不是一个整数，而是多类不同所有权的事实：
+
+- pytest 权威收集结果。
+- Runner 的计划、池状态和 `final_exit_code`。
+- pytest 的池级原始退出码。
+- Quality 成功启用、插件被加载且 collector 初始化成功时，产生 worker Case 分片。
+- Quality 成功启用时，Runner 保留调用方已有 JUnit 参数，或注入默认 JUnit 路径；pytest 再把 Case 身份写入该 JUnit 证据。
+- 提供给后续 Aggregator 的预期 Case 数量与 execution 集合。
+
+### 6.2 为什么把实际代码重组为这条主线
+
+真实实现分文件是为了维护边界，教学重组则是为了看清转换过程：
+
+~~~text
+pytest 选择语义
+-> 权威 Case 集合
+-> 分池计划
+-> Runner 注入 JUnit 参数与阶段环境
+-> pytest_main 重新加载 module/conftest.py
+-> 轻量 Quality 插件按开关注册 runtime hooks
+-> xdist controller 转发 run / execution 配置
+-> worker 建立 run / execution / worker 上下文
+-> pytest_runtest_protocol 建立 Case 调用上下文
+-> pytest_runtest_logreport 观察真实 phase
+-> 安全写入 Case JSONL，并把身份交给 JUnit
+~~~
+
+如果按文件逐个介绍，学习者会先看到大量辅助函数，却看不到“输入怎样变成可复核输出”。教学重构只改变展示方式，不改变真实职责。
+
+当前这条自动加载链成立，是因为真实业务测试位于 `module` 下，而 `module/conftest.py` 声明了 `quality.pytest_plugin`。若 Runner 改为执行不受该 conftest 管辖的自定义测试路径，不能仅凭 `QUALITY_ENABLE=1` 推断插件一定被加载。
+
+## 7. 权威集合：先回答“谁应该执行”
+
+### 7.1 权威来源必须是 pytest
+
+当前实现通过 `pytest.main()` 执行一次正式的 `--collect-only`，并由收集插件读取 `session.items`。每个收集项保留：
+
+- 精确 `nodeid`。
+- 从函数、类和文件层级继承到的 marker 集合。
+
+这意味着 Runner 尊重 pytest 已经形成的选择语义，而不是重新实现一套测试发现器。
+
+选择参数和执行参数还会先被分开：
+
+| 参数类型 | 示例 | 进入权威收集 | 进入实际执行 |
+| --- | --- | --- | --- |
+| 选择参数 | `-k`、`-m`、`--ignore`、`--deselect` | 是 | Runner 不再传这些选择参数，而是传入计划 nodeid；执行期配置与插件仍会重新加载 |
+| 执行参数 | `-n`、`--dist`、`--junitxml`、`--alluredir` | 否 | 是 |
+| 未识别的插件参数 | 自定义插件参数 | 为保留插件语义，会同时传递 | 是 |
+
+核心不是机械分类参数，而是先把 Runner 认可的计划目标固定下来。由于收集期清空 configured addopts、执行期重新加载配置，且未知插件参数会同时进入两阶段，这个计划仍需用执行证据复核，不能自动等同于最终实际集合。
+
+### 7.2 收集失败不能继续分池
+
+权威收集的原始退出码不是 0 时，Runner 不应拿到一个不完整集合后继续运行：
+
+- 退出码 5：没有收集到测试。
+- 其他非零：收集错误或 pytest 失败。
+- 收集阶段发现重复 nodeid：当前实现直接视为错误。
+
+没有可信的 `C`，就不存在可信的 `P` 和 `S`。
+
+## 8. 集合守恒：不是“数量对上了”就算正确
 
 设：
 
-- C：权威收集得到的 `nodeid` 集合。
-- P：没有串行 marker、计划进入并行池的集合。
-- S：带指定串行 marker、计划进入串行池的集合。
+- `C`：pytest 权威收集的全部 Case nodeid。
+- `P`：并行池 nodeid。
+- `S`：串行池 nodeid。
 
-正确分池必须满足：
+正确分池必须同时满足：
 
-```text
+~~~text
 P ∩ S = ∅
 P ∪ S = C
-```
+~~~
 
-当前 `split_test_cases` 逐项检查重复 `nodeid`，再按 marker 放入两个集合，最后直接比较集合交集与并集：
+第一条保证同一 Case 不会同时进入两个池；第二条保证没有 Case 在分池时丢失。
 
-```python
-if set(parallel) & set(serial):
-    raise ValueError("parallel and serial execution pools overlap")
-if set(parallel) | set(serial) != seen:
-    raise ValueError("execution pool union differs from the authoritative plan")
-```
+### 8.1 为什么数量相等不够
 
-这是本课第一个最小代码锚点。它证明的是**计划分池守恒**。
+假设：
 
-### 5.2 为什么数量相等不够
+~~~text
+C = {A, B}
+P = {A}
+S = {A}
+~~~
 
-假设权威集合为 C，但某个错误分池过程使用列表保存池成员：
+表面上：
 
-```text
-C = {A, B, C, D}
-P_list = [A, B]
-S_list = [C, C]
-```
+~~~text
+|P| + |S| = 2 = |C|
+~~~
 
-如果只看列表长度，`len(P_list) + len(S_list) = len(C) = 4`。但 D 丢了，C 重了。把列表转换成集合后，`P={A,B}`、`S={C}`，立即可以看出 `P ∪ S ≠ C`。数量相等掩盖了成员错误，集合关系才能检查成员。
+但真实结果是：
 
-集合检查能够发现：
+- `A` 重复执行。
+- `B` 完全丢失。
 
-- 同一个 `nodeid` 同时进入两个池。
-- 某个权威 Case 没进入任何池。
-- 非权威 Case 被意外加入。
+数量相等掩盖了两个相反错误。只有 nodeid 集合比较才能发现。
 
-它不能证明：
+### 8.2 当前实现怎样分池
 
-- 每个计划 Case 最终都执行完成。
-- worker 一定写出了全部质量分片。
-- 串行池没有因并行池的终止性错误而被跳过。
+调度器遍历权威收集结果：
 
-### 5.3 无并发参数时的准确边界
+- nodeid 已出现过：拒绝重复计划。
+- marker 中包含配置的 `serial`：进入 `S`。
+- 其他 Case：进入 `P`。
+- 分池结束后再验证交集为空、并集等于权威集合。
 
-权威收集成功后，Runner 始终先计算 P 和 S。随后怎样使用它们，取决于是否为 `collect-only` 以及是否启用并发。
+这里没有根据文件名、测试类或执行耗时猜测串并行属性。
 
-因此要区分：
+### 8.3 关闭并行时的真实行为
 
-| 模式 | P/S 的实际用途与执行方式 |
+即使代码已经计算出 `P` 和 `S`，当前 Runner 在没有设置 `numprocesses` 时，会把整个 `C` 作为一次 `serial-pool` 执行，而不是先执行 `P` 再执行 `S`。
+
+这是一个典型的“代码中存在分池能力，不等于当前执行模式使用了两个池”的例子。
+
+## 9. 池级执行：保留原始事实，再形成项目级结论
+
+### 9.1 PoolResult 记录什么
+
+每个执行池至少保留：
+
+- `stage_id`：当前实现为 `parallel-pool` 或 `serial-pool`。
+- `planned_nodeids`：这个池原计划执行的精确 Case。
+- `status`：`NOT_RUN`、`COMPLETED` 或 `ERROR`。
+- `raw_pytest_exit_code`：pytest 实际返回的原始退出码；未运行或基础设施异常时可能为空。
+- 开始与完成时间。
+- 异常类型。
+- 对应 JUnit 路径。
+
+这里要区分两种失败：
+
+| 情况 | Pool status | raw pytest exit code | 含义 |
+| --- | --- | --- | --- |
+| pytest 正常结束，但测试断言失败 | `COMPLETED` | `1` | pytest 完成了执行，测试失败 |
+| 调用 pytest 的基础设施发生异常 | `ERROR` | `None` | 没有获得正常 pytest 退出事实 |
+
+不能把二者都压成一个 `failed=true`，否则后续无法判断是产品测试失败还是执行器故障。
+
+### 9.2 普通测试失败为什么不停止串行池
+
+并行池返回退出码 1，表示测试已正常运行但存在失败。当前 Runner 仍会继续执行串行池，让本轮尽量获得完整测试事实。
+
+只有以下情况会停止后续串行池：
+
+- 并行池状态为 `ERROR`。
+- 原始退出码为 2、3、4、5，即中断、pytest 内部错误、用法错误或没有测试。
+
+因果关系是：
+
+~~~text
+断言失败只否定测试结果
+-> 不必否定 Runner 继续执行其他独立 Case 的能力
+
+基础设施错误或终止性退出否定继续执行的前提
+-> 后续池标记 NOT_RUN
+-> 不能伪装成已执行或通过
+~~~
+
+### 9.3 原始退出码与 final_exit_code 的所有权
+
+| 事实 | 所有者 | 当前实现的处理 |
+| --- | --- | --- |
+| 单个 pytest 进程的原始退出码 | pytest | Runner 原样记录在池结果中 |
+| 哪些 Case 属于哪个池 | Runner | 来自权威集合与分池计划 |
+| 项目级 `final_exit_code` | Runner | 按池结果合并；终止性退出优先，任一测试失败最终为 1 |
+| Quality 完整性或诊断 | Quality | 可以降级或失败，但不覆盖 pytest/Runner 执行事实 |
+
+如果 Runner 连自身的 `execution-result.json` 都无法写出，当前实现不会制造“成功”：
+
+- 原本是终止性 pytest 退出码时，保留该退出码。
+- 原本为 0 或普通非终止结果时，返回 1，表明 Runner 执行事实未能可靠提交。
+
+这不是 Quality 改写 pytest，而是 Runner 对自己拥有的执行产物负责。
+
+## 10. 五级身份：再回答“这条事实属于谁”
+
+权威集合解决计划归属，但并发产物还需要稳定坐标。当前核心身份分为五级：
+
+| 身份 | 稳定范围 | 回答的问题 | 当前来源 |
+| --- | --- | --- | --- |
+| `run_id` | 一轮完整运行 | 事实属于哪一轮运行 | Runner 父进程生成或读取配置，并向各池传播 |
+| `execution_id` | 一轮运行中的执行阶段 | 事实来自并行池、串行池还是手工 pytest | 当前 Runner 使用 `parallel-pool`、`serial-pool`；直接运行默认为 `manual-pytest` |
+| `worker_id` | 一个具体 pytest 执行进程 | 哪个 worker 写出了事实 | xdist 使用 `gw0` 等；非 xdist 使用 `master` |
+| `case_id` | 跨运行稳定的测试定义 | 长期比较时这是哪个 Case | nodeid 规范化后移除末尾参数部分 |
+| `invocation_id` | 本轮具体参数化调用 | 本轮究竟是哪一次调用 | `run_id + case_id + param_hash` 的稳定摘要 |
+
+### 10.1 run_id：先把多个阶段锁进同一轮运行
+
+Quality 开启时，Runner 在父进程只确定一次 `run_id`：
+
+- Jenkins 同时提供 `JOB_NAME` 和 `BUILD_NUMBER` 时，把它们纳入运行身份。
+- 本地运行使用 UTC 时间与随机 UUID 片段形成身份。
+
+同一轮的并行池和串行池共享这个 `run_id`。如果两个池各自生成一个运行身份，后续就会被误认为两轮独立测试。
+
+Quality 关闭时使用 Noop 生命周期，不应因为 Runner 执行而创建新的 Quality 身份或质量产物。
+
+### 10.2 execution_id：区分同一轮中的执行阶段
+
+当前 Runner 真实传入的是：
+
+~~~text
+parallel-pool
+serial-pool
+~~~
+
+仓库中虽然存在 `build_execution_id(stage_name, index)`，但当前 Runner 主调用链没有用它生成 `parallel-pool-1` 或 `serial-pool-1`。因此课程不能把“方法存在”描述成“当前 Runner 正在使用”。
+
+直接运行 pytest 而不经过 Runner 时，Quality 插件当前使用 `manual-pytest` 作为默认 execution 身份。
+
+### 10.3 worker_id：让并发写入物理隔离
+
+在 xdist 模式下：
+
+- controller 负责把 `run_id`、`execution_id` 和配置传给 worker。
+- controller 自己不创建 Case collector，避免重复写一份 master 分片。
+- 每个 worker 使用自己的 `worker_id`，例如 `gw0`、`gw1`。
+
+Case 分片文件名包含：
+
+~~~text
+cases-{execution_id}-{worker_id}.jsonl
+~~~
+
+例如：
+
+~~~text
+cases-parallel-pool-gw0.jsonl
+cases-parallel-pool-gw1.jsonl
+cases-serial-pool-master.jsonl
+~~~
+
+这解决的是并发写入隔离和来源定位，不等于已经证明每个 worker 的所有预期分片都存在。当前后续 Aggregator 只明确检查预期 execution 是否至少存在 Case 分片，不能把它夸大为完整 worker 清单验证。
+
+### 10.4 case_id：稳定测试定义
+
+考虑两个 nodeid：
+
+~~~text
+module/test_chat.py::test_chat[model-a]
+module/test_chat.py::test_chat[model-b]
+~~~
+
+规范化后，它们共享：
+
+~~~text
+case_id = module/test_chat.py::test_chat
+~~~
+
+当前实现还会把路径分隔符统一为 `/`、压缩多余空白，并正确处理参数 ID 中的嵌套方括号。
+
+`case_id` 有意忽略参数实例，因为它用于表达长期稳定的测试定义。如果把 `[model-a]` 永久焊进 Case 身份，参数展示名的小变化就可能把同一测试误判为新 Case。
+
+这里的“稳定”以 nodeid 的测试路径和定义名保持稳定为前提。移动测试文件、重命名测试函数或改变 pytest 根路径仍可能改变 `case_id`；框架不会把代码重构前后的两个定义自动猜成同一个 Case。
+
+### 10.5 invocation_id：本轮具体调用
+
+只用 `case_id` 会把同一轮中的两个参数实例合并。因此插件还会构造参数视图并计算 `param_hash`，再生成：
+
+~~~text
+invocation_id = hash(run_id, case_id, param_hash)
+~~~
+
+由此得到两个性质：
+
+- 同一轮、同一测试定义、同一脱敏与规范化后的参数视图会得到相同 invocation 身份。
+- `run_id`、`case_id` 或 `param_hash` 变化时会重新计算 invocation 身份；原始参数只有在脱敏、规范化后的 `param_hash` 发生变化时，才会进入这次重新计算。
+
+`param_hash` 和 `invocation_id` 都使用截断摘要，因此这里表达的是工程上的稳定归属规则，不是数学上的绝对无碰撞保证。不能把“原始参数不同”直接写成“invocation_id 必然不同”。
+
+因此 `invocation_id` 不是跨运行长期稳定键。跨运行比较使用 `case_id`；本轮精确归属使用 `invocation_id`。
+
+## 11. 身份怎样穿过父进程、worker 和 Case
+
+~~~mermaid
+sequenceDiagram
+    participant R as Runner 父进程
+    participant P as parallel-pool pytest controller
+    participant Q as Quality 插件与 runtime hooks
+    participant W as worker gw0
+    participant C as pytest Case hooks
+    participant O as JSONL / JUnit
+
+    R->>R: 确定 run_id 并注入默认 JUnit 参数
+    R->>P: stage_environment + pytest_main(计划 nodeid)
+    P->>Q: module/conftest 加载轻量插件
+    Q->>Q: QUALITY_ENABLE 开启后注册 runtime hooks
+    Q->>W: pytest_configure_node 转发 run / execution 配置
+    Note over P: controller 不创建 Case 分片
+    W->>Q: worker 再加载插件并建立 RunContext
+    Q->>C: pytest_runtest_protocol 建立 CaseContext
+    C->>C: pytest 执行 setup / call / teardown
+    C->>O: pytest_runtest_logreport 安全写 Case JSONL
+    C->>O: user_properties 进入已配置的 JUnit
+~~~
+
+### 11.1 RunContext 与 CaseContext
+
+当前实现把身份拆成两层上下文：
+
+- `QualityRunContext`：`run_id`、`execution_id`、`worker_id` 和输出目录。
+- `QualityCaseContext`：`case_id`、`invocation_id`、原始 nodeid 和 `param_hash`。
+
+它们通过 `ContextVar` 保存。可以先把 `ContextVar` 理解为“随当前执行上下文传递的变量”，它比一个全局变量更适合区分并发执行上下文。
+
+但它不是无限传播保证：裸线程切换可能没有自动携带当前上下文。身份字段设计正确，不代表所有自建并发边界都已经正确传播身份。
+
+### 11.2 CaseResult 保留 pytest phase
+
+pytest 对一个测试调用可能产生：
+
+~~~text
+setup -> call -> teardown
+~~~
+
+当前插件对真实出现的 phase 分别写 `CaseResult`，每条记录共享同一个 `invocation_id`，同时保留自己的 `raw_status`。
+
+如果 setup 失败，pytest 可能根本没有 call 报告。当前实现不会为了让数据看起来完整而伪造一个 call 记录；它只记录真实出现的 setup 和 teardown 事实。
+
+这体现了一条重要原则：
+
+> 缺失的执行阶段不能用虚构事实补齐。
+
+### 11.3 JUnit 为什么只写两级身份
+
+当前 JUnit properties 写入：
+
+- `quality_case_id`
+- `quality_invocation_id`
+
+JUnit 用它们把测试证据与 Case 分片对上。`run_id`、`execution_id` 和 `worker_id` 仍保存在 Quality Case 记录及分片来源中。
+
+不能因为五级身份模型存在，就声称 JUnit 单个 testcase 已经携带全部五级身份。
+
+## 12. 从身份到原始账页
+
+完整事实流可以表示为：
+
+~~~text
+pytest 权威收集的 C
+-> Runner 派生 P / S
+-> stage_environment 注入 run_id / execution_id
+-> xdist 给 worker 分配 worker_id
+-> pytest 插件为测试项生成 case_id / invocation_id
+-> setup / call / teardown 写入 worker Case JSONL
+-> JUnit testcase 写入 case_id / invocation_id
+-> Runner 保存 planned_nodeids、池结果与 final_exit_code
+-> 后续 Aggregator 才能对计划、分片与 JUnit 进行对账
+~~~
+
+这里有三种不同的“账”：
+
+| 账目 | 回答的问题 | 当前所有者 |
+| --- | --- | --- |
+| 权威计划 | 本轮应该执行谁 | Runner，来源是 pytest 权威收集 |
+| 执行账 | 每个池是否运行、pytest 怎样退出 | pytest 原始事实 + Runner 编排事实 |
+| 观察账 | 每个 worker 观察到了哪些 Case phase | Quality collector |
+
+三者需要身份关联，但不能互相替代。
+
+## 13. 正常终态、失败出口和降级行为
+
+| 场景 | 当前行为 | 事实边界 |
+| --- | --- | --- |
+| 参数计划非法 | Runner 返回 pytest usage error 4 | 不进入权威收集 |
+| 权威收集成功 | 冻结计划 `C`，再分池 | 后续把计划 nodeid 作为 pytest 显式目标；最终集合仍需证据对账 |
+| 没有收集到测试 | 返回 pytest 原始退出码 5，不执行池 | 不把空集合解释成成功回归 |
+| 收集错误 | 返回收集阶段原始非零退出码 | 不在不可信 `C` 上继续执行 |
+| 收集产生重复 nodeid | 视为权威收集异常 | 不允许含糊身份进入计划 |
+| 关闭并行 | 整个 `C` 一次进入 `serial-pool` | 分池能力存在，但本模式不执行两个池 |
+| 并行池普通测试失败 | 记录 raw exit 1，继续串行池 | 尽量保留完整执行事实 |
+| 并行池终止性退出 | 串行池为 `NOT_RUN` | 不伪造串行执行结果 |
+| 池调用发生异常 | 池状态为 `ERROR`、无 raw exit，项目级返回非零 | 区分执行器故障与测试失败 |
+| `stage_environment` 进入或恢复失败 | 异常进入 Runner 外层 `except`，运行状态为 `PARTIAL` 并返回 1 | 不归类为池内 `ERROR`，因为故障发生在 `execute_pool` 边界之外 |
+| 用户中断或 `SystemExit` | 原始控制流继续向外传播，同时运行生命周期进入中断收尾 | 不静默改写为普通测试失败 |
+| Quality 关闭 | 使用 Noop，不创建新的 Quality 身份和产物 | pytest 与 Runner 仍可正常执行 |
+| Quality 开启且调用方未提供 JUnit 参数 | Enabled 生命周期注入默认 `quality.xml`，分池时改成 parallel/serial 后缀 | Runner 保证执行参数中存在 JUnit 目标；实际文件仍取决于对应 pytest 阶段是否运行并完成 |
+| Quality 初始化或最终归并失败 | 告警并 fail-open | 不覆盖 pytest/Runner 结论 |
+| Case 分片写入失败 | 尽力记录 Integrity，pytest 结果保持原样 | Integrity 本身也可能写失败，不能保证所有观察故障可见 |
+| Runner 执行结果写入失败 | 不返回虚假成功；非终止结果转为 1，终止性 pytest 退出码保留 | Runner 对自身执行事实提交负责 |
+
+## 14. 五个容易产生错误结论的混淆点
+
+### 14.1 “收集了 100 个，两个池加起来也是 100 个，所以没问题”
+
+错误原因：数量不能识别重复与遗漏同时发生。
+
+准确结论：必须检查 nodeid 交集为空、并集等于权威集合。
+
+### 14.2 “有 run_id 就能定位所有事实”
+
+错误原因：同一轮中还有多个阶段、多个 worker、多个 Case 和参数调用。
+
+准确结论：五级身份分别消除不同层级的歧义，不能互相代替。
+
+### 14.3 “case_id 应该区分参数实例”
+
+错误原因：这会破坏跨运行稳定的测试定义身份。
+
+准确结论：`case_id` 表示稳定定义，`invocation_id` 表示本轮具体参数调用。
+
+### 14.4 “并行池只要失败就不该再跑串行池”
+
+错误原因：普通测试失败不等于执行基础设施已经失效。
+
+准确结论：raw exit 1 继续串行；终止性退出或 `ERROR` 才停止。
+
+### 14.5 “Quality 记录了 final_status，所以它拥有最终测试结论”
+
+错误原因：Quality 是诊断与证据层，不是第二个 pytest。
+
+准确结论：pytest 拥有原始执行与退出事实，Runner 拥有编排和项目级 `final_exit_code`。Quality 的 prepare、finalize 与 collector 写盘故障按当前安全层降级；若阶段环境上下文本身在进入或恢复时仍有异常逃逸，它进入 Runner 的 `PARTIAL` 总出口，而不是被伪装成 pytest 测试结论或池内 `ERROR`。
+
+## 15. 当前实现能保证什么，不能保证什么
+
+### 15.1 当前能够提供的保证
+
+- 权威计划来自 pytest 的正式收集结果，而不是文件扫描猜测。
+- 分池时拒绝重复 nodeid，并显式检查 `P ∩ S = ∅`、`P ∪ S = C`。
+- Runner 把冻结后的计划 nodeid 作为各池的显式执行目标。
+- 每个池保留计划、状态和原始 pytest 退出码。
+- 同一轮并行池与串行池共享 `run_id`，但拥有不同 `execution_id`。
+- xdist worker 使用独立 `worker_id` 和独立 Case 分片。
+- 参数化调用共享稳定 `case_id`，同时具有本轮独立 `invocation_id`。
+- 已生成的 JUnit 可以通过 Case 与 invocation identity 对回质量记录。
+- Quality 的 prepare、finalize 和 collector 写盘故障不会覆盖 pytest/Runner 的原始执行事实；阶段环境逃逸异常则按 Runner `PARTIAL` 处理。
+
+### 15.2 当前不能据此声称的能力
+
+- 权威计划存在，不等于所有计划 Case 都已经执行并落盘。
+- 池返回 0，不等于每个 worker 分片都完整存在。
+- 文件名包含 worker_id，不等于系统掌握了一份完整预期 worker 清单。
+- 五级身份正确，不等于裸线程或所有自建并发边界都自动传播上下文。
+- `case_id` 稳定，不等于 `invocation_id` 跨运行稳定。
+- JUnit 写入两个身份，不等于 JUnit testcase 携带完整五级身份。
+- 存在 `build_execution_id()`，不等于当前 Runner 使用该方法生成阶段身份。
+- Quality fail-open，不等于所有采集故障都有可见 Integrity 证据。
+- 计划 nodeid 被显式传给 pytest，不等于执行阶段重新加载的配置和插件绝不会改变最终实际集合。
+
+## 16. 设计收益、代价与适用边界
+
+| 维度 | 收益 | 代价或边界 |
+| --- | --- | --- |
+| 权威收集 | 与 pytest 真实选择语义一致 | 需要额外执行一次 collect-only |
+| 集合守恒 | 能发现分池重复与遗漏 | 必须长期保持 nodeid 与 marker 合同稳定 |
+| 计划 nodeid 显式执行 | 避免各池自行扫描并重新发现目标 | 执行期仍重载 pytest 配置和插件，实际集合需要下游证据复核 |
+| 池级事实 | 能区分未运行、正常测试失败和执行器错误 | 需要维护项目级退出码合并规则 |
+| 五级身份 | 并发事实可归属、可跨产物关联 | 身份规范一旦变化会影响历史对账 |
+| worker 独立分片 | 避免多进程竞争写同一 Case 文件 | 后续必须归并并判断完整性 |
+| 已隔离的 Quality 观察故障 | prepare、finalize 与 collector 写盘故障不改写 pytest 原始事实 | 阶段环境仍可能有异常逃逸到 Runner 总出口；并非所有诊断故障都可见 |
+
+这套设计适合：
+
+- 测试量较大，需要并行与串行混合执行。
+- 需要把多 worker 产物汇总为可审计事实。
+- 存在参数化用例和跨运行质量治理。
+- 需要区分测试失败、执行器故障和诊断故障。
+
+它对少量一次性同步测试可能偏重。没有并发、没有跨运行比较、也不需要机器证据审计时，五级身份和多层产物会增加维护成本。
+
+## 17. 最小源码证据
+
+下面只列证明本课关键事实所需的代码锚点，不作为源码阅读路线：
+
+| 需要证明的事实 | 当前实现证据 |
 | --- | --- |
-| `collect-only` | 展示 P/S 数量后结束，不进入执行 |
-| 正常执行且未启用并发 | 已计算的 P/S 被忽略；Runner 直接把 C 整体交给单一 `serial-pool` |
-| 启用并发 | P 进入 `parallel-pool`，S 在允许继续时进入 `serial-pool` |
-
-“框架具备并行/串行分池能力”不等于“本轮一定启用了并行执行”。真实启用情况由 Runner 入参和本轮实际形成的池结果证明；若依据文件判断，还必须先确认文件属于当前轮。
-
----
-
-## 6. 从计划到执行：池结果必须保留原始调用事实
-
-### 6.1 执行池不是一个布尔值
-
-当前 `PoolExecutionResult` 至少保留：
-
-- `stage_id`：Runner 保存在池结果中的阶段键。
-- `planned_nodeids`：该池收到的计划成员。
-- `status`：`NOT_RUN`（计划池未进入 pytest 调用）、`COMPLETED`（pytest 调用正常返回）或 `ERROR`（保护区捕获执行异常）。
-- `raw_pytest_exit_code`：同进程 `pytest.main()` 执行调用的原始返回码；未运行或执行器异常时可以为空。
-- 开始与结束时间。
-- 执行器异常类型。
-- Runner 从可识别的执行参数中解析出的 JUnit 路径；它不读取执行阶段重新生效的配置 `addopts`。
-
-`ERROR` 的形成范围必须按代码保护边界理解：只有 `execute_pool` 内部保护区捕获到的普通 `Exception` 才会构造 `PoolExecutionResult(status=ERROR)`。保护区之前的异常，或真正逃出清理调用边界的异常，不会自动变成该池的 `ERROR`。默认 Allure 实现会自行捕获常规池合并异常并告警，所以普通 Allure 合并告警不等于 Runner 中断；本课不展开其内部生命周期。
-
-这几个字段不能压缩为“成功/失败”，因为下面三件事不同：
-
-```text
-pytest 正常运行并发现用例断言失败
-≠ 执行 pytest 本身抛出异常
-≠ 因前序终止条件而根本没有运行
-```
-
-这里必须区分三个层级：Runner 的阶段键、阶段环境变量和 worker 质量事实不是同一时点形成的。
-
-```text
-Runner 确定阶段键 stage_id
--> Quality 启用且阶段环境成功进入时，写入 QUALITY_EXECUTION_ID
--> 非 xdist 控制器的执行进程成功建立 QualityRunContext（worker 的质量身份上下文）
--> execution_id 才作为 worker 质量事实的身份字段存在
-```
-
-xdist 控制器只调度 worker、自身不执行 Case；这里的执行进程是 xdist worker，或非并发模式下的 master 主进程。当前 Runner 把同一个阶段字符串传给池结果和阶段环境，所以成功路径上 `PoolExecutionResult.stage_id` 与 `QualityRunContext.execution_id` 的值相同；这是调用点约定，不是类型系统强制。`NOT_RUN` 池也有 Runner `stage_id`，但没有进入阶段环境，更不会形成对应的 worker 质量身份。
-
-### 6.2 并行池为什么可能阻止串行池
-
-Runner 收到并行池结果后，如果其状态是 `ERROR`，或 pytest 返回中断、内部错误、用法错误、无测试等终止性调用返回码，Runner 会把串行池记录为 `NOT_RUN`。
-
-这不是集合守恒失效。计划仍然满足 `P ∪ S = C`，但执行在中途终止：
-
-```mermaid
-flowchart TD
-    C["权威集合 C"] --> MODE{"是否启用并发？"}
-    MODE -->|"否"| ONE["C 直接进入单一 serial-pool"]
-    ONE --> ONEEXEC["执行 serial-pool"]
-    MODE -->|"是"| P["并行计划 P"]
-    MODE -->|"是"| S["串行计划 S"]
-    P --> PEMPTY{"P 是否为空？"}
-    PEMPTY -->|"是"| PN["parallel-pool = NOT_RUN"]
-    PEMPTY -->|"否"| PE["执行 parallel-pool"]
-    PE --> GOT{"Runner 是否收到池结果？"}
-    GOT -->|"否：边界外异常"| RX["Runner 总异常出口"]
-    GOT -->|"是"| STOP{"ERROR 或终止性调用返回码？"}
-    STOP -->|"是"| SN["serial-pool = NOT_RUN<br/>前序停止"]
-    STOP -->|"否"| SEMPTY{"S 是否为空？"}
-    PN --> SEMPTY
-    S --> SEMPTY
-    SEMPTY -->|"是"| SE["serial-pool = NOT_RUN<br/>空池"]
-    SEMPTY -->|"否"| SX["执行 serial-pool"]
-```
-
-未启用并发时，C 不经过 P/S 执行分支，而是整体进入单一 `serial-pool`。启用并发时，空 P 直接得到 `NOT_RUN`；只有 Runner 收到并行池结果后，才根据停止条件决定是否执行 S。任一实际执行调用若有异常逃出边界，仍进入 Runner 总异常合同，不能凭计划补造池结果。
-
-### 6.3 谁拥有哪种退出码
-
-| 事实 | 所有者 | 当前处理 |
-| --- | --- | --- |
-| 单次 pytest 收集调用返回码 | `pytest.main()` 调用 | Runner 原样读取到 `CollectionResult`（收集结果对象） |
-| 执行池的 pytest 调用返回码 | `pytest.main()` 调用 | Runner 记录为池结果的 `raw_pytest_exit_code` |
-| 池是否未运行、已完成或执行器出错 | Runner | 记录为池状态 |
-| 项目级 `final_exit_code` | Runner | 根据池错误和原始调用返回码归并 |
-| Case 质量诊断 | Quality | 不得覆盖上述退出事实 |
-
-字段名沿用 exit code，但当前收集和执行都通过同进程 `pytest.main()` 完成，因此本课把它解释为 pytest 调用返回码，不把它误称为独立 pytest 进程退出码。Runner 的返回码归并优先保留终止性 pytest 调用返回码；存在用例失败时返回失败，其他非零也归并为失败。若 Runner 自己写 `execution-result.json` 失败，并且原 `final_exit_code` 不是终止性返回码，当前实现会把项目级结果提升为失败。
-
-这说明 Runner 可以为**自身拥有的项目级编排结果**负责，但不能改写每次 `pytest.main()` 调用实际返回过什么。
-
-### 6.4 内存池结果不等于持久化执行事实
-
-`execution-result.json` 有两条合法写入路径：
-
-```text
-收集调用正常返回非 0 + 非 collect-only
--> 尝试写入 pool_results=[] 后结束
-
-收集调用返回 0 + 非 collect-only + 执行编排走到写入点
--> 尝试写入本轮已追加的 pool_results
-```
-
-参数解析异常、收集调用抛错、重复 `nodeid` 触发异常和 `collect-only` 都不会走这两条写入路径。对于第二条执行路径，还必须区分三个层级：
-
-```text
-形成 PoolExecutionResult 对象
--> 成功追加到 pool_results 内存列表
--> Runner 正常走到写入点，并通过原子替换（先完整写临时文件，再一次性替换目标文件）生成 execution-result.json
-```
-
-三者不等价。若执行阶段的外层普通异常先进入 Runner 总异常出口，该分支会选择测试失败类返回码并转入 `finally` 收尾，但不会到达第二条写入路径；已经追加的池结果仍只在本轮内存中。Runner 开始时也不会先删除旧文件，因此旧 JSON 可能继续存在；仅凭文件存在不能证明它属于当前运行。
-
-成功写入的 `execution-result.json` 包含：
-
-- 权威 `planned_nodeids` 与 `planned_case_count`。
-- 收集调用返回码。
-- 已追加池结果中的计划成员、池状态和原始 pytest 调用返回码。
-- 项目级 `final_exit_code`。
-
-原子写入只保证成功替换时，读者不会把写到一半的目标文件当成完整 JSON；它不保证本轮一定走到写入点。写入本身失败时，Runner 保留已有终止性退出码，否则把项目结果提升为测试失败；旧目标文件仍可能保留。它也不等于执行成功或质量分片齐全。
-
----
-
-## 7. 五级身份：从“哪轮运行”定位到“哪次参数调用”
-
-分池只回答执行计划，仍不能唯一定位每条请求或 Case 事实。当前设计使用五级身份：
-
-| 身份 | 直观问题 | 当前形成方式与边界 |
-| --- | --- | --- |
-| `run_id` | 事实属于哪一轮运行？ | 优先沿用显式配置的 `QUALITY_RUN_ID`；未配置时才根据 Jenkins job/build 生成，或在本地使用 UTC（协调世界时，跨时区统一的时间标准）时间与随机片段生成；一轮 Runner 共享 |
-| `execution_id` | 来自哪个执行池或阶段？ | Runner 先确定阶段键；Quality 启用时阶段环境再把它写入配置，只有 worker 采集上下文建立成功后，它才成为质量事实字段 |
-| `worker_id` | 由哪个 pytest worker 写出？ | xdist worker 使用 worker id；非 xdist 进程为 `master` |
-| `case_id` | 跨运行比较时是哪一个稳定测试定义？ | 从规范化 `nodeid` 去掉参数部分得到 |
-| `invocation_id` | 本轮这个具体参数化调用是哪一次？ | 由 `run_id + case_id + param_hash` 形成确定性摘要；`param_hash` 是参数内容的稳定摘要 |
-
-### 7.1 为什么 `case_id` 与 `invocation_id` 不能合并
-
-假设一个测试方法有三个参数组合：
-
-```text
-test_chat[model-a]
-test_chat[model-b]
-test_chat[model-c]
-```
-
-跨运行治理希望知道它们来自同一个稳定测试定义，因此需要 `case_id`。但本轮对账又必须区分三个具体调用，因此需要参数摘要参与 `invocation_id`。
-
-```text
-稳定测试定义 -> case_id
-稳定测试定义 + 本轮参数 + run_id -> invocation_id
-```
-
-若只保留 `nodeid`，参数显示格式变化可能污染长期身份；若只保留 `case_id`，本轮多个参数调用会冲突。
-
-### 7.2 区分运行时作用域与 ID 构造依赖
-
-```mermaid
-flowchart TB
-    R["run_id<br/>整轮运行"] -. "作用域包含" .-> E["execution_id<br/>执行池/阶段"]
-    E -. "作用域包含" .-> W["worker_id<br/>写出进程"]
-    W -. "执行并写出" .-> I["invocation_id<br/>本轮参数调用"]
-    R -- "构造输入" --> I
-    C["case_id<br/>稳定测试定义"] -- "构造输入" --> I
-    P["param_hash<br/>参数稳定摘要"] -- "构造输入" --> I
-```
-
-虚线表示运行时作用域，不是 ID 构造公式；实线只表示 `invocation_id` 的三个构造输入。`case_id` 由规范化 `nodeid` 形成，不由 `run_id` 构造。`worker_id` 不是 Case 的长期身份，相同 Case 下次运行可能被另一个 worker 执行；`invocation_id` 也不是跨运行身份，因为它包含 `run_id`。
-
-### 7.3 当前插件怎样建立上下文
-
-Quality 启用后，pytest 插件在非 xdist 控制器进程（负责协调 worker、自己不执行测试项的主控进程）中：
-
-1. 从配置或控制器下发信息取得 `run_id` 与 `execution_id`。
-2. 读取当前 `worker_id`，形成 `QualityRunContext`（本执行进程的运行身份上下文）。
-3. 每次 `pytest_runtest_protocol` 前根据 `nodeid` 和参数形成 `QualityCaseContext`（当前 Case 调用的身份上下文）。
-4. 用已经解释过的 ContextVar 绑定运行与 Case 身份。
-5. 在用例生命周期结束时复位 Case 上下文。
-
-ContextVar 只隔离并传播当前执行上下文；裸线程不会因此自动继承身份，跨线程仍要由调用方显式传播。本课只保留这条能力边界，不展开下一课的观察机制。
-
-关键构造是：参数值先规范化为前述 `param_hash`，再与 `run_id`、`case_id` 共同形成本轮调用身份。
-
-```python
-case_id = build_case_id(item.nodeid)
-return QualityCaseContext(
-    case_id=case_id,
-    invocation_id=build_invocation_id(run_id, case_id, param_hash),
-    nodeid=item.nodeid,
-    param_hash=param_hash,
-)
-```
-
-这是本课第二个最小代码锚点。它证明稳定 Case 身份与本轮调用身份是分开形成的。
-
-### 7.4 稳定算法仍依赖调用方提供稳定语义
-
-身份函数只能对输入做确定性计算，不能自动保证输入长期代表同一业务语义。为了让跨运行比较成立，用例编写者还必须保持：
-
-- 不随意重命名测试文件、测试类和测试方法；这些内容会影响 `nodeid` 与 `case_id`。
-- 参数化 ID 稳定、可读且不包含密钥，避免显示变化或敏感值污染历史身份。
-- 同一 `nodeid` 不在不同提交中代表完全不同的业务语义；语义明确改变时不能假装历史仍然可比。
-
-因此，“算法输出稳定”只是必要条件，“调用方输入语义稳定”是另一项不可替代的前提。
-
----
-
-## 8. 五级身份怎样进入质量事实与 JUnit
-
-### 8.1 只保留身份边界
-
-本课不展开三类 JSONL 分片及其 Schema，只保留与稳定归属直接相关的事实：Case 与 Request 质量记录携带 `run_id / execution_id / worker_id / case_id / invocation_id`；IntegrityIssue（完整性问题记录）只强制保存 `run_id`，局部关联依赖 `related_id`（关联局部对象的可选标识）。因此，五级身份能证明记录归属，不能仅凭文件存在证明事实完整。
-
-### 8.2 JUnit 的最小身份证据
-
-JUnit 是 pytest 生成的标准机器可读测试结果。只有质量采集器与当前 `QualityCaseContext`（当前用例调用的身份上下文）建立成功，并且 JUnit 写出链路实际工作时，当前插件才有条件把 `quality_case_id` 与 `quality_invocation_id` 写入最终 XML 属性：
-
-```python
-properties = list(getattr(report, "user_properties", ()))
-existing_names = {name for name, _value in properties}
-if QUALITY_CASE_ID_PROPERTY not in existing_names:
-    properties.append((QUALITY_CASE_ID_PROPERTY, case_id))
-if QUALITY_INVOCATION_ID_PROPERTY not in existing_names:
-    properties.append((QUALITY_INVOCATION_ID_PROPERTY, invocation_id))
-report.user_properties = properties
-```
-
-这是本课第三个最小代码锚点。两个 `if` 保留已有属性并避免重复追加。CaseResult（单个 pytest 阶段的 Case 质量记录）与 JUnit 都派生自同一组 pytest 阶段报告流，因此不是两次独立观测；本课只确认两条写出通道共享身份键，不展开后续对账。
-
-当前 Jenkins Real Smoke 配置了 JUnit。启用并发后，只有相应池非空、实际进入 pytest 且 JUnit 写出成功时，该池才生成独立 XML；空池或因前序终止而成为 `NOT_RUN` 的池不会生成本轮对应文件。两个池的 XML 不做物理合并，Jenkins 通过 `reports/smoke-tests*.xml` 只发布和汇总实际存在的文件。共享身份键用于后续核对，不代表两个 XML 已被改写为同一产物。
-
-### 8.3 与后续归并的边界
-
-实际执行阶段键将作为后续归并的预期输入，但不能证明分片完整。
-
----
-
-## 9. 三层失败出口：失败发生后还能相信什么
-
-本课不记异常清单，只回答三个问题：执行有没有发生、原始 pytest 返回事实是否存在、Runner 是否形成了池结果。
-
-| 出口层级 | 当前事实 | 不能推出什么 |
-| --- | --- | --- |
-| 未运行 | 参数或收集失败会阻止分池；空池或前序终止使计划池成为 `NOT_RUN`。收集正常返回非 0 且非 `collect-only` 时，Runner 可尝试写 `pool_results=[]` | `NOT_RUN` 不是测试失败，也不表示计划成员从 C 中消失；返回码 5“无测试”不能解释为通过 |
-| 池内错误 | `pytest.main()` 正常返回时，池为 `COMPLETED` 并保留原始返回码；池内保护区捕获普通异常时，池为 `ERROR` | `COMPLETED` 不等于返回码 0；保护区外异常不能补写成池 `ERROR` |
-| Runner 外层异常 | 调用前、阶段环境进入或恢复、以及逃出池边界的异常进入 Runner 总异常出口；普通异常形成失败类项目结果，进程中断则重新抛出 | 不保证当前池有结果，也不保证内存结果已写入 `execution-result.json` |
-
-Quality 关闭时使用 Noop（不执行质量动作的空实现），不创建新的质量身份和质量产物；按执行配置生成的 JUnit 与 Allure 不受 Quality 开关影响，pytest 和 Runner 已经拥有的原始事实也保持不变。
-
----
-
-## 10. 设计决策卡：何时值得，不能推出什么
-
-| 决策项 | 结论 |
-| --- | --- |
-| 核心收益 | 显式计划可做集合校验，Case/Request 可按五级身份归属，同源派生通道可发现不同写出故障 |
-| 工程代价 | 必须维护收集/执行参数边界、稳定身份规则、worker 配置传播、上下文传播和文件新鲜度 |
-| 适合 | 启用 pytest-xdist、存在串行 Case、需要按 worker 审计或进入跨运行治理 |
-| 可能过重 | 单进程顺序执行、Case 很少且不保存机器事实的一次性验证 |
-
-最后只保留四条不能混淆的边界：
-
-1. 设计合同要求执行池只消费权威 `nodeid`，但当前实现仍重新读取 `addopts`，也把共享的未知或插件参数与池内 `nodeid` 一起交给 pytest，实际集合可能被筛选或扩大。当前配置与 Jenkins 主路径尚未触发，不改变“实现合同尚未兑现”的结论；P/S 守恒只证明 Runner 计划正确。
-2. 池结果先是内存事实，只有执行路径成功写入才成为持久化池事实；Runner 文件也可能来自“收集正常返回非 0、空池结果”的另一条路径。`COMPLETED` 只表示 pytest 调用正常返回，不表示测试通过。
-3. Runner 的 `stage_id` 可以独立存在；Quality 启用并进入阶段环境后才写入 `QUALITY_EXECUTION_ID`；只有非 xdist 控制器的执行进程成功建立 QualityRunContext 后，`execution_id` 才成为 worker 质量事实字段。成功路径上的值相同仍只是调用点约定。
-4. CaseResult 与 JUnit 来自同一组 pytest 阶段报告流，是两条派生写出通道而非独立观测；JUnit 身份属性和 Quality 诊断都不拥有 pytest 调用或 Runner 返回码。
-
----
-
-## 11. 本课收束：集合回答“谁”，身份回答“属于谁”
-
-本课主线只保留三条链：
-
-```text
-计划链：权威集合 C -> 并行集合 P / 串行集合 S -> P ∩ S = ∅，P ∪ S = C
-
-退出链：pytest 调用返回码 -> PoolExecutionResult -> Runner final_exit_code
-
-运行作用域：run_id -> execution_id -> worker_id
-定义身份：nodeid -> case_id
-调用身份：run_id + case_id + param_hash -> invocation_id
-记录归属：上述五个身份字段共同进入 Case / Request 质量事实
-```
-
-最后保留三个判断：
-
-- **计划正确（仅计划层）**：P 与 S 对 C 满足集合守恒；当前实现合同缺口意味着这还不能保证 pytest 实际集合只含对应池成员或每个 `nodeid` 最多执行一次。
-- **执行事实明确**：pytest 原始调用返回码、池结果与 Runner 项目级 `final_exit_code` 分层拥有；未运行、池内错误和外层异常分别表达。
-- **事实归属稳定**：只有 worker 采集上下文建立成功后，上述五个身份字段才共同进入 Case/Request 质量事实；共同记录不代表它们互相构造。
-
-这三者不能互相替代。下一课再处理业务请求、轮询和流式生命周期怎样被旁路观察；本课到稳定归属键为止。
+| 权威 Case 来自 pytest collect-only 和 `session.items` | `run_orchestration/pytest_execution.py` 的 `collect_test_case_items()` 与 `_CaseCollector` |
+| 分池检查重复、交集与并集 | `run_orchestration/scheduling.py` 的 `split_test_cases()` |
+| Runner 执行池并保存 raw exit / final exit | `run_orchestration/runner.py`、`run_orchestration/pytest_execution.py` |
+| 同一 run 向不同 execution 传播 | `run_orchestration/environment.py` 的 `quality_stage_environment()` |
+| xdist controller 不写分片、配置转发到 worker | `quality/pytest_plugin_runtime.py` 的 `pytest_configure()` 与 `pytest_configure_node()` |
+| Case 与 invocation 身份怎样生成 | `quality/identifiers.py`、`quality/pytest_plugin_runtime.py` 的 `_build_case_context()` |
+| worker Case 分片按 execution/worker 隔离 | `quality/collector.py` 的 `QualityCollector` |
+| JUnit 写入 Case 与 invocation identity | `quality/pytest_plugin_runtime.py`、`quality/junit.py` |
+
+## 18. 本课收束
+
+Runner 与稳定身份不是两个孤立功能，而是一条连续因果链：
+
+~~~text
+pytest 的真实选择语义可能很复杂
+-> 必须先形成唯一权威集合 C
+-> C 只能被无交叉、无遗漏地派生为 P 与 S
+-> 每个池必须保留计划、状态和原始 pytest 退出事实
+-> 并发产物必须共享 run 身份并区分 execution 与 worker
+-> 稳定 Case 定义必须与本轮参数调用分开
+-> JSONL、JUnit 和 Runner 事实才具备后续对账条件
+~~~
+
+最终要记住的不是五个字段名，而是两类所有权：
+
+> Runner 负责回答“本轮计划怎样被编排和执行”；稳定身份负责回答“每条观察事实属于谁”。
+
+两者共同提供可信执行的坐标系，但不越权宣称账本已经完整。下一步真正需要解决的约束是：Quality 怎样接入这些执行边界进行观察，同时不成为 pytest 和业务调用的控制者。
