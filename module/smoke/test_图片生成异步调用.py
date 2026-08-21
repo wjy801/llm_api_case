@@ -94,18 +94,6 @@ class TestAsyncImageGeneration:
             after_balance_response,
         )
 
-    @pytest.mark.skip(reason="F8-11 缺少稳定生成 failed 任务的异步触发参数，先占位。")
-    def test_f8_11_async_image_generation_failed_task_does_not_deduct_balance(self):
-        pass
-
-    @pytest.mark.skip(reason="F8-12 依赖 F8-11 的稳定 failed 任务，先占位。")
-    def test_f8_12_async_image_generation_failed_task_response_body_contains_error(self):
-        pass
-
-    @pytest.mark.skip(reason="F8-13 需要稳定长时间未完成或服务端 timeout 触发方式，先占位。")
-    def test_f8_13_async_image_generation_timeout_task_response_body(self):
-        pass
-
     def test_f8_14_async_image_generation_result_image_url_is_accessible(self):
         result_response = self.smoke_task.create_and_poll_media_generation(
             self.smoke_request,
