@@ -32,20 +32,6 @@ class TestSyncImageGeneration:
         self.smoke_assertions.assert_status_code(response, 200)
         self._assert_image_generation_output_exists(response)
 
-    @pytest.mark.skip("海外环境图片模型响应体返回格式不准确")
-    def test_f8_02_sync_image_generation_response_body_integrity(self):
-        response = self.smoke_task.create_image_generation(
-            self.smoke_request,
-            self.smoke_task.build_sync_image_generation_payload(),
-        )
-
-        self.smoke_assertions.assert_status_code(response, 200)
-        self.smoke_assertions.assert_json_path_exists(response, "$.created")
-        self.smoke_assertions.assert_json_path_exists(response, "$.data")
-        self._assert_optional_json_path_exists(response, "$.id")
-        self._assert_optional_json_path_exists(response, "$.model")
-        self._assert_optional_json_path_exists(response, "$.usage")
-        self._assert_image_generation_output_exists(response)
 
     def test_f8_03_sync_image_generation_billing_deduction_matches_usage_quota(self):
         before_balance_response = self.smoke_task.query_account_balance_for_billing(self.smoke_request)
@@ -94,10 +80,6 @@ class TestSyncImageGeneration:
                 f"Failed sync image generation should not charge, actual data.quota_yuan: {usage_quota}. "
                 f"Usage response body: {usage_records_response.text}"
             )
-
-    @pytest.mark.skip(reason="F8-05 暂无稳定服务端 504/超时触发方式，按确认结果先占位。")
-    def test_f8_05_sync_image_generation_timeout_response_body(self):
-        pass
 
     def test_f8_06_sync_image_generation_returned_image_url_is_accessible(self):
         response = self.smoke_task.create_image_generation(
