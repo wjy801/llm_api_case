@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import requests
 
 from common import BaseRequest
 from common.polling import DEFAULT_MEDIA_POLLING_POLICY, PollingPolicy
+
+
+if TYPE_CHECKING:
+    from common.retry import RetryPolicy
 
 
 class SmokeRequest(BaseRequest):
@@ -51,9 +55,15 @@ class SmokeRequest(BaseRequest):
             _quality_traffic_role="workload",
         )
 
-    def get_media_generation_task(self, task_id: str) -> requests.Response:
+    def get_media_generation_task(
+        self,
+        task_id: str,
+        *,
+        retry_policy: RetryPolicy | None = None,
+    ) -> requests.Response:
         return self.get(
             self.media_task_path_template.format(task_id=task_id),
+            retry_policy=retry_policy,
             _quality_operation_name="media_generation_status",
             _quality_traffic_role="workload",
         )
@@ -65,12 +75,14 @@ class SmokeRequest(BaseRequest):
         poll_interval: float = 2,
         poll_timeout: float | None = None,
         polling_policy: PollingPolicy = DEFAULT_MEDIA_POLLING_POLICY,
+        retry_policy: RetryPolicy | None = None,
     ) -> requests.Response:
         return self.poll_get(
             self.media_task_path_template.format(task_id=task_id),
             poll_interval=poll_interval,
             poll_timeout=poll_timeout,
             polling_policy=polling_policy,
+            retry_policy=retry_policy,
             _quality_operation_name="media_generation_polling",
             _quality_traffic_role="workload",
         )

@@ -190,15 +190,34 @@ class TestBaseTask:
     def test_get_account_balance_uses_control_key_and_resets_headers(self):
         task = BaseTask()
         request_client = FakeGenerationRequest()
+        retry_policy = RetryPolicy(max_attempts=3)
 
-        response = task.get_account_balance(request_client, "control-key")
+        response = task.get_account_balance(
+            request_client,
+            "control-key",
+            retry_policy=retry_policy,
+        )
 
         assert response.json() == {"data": {"total_balance": "100"}}
         assert request_client.get_calls[0]["path"] == "/v1/account/balance"
         assert request_client.get_calls[0]["kwargs"]["data"] == ""
         assert request_client.get_calls[0]["kwargs"]["headers"]["Authorization"] == "Bearer control-key"
+        assert request_client.get_calls[0]["kwargs"]["retry_policy"] is retry_policy
         assert request_client.updated_headers == []
         assert request_client.reset_headers_count == 0
+
+    def test_billing_balance_query_passes_retry_policy(self, monkeypatch):
+        task = BaseTask()
+        request_client = FakeGenerationRequest()
+        retry_policy = RetryPolicy(max_attempts=3)
+        monkeypatch.setattr(task, "get_required_control_api_key", lambda: "control-key")
+
+        task.query_account_balance_for_billing(
+            request_client,
+            retry_policy=retry_policy,
+        )
+
+        assert request_client.get_calls[0]["kwargs"]["retry_policy"] is retry_policy
 
     def test_query_usage_records_by_request_id_uses_control_key_and_resets_headers(self):
         task = BaseTask()

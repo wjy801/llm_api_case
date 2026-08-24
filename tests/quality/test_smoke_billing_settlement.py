@@ -104,4 +104,4 @@ def test_failed_sync_image_billing_uses_request_scoped_usage_with_retry() -> Non
         if keyword.arg == "retry_policy"
     )
     assert isinstance(retry_keyword.value, ast.Name)
-    assert retry_keyword.value.id == "USAGE_RECORD_READ_RETRY_POLICY"
+    assert retry_keyword.value.id == "SMOKE_GET_RETRY_POLICY"

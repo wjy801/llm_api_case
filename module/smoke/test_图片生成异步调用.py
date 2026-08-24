@@ -9,7 +9,7 @@ import pytest
 import requests
 
 from common import submit_with_context
-from module.smoke import SmokeAssertions, SmokeRequest, SmokeTask
+from module.smoke import SMOKE_GET_RETRY_POLICY, SmokeAssertions, SmokeRequest, SmokeTask
 from module.smoke.task import B_ACCOUNT_API_KEY, B_ACCOUNT_CONTROL_KEY
 
 
@@ -46,7 +46,11 @@ class TestAsyncImageGeneration:
         create_response = self.smoke_task.create_async_image_generation(self.smoke_request)
         task_id = self.smoke_task.extract_task_id(create_response)
 
-        task_response = self.smoke_task.get_media_generation_task(self.smoke_request, task_id)
+        task_response = self.smoke_task.get_media_generation_task(
+            self.smoke_request,
+            task_id,
+            retry_policy=SMOKE_GET_RETRY_POLICY,
+        )
 
         self.smoke_assertions.assert_status_code(task_response, 200)
         status = self._extract_status(task_response)
@@ -60,6 +64,7 @@ class TestAsyncImageGeneration:
             self.smoke_task.build_async_image_generation_payload(),
             poll_interval=ASYNC_IMAGE_POLL_INTERVAL_SECONDS,
             poll_timeout=ASYNC_IMAGE_POLL_TIMEOUT_SECONDS,
+            retry_policy=SMOKE_GET_RETRY_POLICY,
         )
 
         status = self._extract_status(result_response)
@@ -70,7 +75,10 @@ class TestAsyncImageGeneration:
         self._assert_async_image_output_exists(result_response)
 
     def test_f8_10_async_image_generation_billing_deduction_matches_usage_quota(self):
-        before_balance_response = self.smoke_task.query_account_balance_for_billing(self.smoke_request)
+        before_balance_response = self.smoke_task.query_account_balance_for_billing(
+            self.smoke_request,
+            retry_policy=SMOKE_GET_RETRY_POLICY,
+        )
         create_response = self.smoke_task.create_async_image_generation(self.smoke_request)
         task_id = self.smoke_task.extract_task_id(create_response)
         result_response = self._poll_task_until_finished(task_id)
@@ -83,9 +91,11 @@ class TestAsyncImageGeneration:
         usage_records_response = self.smoke_task.query_usage_records_by_request_id_for_billing(
             self.smoke_request,
             self._extract_request_id(create_response),
+            retry_policy=SMOKE_GET_RETRY_POLICY,
         )
         after_balance_response = self.smoke_task.query_account_balance_after_settlement_for_billing(
             self.smoke_request,
+            retry_policy=SMOKE_GET_RETRY_POLICY,
         )
 
         self.smoke_assertions.assert_call_billing_deduction_matches(
@@ -112,6 +122,7 @@ class TestAsyncImageGeneration:
             self.smoke_task.build_async_image_generation_payload(),
             poll_interval=ASYNC_IMAGE_POLL_INTERVAL_SECONDS,
             poll_timeout=ASYNC_IMAGE_POLL_TIMEOUT_SECONDS,
+            retry_policy=SMOKE_GET_RETRY_POLICY,
         )
 
         status = self._extract_status(result_response)
@@ -186,6 +197,7 @@ class TestAsyncImageGeneration:
             task_id,
             poll_interval=ASYNC_IMAGE_POLL_INTERVAL_SECONDS,
             poll_timeout=ASYNC_IMAGE_POLL_TIMEOUT_SECONDS,
+            retry_policy=SMOKE_GET_RETRY_POLICY,
         )
 
     @staticmethod

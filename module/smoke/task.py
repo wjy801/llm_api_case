@@ -4,7 +4,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import requests
@@ -13,6 +13,11 @@ from common import BaseTask, allure_step
 from common.streaming import iter_sse_lines
 from module.smoke.assertions import SmokeAssertions
 from module.smoke.request import SmokeRequest
+from module.smoke.retry_policies import SMOKE_GET_RETRY_POLICY
+
+
+if TYPE_CHECKING:
+    from common.retry import RetryPolicy
 
 
 KEY_CHAT_COMPLETIONS_MODEL_ID = "DeepSeek-V4-Flash"
@@ -139,15 +144,23 @@ class SmokeTask(BaseTask):
         self,
         smoke_request: SmokeRequest,
         task_id: str,
+        *,
+        retry_policy: RetryPolicy | None = None,
     ) -> requests.Response:
-        return smoke_request.get_media_generation_task(task_id)
+        return smoke_request.get_media_generation_task(
+            task_id,
+            retry_policy=retry_policy,
+        )
 
     def verify_account_balance_for_billing(
         self,
         smoke_request: SmokeRequest,
         smoke_assertions: SmokeAssertions,
     ) -> requests.Response:
-        response = self.query_account_balance_for_billing(smoke_request)
+        response = self.query_account_balance_for_billing(
+            smoke_request,
+            retry_policy=SMOKE_GET_RETRY_POLICY,
+        )
         return smoke_assertions.assert_non_negative_total_balance(response)
 
     @staticmethod

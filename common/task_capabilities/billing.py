@@ -117,6 +117,8 @@ class BillingCapability:
         self,
         request_client: BaseRequest,
         control_api_key: str,
+        *,
+        retry_policy: RetryPolicy | None = None,
     ) -> requests.Response:
         headers = {
             "User-Agent": "api-v1_chat_completions-framework",
@@ -135,6 +137,7 @@ class BillingCapability:
                 self.account_balance_path,
                 data="",
                 headers=headers,
+                retry_policy=retry_policy,
             )
 
     def query_usage_records_by_request_id(

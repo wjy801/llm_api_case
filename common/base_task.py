@@ -127,10 +127,13 @@ class BaseTask:
     def query_account_balance_for_billing(
         self,
         request_client: BaseRequest,
+        *,
+        retry_policy: RetryPolicy | None = None,
     ) -> requests.Response:
         return self.get_account_balance(
             request_client,
             self.get_required_control_api_key(),
+            retry_policy=retry_policy,
         )
 
     @allure_step("等待账单结算后查询账户余额")
@@ -138,9 +141,14 @@ class BaseTask:
         self,
         request_client: BaseRequest,
         wait_seconds: float = BALANCE_SETTLEMENT_WAIT_SECONDS,
+        *,
+        retry_policy: RetryPolicy | None = None,
     ) -> requests.Response:
         self._billing_capability().wait_for_balance_settlement(wait_seconds)
-        return self.query_account_balance_for_billing(request_client)
+        return self.query_account_balance_for_billing(
+            request_client,
+            retry_policy=retry_policy,
+        )
 
     @allure_step("查询模型用量记录")
     def query_usage_records_for_billing(
@@ -233,10 +241,13 @@ class BaseTask:
         self,
         request_client: BaseRequest,
         control_api_key: str,
+        *,
+        retry_policy: RetryPolicy | None = None,
     ) -> requests.Response:
         return self._billing_capability().get_account_balance(
             request_client,
             control_api_key,
+            retry_policy=retry_policy,
         )
 
     @allure_step("查询模型用量记录")

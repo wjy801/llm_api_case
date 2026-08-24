@@ -7,12 +7,10 @@ from jsonpath_ng.ext import parse
 import pytest
 import requests
 
-from common import RetryPolicy
-from module.smoke import SmokeAssertions, SmokeRequest, SmokeTask
+from module.smoke import SMOKE_GET_RETRY_POLICY, SmokeAssertions, SmokeRequest, SmokeTask
 
 
 IMAGE_URL_TIMEOUT_SECONDS = 30
-USAGE_RECORD_READ_RETRY_POLICY = RetryPolicy(max_attempts=3)
 pytestmark = pytest.mark.serial
 
 
@@ -50,14 +48,19 @@ class TestSyncImageGeneration:
         self._assert_image_generation_output_exists(response)
 
     def test_f8_03_sync_image_generation_billing_deduction_matches_usage_quota(self):
-        before_balance_response = self.smoke_task.query_account_balance_for_billing(self.smoke_request)
+        before_balance_response = self.smoke_task.query_account_balance_for_billing(
+            self.smoke_request,
+            retry_policy=SMOKE_GET_RETRY_POLICY,
+        )
         image_response = self.smoke_task.create_sync_image_generation_for_billing(self.smoke_request)
         usage_records_response = self.smoke_task.query_usage_records_by_model_response_for_billing(
             self.smoke_request,
             image_response,
+            retry_policy=SMOKE_GET_RETRY_POLICY,
         )
         after_balance_response = self.smoke_task.query_account_balance_after_settlement_for_billing(
             self.smoke_request,
+            retry_policy=SMOKE_GET_RETRY_POLICY,
         )
 
         self.smoke_assertions.assert_call_billing_deduction_matches(
@@ -83,7 +86,7 @@ class TestSyncImageGeneration:
         usage_records_response = self.smoke_task.query_usage_records_by_request_id_for_billing(
             self.smoke_request,
             request_id,
-            retry_policy=USAGE_RECORD_READ_RETRY_POLICY,
+            retry_policy=SMOKE_GET_RETRY_POLICY,
         )
         usage_quota = self.smoke_assertions.get_usage_quota_yuan(usage_records_response)
         assert usage_quota == Decimal("0"), (

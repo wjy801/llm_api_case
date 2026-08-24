@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from module.smoke import SmokeAssertions, SmokeRequest, SmokeTask
+from module.smoke import SMOKE_GET_RETRY_POLICY, SmokeAssertions, SmokeRequest, SmokeTask
 
 
 pytestmark = pytest.mark.serial
@@ -31,6 +31,7 @@ class TestKeyAPI:
         self.smoke_task.query_usage_records_for_billing(
             self.smoke_request,
             model_response=chat_response,
+            retry_policy=SMOKE_GET_RETRY_POLICY,
         )
 
         response = self.smoke_task.create_image_generation(
