@@ -18,7 +18,7 @@
 本课结束后，学习者应能：
 
 1. 区分请求成功、业务完成、Case（一次 pytest 用例调用及其最终测试事实）通过、账本可信和构建成功。
-2. 解释 Retry（失败后按规则重试）、Polling（轮询异步状态）、SSE（持续接收服务端事件的流式响应）和并发为什么会破坏“一次请求等于一个结论”的简单模型。
+2. 解释 Retry（失败后按规则重试）、Polling（轮询异步状态）和并发为什么会破坏“一次请求等于一个结论”的简单模型。
 3. 复述“明确终态与稳定身份 → 原始事实 → 可信归并 → 业务解释 → 指标与治理”的依赖顺序。
 4. 说明框架能力、业务模块启用情况、类中已有方法和当前用例真实调用之间的区别。
 5. 说出六项亮点分别在可信事实链中解决什么约束，以及它们不能保证什么。
@@ -27,12 +27,14 @@
 
 - 不按源码目录逐文件讲解。
 - 不追踪完整函数调用链。
-- 不讲 Retry、Polling、SSE 的具体算法和参数计算。
+- 不讲 Retry 与 Polling 的具体算法和参数计算。
 - 不讲 pytest 插件、上下文传播、状态机或历史持久化的内部实现。
 - 不计算成功率、耗时、用量或跨运行不稳定性规则。
 - 不把请求中间件或报告汇总扩展成独立主题。
 
 这些内容不是不重要，而是尚未成为本课的主要约束。第一课若同时展开所有实现对象，学习者会记住许多名词，却仍然无法判断一个结论为什么可信。
+
+SSE 不进入当前八课主线，其协议终态、读取超时和消费边界由第 2 课之后的独立扩展课“扩展课：SSE 流式调用的终态与时间边界”承接。
 
 ### 1.3 75 分钟讲授路线
 
@@ -40,7 +42,7 @@
 | ---: | --- | --- |
 | 0～5 分钟 | 先给结论，拆开五层事实判断 | HTTP 响应对象不是最终测试结论 |
 | 5～15 分钟 | 普通 Chat 最小基线 | 看懂简单调用为什么容易形成一一对应的错觉 |
-| 15～30 分钟 | 依次加入 Retry、Polling、SSE、并发 | 每增加一种复杂性，就增加一种事实错位风险 |
+| 15～30 分钟 | 依次加入 Retry、Polling、并发 | 每增加一种复杂性，就增加一种事实错位风险 |
 | 30～40 分钟 | 第一性原理与 TOC | 真正约束是事实可信度，不是请求能否发送 |
 | 40～50 分钟 | 一页术语图 | 建立描述事实层级所需的最小词汇 |
 | 50～65 分钟 | 可信事实链与六项亮点总览 | 理解真实依赖顺序，不提前进入实现细节 |
@@ -56,7 +58,6 @@
 `Response` 可以证明客户端收到了某个 HTTP 响应。它不能单独证明：
 
 - 异步任务已经完成，而不是仍处于 pending。
-- SSE 流已经收到业务内容并以规定终态结束。
 - pytest 用例的全部断言均已通过。
 - 并发 worker 产生的事实没有缺失、重复或串到别的运行。
 - 统计分母来自哪些事实，以及这些事实是否完整。
@@ -69,7 +70,7 @@
 | 层次 | 事实来源 | 它能回答什么 | 它不能单独回答什么 |
 | --- | --- | --- | --- |
 | 请求成功 | HTTP Response 或原始网络异常 | 客户端是否得到协议层响应 | 业务是否已经完成 |
-| 业务完成 | Polling 状态或 SSE 终态等业务合同 | 复杂调用是否到达明确终态 | 用例所有断言是否通过 |
+| 业务完成 | Polling 状态等业务合同 | 复杂调用是否到达明确终态 | 用例所有断言是否通过 |
 | Case 通过 | pytest 的执行、断言和异常事实 | 当前用例调用是否通过 | 本轮所有事实是否完整归并 |
 | 账本完整性 | 归并器（Aggregator，对多份原始事实进行对账的组件）的判断 | 已检测到哪些问题，以及当前是 COMPLETE（完整）、DEGRADED（降级）还是 FAILED（失败） | 是否发现了每个 worker 的全部缺失，或 Jenkins 构建是否成功 |
 | 构建成功 | Jenkins 的构建与阶段状态 | CI 流水线结果是什么 | 不能反向证明每项质量诊断都完整 |
@@ -155,29 +156,28 @@ flowchart LR
 
 这四层有时会重合，但不能在没有源码证据时假定它们相同。
 
-本课的基线与反例只保留三个最小锚点：`TestResponseBodyValidation.test_chat_completions_response_body` 证明普通 Chat 的真实业务入口；`BaseTask.create_chat_completion → MediaGenerationCapability.create_chat_completion → BaseRequest.post` 证明当前兼容调用路径；`test_stream_chat_completions_chunk_fields → iter_sse_lines` 证明 SSE 在 Response 到达后仍继续消费流。它们不用于推断其他用例也经过相同路径。
+本课的基线与反例只保留两个最小锚点：`TestResponseBodyValidation.test_chat_completions_response_body` 证明普通 Chat 的真实业务入口；`BaseTask.create_chat_completion → MediaGenerationCapability.create_chat_completion → BaseRequest.post` 证明当前兼容调用路径。它们不用于推断其他用例也经过相同路径。
 
 ---
 
 ## 4. 加入复杂性：一一对应怎样被逐步打破
 
-普通 Chat 的简单不是因为 LLM API 天生简单，而是因为许多复杂性尚未进入基线。下面四种情形彼此独立；某次调用可能只涉及其中一种，也可能组合出现。
+普通 Chat 的简单不是因为 LLM API 天生简单，而是因为许多复杂性尚未进入基线。下面三种情形彼此独立；某次调用可能只涉及其中一种，也可能组合出现。
 
 ```mermaid
 flowchart TD
     A["一次用户关心的业务动作"]
 
-    A --> R["Retry<br/>一次请求意图，多次发送"]
-    A --> P["Polling<br/>一次业务动作，多轮查询"]
-    A --> S["SSE<br/>一次连接，多段数据与流终态"]
+    A --> R["Retry<br/>一次请求意图，多次发送尝试"]
+    A --> P["Polling<br/>正常入场后一轮或多轮查询"]
     A --> W["并发执行<br/>一次运行，多份 worker 事实"]
 ```
 
-图中的四条分支不是固定调用顺序，而是四种打破简单模型的原因。
+图中的三条分支不是固定调用顺序，而是三种打破简单模型的原因。
 
-### 4.1 Retry：一次请求意图不再等于一次网络发送
+### 4.1 Retry：一次请求意图不再等于一次发送尝试
 
-Retry 的直觉是“失败后再试”，但它改变了计数单位。这里的 Attempt 指一次真实网络发送：
+Retry 的直觉是“失败后再试”，但它改变了计数单位。这里的 Attempt 指客户端发起的一次发送尝试；前置 Middleware 可能在真正联网前失败，因此 Attempt 不必然等于一次已完成的网络发送。下面示例中的三个 Attempt 都到达了传输结果：
 
 ```text
 一次请求意图
@@ -186,7 +186,7 @@ Retry 的直觉是“失败后再试”，但它改变了计数单位。这里�
 -> Attempt 3：200
 ```
 
-这里有一个业务请求意图，却有三次真实网络发送。如果只数最终 Response，会丢失前两次成本和失败；如果把三次发送都当成三个独立业务动作，又会把分母放大。
+这里有一个业务请求意图，却有三次发送尝试。如果只数最终 Response，会丢失前两次成本和失败；如果把三次尝试都当成三个独立业务动作，又会把分母放大。
 
 Retry 首先要回答的不是“怎样写循环”，而是：哪些方法与结果有资格重试、还剩多少次数和时间预算、停止时保留哪个原始 Response 或异常。
 
@@ -209,23 +209,7 @@ Retry 首先要回答的不是“怎样写循环”，而是：哪些方法与�
 
 当前 `poll_get` 的总预算覆盖各轮 GET、GET 内部 Retry 和轮询等待；创建任务的 POST 发生在进入 `poll_get` 之前，不属于这个 deadline（总截止时间）。这个边界将在第 2 课展开，本课只用它说明“一个业务动作可能存在多个不同时间范围”。
 
-### 4.3 SSE：收到 Response 后，业务可能才刚开始
-
-SSE 是服务器在一个 HTTP 连接上持续发送数据的流式方式。对于普通同步请求，收到完整 Response 往往接近调用结束；对于 SSE，收到 HTTP headers（响应头）只说明连接已经建立。
-
-```text
-收到 HTTP headers
--> 收到第一条非空 data
--> 收到第一个业务内容
--> 持续收到数据
--> 收到 [DONE]，或发生中断 / error
-```
-
-HTTP 200 不能单独证明已经收到任何 data、业务内容、用量字段（usage）或 `[DONE]`。自然耗尽但没有约定终态，也不能自动解释为完整成功。
-
-当前实现没有为 SSE 提供一个与 Polling 相同的统一总 deadline。`iter_sse_lines` 依赖底层 HTTP read timeout 处理长时间收不到数据的情况，并根据 `[DONE]`、自然耗尽或异常记录流终态；`interrupt_stream_chat_completion` 的时长判断只会在下一行数据到达后执行，不能在完全静默时主动硬中断连接。因此，本课所说的“SSE 时间边界”只包括底层读取超时与消费阶段检查，不能描述成统一总预算。
-
-### 4.4 并发 worker：一次运行不再只有一份事实
+### 4.3 并发 worker：一次运行不再只有一份事实
 
 worker 是并发执行测试的独立进程。多个 worker 同时运行时，同一进程内也存在不同事实生产者：pytest 生命周期产生 Case 分片；Runtime Hooks（中性运行时观察接口）的质量适配器产生 Request 与部分 Integrity（完整性）分片；Semantic Collector（业务语义分片采集器）产生独立的业务语义分片。它们可以共享 worker 身份，但所有权不能混成一个来源。
 
@@ -258,13 +242,12 @@ run_id → execution_id → worker_id → case_id → invocation_id
 | `case_id` | 跨运行比较时使用的稳定用例身份 |
 | `invocation_id` | 本轮具体参数化调用的身份 |
 
-### 4.5 四种复杂性共同制造什么问题
+### 4.4 三种复杂性共同制造什么问题
 
 | 复杂性 | 被打破的一一对应 | 直接风险 | 真正需要解决的问题 |
 | --- | --- | --- | --- |
 | Retry | 请求意图 ≠ 网络发送 | 重复计数、重复提交、异常被掩盖 | 识别 Attempt 归属与最终出口 |
 | Polling | 业务动作 ≠ 单次查询 | 把 pending 当成功、无界等待 | 定义业务终态和总预算 |
-| SSE | Response 到达 ≠ 流完成 | 把连接成功当内容完整 | 区分 headers、data、内容与流终态 |
 | 并发 worker | 一轮运行 ≠ 一份产物 | 缺失、重复、冲突、串线 | 建立稳定身份并进行有限归并判断 |
 
 共同因果链是：
@@ -354,8 +337,8 @@ flowchart TD
 | Case | 一次 pytest 用例调用及其最终测试事实 | 不把一次网络请求当成一次用例 |
 | Operation | 用户关心的一次逻辑业务动作 | 不把创建、轮询或 Retry 拆成多个业务目标 |
 | Request Group | 一次请求意图及其全部 Retry Attempt | 不把每次重试都算成独立请求意图 |
-| Request Event | 一次真实网络发送，也可称一次 Attempt | 不丢失每次发送的耗时、Response 或异常 |
-| Polling Session | 为等待异步任务终态而形成的多轮查询过程 | 不把每轮查询误当成完整异步业务 |
+| Request Event / Attempt | 一次客户端发送事件；前置处理失败时可能没有真正联网 | 不丢失每次尝试的耗时、Response 或异常 |
+| Polling Session | 为等待异步任务终态建立的生命周期；正常入场后一轮或多轮，首轮 Group 前失败时可为零并标记不完整 | 不把每轮查询误当成完整异步业务 |
 | P0 | Aggregator 归并后的 Case、Request（请求）、Failure（失败）与 Integrity（完整性证据）基础事实层 | 不让派生指标绕过基础事实可信度 |
 
 它们之间的最小关系是：
@@ -366,7 +349,7 @@ Case
    ├─ Request Group
    │  └─ Request Event / Attempt 1..N
    └─ Polling Session
-      └─ Request Group 1..N
+      └─ Request Group 0..N（正常入场后 N 至少为 1）
 ```
 
 需要注意两点：
@@ -398,7 +381,7 @@ flowchart TD
     R --> RF["Runner 事实<br/>池结果与 final_exit_code"]
 
     PY --> PL["pytest 生命周期插件"]
-    PY --> BX["业务请求执行<br/>Retry / Polling / SSE"]
+    PY --> BX["业务请求执行<br/>Retry / Polling"]
 
     PL --> CS["Case 分片<br/>插件 Integrity 分片"]
     BX --> RH["中性 Runtime Hooks"]
@@ -444,7 +427,7 @@ Semantic 主要作为 Metrics 的上游业务分组与证据层，经 Metrics �
 
 | 约束与适用场景 | 当前机制、事实出口与最小源码锚点 | 降级、代价与不能保证 |
 | --- | --- | --- |
-| **Retry / Polling / SSE**：三种循环不能共用一个“成功返回”定义 | Retry 用次数、`max_elapsed`（单组重试总耗时边界）和可选外层 deadline 控制尝试；Polling 用总 deadline 约束各轮 GET、内部 Retry 与 sleep；SSE 依赖 read timeout、`[DONE]` 和消费终态。锚点：`RetryExecutor.execute`、`BaseRequest.poll_get`、`iter_sse_lines` | 客户端重试不保证服务端幂等；SSE 当前没有统一总 deadline，按行检查的持续时间也不是静默期硬中断 |
+| **Retry / Polling**：两层循环不能共用一个“成功返回”定义 | Retry 用次数、`max_elapsed` 和可选外层 deadline 控制 Attempt；Polling 用唯一 deadline 约束各轮 GET、内部 Retry 与 sleep。锚点：`RetryExecutor.execute`、`BaseRequest.poll_get` | 客户端重试不保证服务端幂等；创建任务 POST 与结果下载不属于 `poll_get` deadline |
 | **Runner 与稳定身份**：混合并发执行需要唯一计划和可归属事实 | Runner 先权威收集再分池；pytest 插件写出五级身份的 Case 事实。锚点：`run_orchestration.runner.run`、`quality.pytest_plugin_runtime.pytest_runtest_logreport` | pytest 仍拥有收集、执行和原始退出码；身份与集合合同需要长期稳定，质量诊断不能改写原始事实 |
 | **Runtime Hooks**：可选观察不能成为业务硬依赖 | `common`（业务公共层）只认识中性协议；关闭 Quality 时使用 Noop（不采集质量事实的空实现），开启时由 Adapter 映射到质量采集。锚点：`RuntimeHooks`、`NoopRuntimeHooks`、`QualityRuntimeHooks` | fail-open（观察失败时保留业务事实）只保证观察故障不覆盖业务结果；通用安全层仍可能静默吞掉异常，不能保证所有 Hook 故障都有可见证据 |
 | **Aggregator**：多份 worker 账页必须先经过有限对账 | P0 Aggregator 检查 run、Schema（记录结构规则）、冲突、数量、JUnit 身份及预期 execution 的 Case 分片，并记录来源与输出哈希（按文件内容生成的摘要）。锚点：`quality.aggregator.merge_quality_run` | 已检测到的问题不会无证据进入下游；DEGRADED P0 仍可进入 Metrics。分母有可追溯来源和完整性状态，但不能保证发现每个 worker 的所有缺失 |
@@ -491,7 +474,7 @@ Runtime Hooks 的 fail-open 含义是：观察失败时，不用观察异常替�
 
 ### 8.2 数据缺失时，为什么不能自动补零
 
-假设一次流式调用没有采集到 Token：
+假设一次模型调用没有采集到 Token：
 
 - 写成 known zero，表示“已确认数值为 0”。
 - 写成 unknown，表示“应该有值，但当前不知道”。
@@ -533,7 +516,7 @@ flowchart LR
 
 | 收益 | 原因 |
 | --- | --- |
-| 复杂调用具有可解释终态 | Retry、Polling、SSE 不再共用模糊的“成功返回” |
+| 复杂调用具有可解释终态 | Retry 与 Polling 不再共用模糊的“成功返回” |
 | 并发事实可归属、可对账 | 权威集合和稳定身份保护 Case 与请求事实 |
 | Quality 可以保持可选 | common 只依赖中性 Hooks，关闭时使用 Noop |
 | 指标分母来源可追溯 | Aggregator 提供来源证据和完整性状态；这不等于保证发现所有 worker 缺失 |
@@ -542,7 +525,7 @@ flowchart LR
 
 ### 9.2 必须支付的代价
 
-- Retry 的尝试预算、Polling 的总 deadline，以及 SSE 的读取超时和消费终态必须分别维护。
+- Retry 的尝试预算与 Polling 的总 deadline 必须分别维护。
 - Runner 的权威集合与五级身份需要稳定合同。
 - Hooks、Noop、Adapter、生命周期责任和上下文传播增加抽象成本。
 - worker 分片、Schema、manifest、哈希和完整性状态需要长期兼容。
@@ -555,7 +538,7 @@ flowchart LR
 
 | 判断 | 典型场景 |
 | --- | --- |
-| 适合 | 流式或异步 API、存在重试和计费风险、并发执行、需要机器证据审计或跨运行治理 |
+| 适合 | 异步 API、存在重试和计费风险、并发执行、需要机器证据审计或跨运行治理 |
 | 可能过重 | 少量同步 CRUD、一次性接口脚本、无并发且不需要历史质量治理 |
 
 框架的价值不在于对所有项目都使用最多层次，而在于让复杂度出现时，每一层都能回答一个不可替代的问题。
@@ -580,4 +563,4 @@ flowchart LR
 
 > “请求成功”不能直接推出“测试结论可信”，因为请求只提供局部协议事实；可信结论还依赖明确业务终态、权威执行事实、稳定身份、完整性判断、正确业务分组和不越权的派生关系。
 
-下一课将只处理这条链的第一个约束：Retry、Polling 和 SSE 为什么看起来都在“循环”，却必须拥有不同的循环单位、正常终态与失败出口，并分别理解 Retry 尝试预算、Polling 总 deadline 和 SSE 读取/消费边界。
+下一课将只处理这条链的第一个约束：Retry 与 Polling 为什么都会再次发送请求，却必须拥有不同的循环单位、正常终态与失败出口，并分别理解 Retry 尝试预算与 Polling 总 deadline。SSE 的协议终态与读取/消费边界由独立扩展课承接，不进入第 2 课。
