@@ -25,6 +25,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import ssl
 import sys
@@ -38,7 +39,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # 配置区
 # ==============================================================================
 BASE_URL = "https://pre.juhemoxing.com"  # 本地开发服务器；预发用 https://pre.juhemoxing.com --insecure
-API_KEY = "REDACTED_SECRET_REMOVED"
+API_KEY = os.getenv("CHINA_API_KEY", "")
 DEFAULT_SAMPLE_IMAGE_URL = "https://ark-project.tos-cn-beijing.volces.com/doc_image/r2v_tea_pic1.jpg"
 PROJECT_NAME = "default"
 POLL_INTERVAL_SEC = 3
