@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional, Tuple
 # 配置文件区 (请直接在此填写您的配置)
 # ==============================================================================
 BASE_URL = "https://pre.juhemoxing.com"  # 目标服务地址，例如: https://pre.juhemoxing.com 或 http://localhost:3001
-API_KEY = "REDACTED_SECRET_REMOVED"  # 您的平台 API Key (Bearer Token)
+API_KEY = os.getenv("CHINA_API_KEY", "")
 MODEL_ID = "doubao-seedance-2-0-fast-260128"  # 可选: doubao-seedance-2-0-fast-260128 或 doubao-seedance-2-0-mini-260615
 
 # 测试参考图片 URL
