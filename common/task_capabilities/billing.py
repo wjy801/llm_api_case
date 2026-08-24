@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import json
 import os
 import time
+from typing import TYPE_CHECKING
 
 import requests
 
@@ -16,6 +17,10 @@ from common.runtime_hooks import (
     operation_scope,
     runtime_metadata,
 )
+
+
+if TYPE_CHECKING:
+    from common.retry import RetryPolicy
 
 
 CHINA_CONTROL_API_KEY_ENV = "CHINA_CONTROL_API_KEY"
@@ -88,6 +93,7 @@ class BillingCapability:
         *,
         poll_interval: float = USAGE_RECORD_SETTLEMENT_POLL_INTERVAL_SECONDS,
         poll_timeout: float = USAGE_RECORD_SETTLEMENT_TIMEOUT_SECONDS,
+        retry_policy: RetryPolicy | None = None,
     ) -> requests.Response:
         usage_response = request_client.poll_get(
             self.usage_records_path,
@@ -96,6 +102,7 @@ class BillingCapability:
             poll_interval=poll_interval,
             poll_timeout=poll_timeout,
             polling_policy=USAGE_RECORD_SETTLEMENT_POLLING_POLICY,
+            retry_policy=retry_policy,
             runtime_metadata=runtime_metadata(
                 RuntimeOperationKind.POLLING,
                 name="usage_record_settlement",

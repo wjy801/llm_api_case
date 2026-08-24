@@ -7,10 +7,12 @@ from jsonpath_ng.ext import parse
 import pytest
 import requests
 
+from common import RetryPolicy
 from module.smoke import SmokeAssertions, SmokeRequest, SmokeTask
 
 
 IMAGE_URL_TIMEOUT_SECONDS = 30
+USAGE_RECORD_READ_RETRY_POLICY = RetryPolicy(max_attempts=3)
 pytestmark = pytest.mark.serial
 
 
@@ -65,12 +67,8 @@ class TestSyncImageGeneration:
         )
 
     def test_f8_04_sync_image_generation_failed_call_does_not_deduct_balance(self):
-        before_balance_response = self.smoke_task.query_account_balance_for_billing(self.smoke_request)
         payload = self._build_invalid_prompt_payload()
         failed_response = self.smoke_task.create_image_generation(self.smoke_request, payload)
-        after_balance_response = self.smoke_task.query_account_balance_after_settlement_for_billing(
-            self.smoke_request,
-        )
 
         assert 400 <= failed_response.status_code < 500, (
             f"Expected 4xx status code, actual: {failed_response.status_code}. "
@@ -78,22 +76,20 @@ class TestSyncImageGeneration:
         )
         self.smoke_assertions.assert_json_path_exists(failed_response, "$.error")
         self.smoke_assertions.assert_json_path_exists(failed_response, "$.error.message")
-        self.smoke_assertions.assert_total_balance_unchanged(
-            before_balance_response,
-            after_balance_response,
-        )
 
-        request_id = failed_response.headers.get("x-oneapi-request-id", "").strip()
-        if request_id:
-            usage_records_response = self.smoke_task.query_usage_records_by_request_id_for_billing(
-                self.smoke_request,
-                request_id,
-            )
-            usage_quota = self.smoke_assertions.get_usage_quota_yuan(usage_records_response)
-            assert usage_quota == Decimal("0"), (
-                f"Failed sync image generation should not charge, actual data.quota_yuan: {usage_quota}. "
-                f"Usage response body: {usage_records_response.text}"
-            )
+        # Shared-wallet balance can include delayed settlement from earlier calls.
+        # The failed request's own usage record is the attributable billing evidence.
+        request_id = self.smoke_task.get_request_id_from_response(failed_response)
+        usage_records_response = self.smoke_task.query_usage_records_by_request_id_for_billing(
+            self.smoke_request,
+            request_id,
+            retry_policy=USAGE_RECORD_READ_RETRY_POLICY,
+        )
+        usage_quota = self.smoke_assertions.get_usage_quota_yuan(usage_records_response)
+        assert usage_quota == Decimal("0"), (
+            f"Failed sync image generation should not charge, actual data.quota_yuan: {usage_quota}. "
+            f"Usage response body: {usage_records_response.text}"
+        )
 
     @pytest.mark.skip(reason="F8-05 暂无稳定服务端 504/超时触发方式，按确认结果先占位。")
     def test_f8_05_sync_image_generation_timeout_response_body(self):

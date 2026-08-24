@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from common import RetryPolicy
 from common.base_task import (
     USAGE_RECORD_SETTLEMENT_POLLING_POLICY,
     USAGE_RECORD_SETTLEMENT_POLL_INTERVAL_SECONDS,
@@ -256,9 +257,14 @@ class TestBaseTask:
     def test_billing_usage_query_waits_for_terminal_record(self, monkeypatch):
         task = BaseTask()
         request_client = FakeGenerationRequest()
+        retry_policy = RetryPolicy(max_attempts=3)
         monkeypatch.setattr(task, "get_required_control_api_key", lambda: "control-key")
 
-        response = task.query_usage_records_by_request_id_for_billing(request_client, "request-001")
+        response = task.query_usage_records_by_request_id_for_billing(
+            request_client,
+            "request-001",
+            retry_policy=retry_policy,
+        )
 
         assert response.json()["data"]["status"] == "success"
         assert len(request_client.poll_calls) == 1
@@ -267,6 +273,7 @@ class TestBaseTask:
         assert call["poll_interval"] == USAGE_RECORD_SETTLEMENT_POLL_INTERVAL_SECONDS
         assert call["poll_timeout"] == USAGE_RECORD_SETTLEMENT_TIMEOUT_SECONDS
         assert call["polling_policy"] == USAGE_RECORD_SETTLEMENT_POLLING_POLICY
+        assert call["retry_policy"] is retry_policy
         assert call["params"] == {"request_id": "request-001"}
         assert call["headers"] == {"Authorization": "Bearer control-key"}
         assert call["runtime_metadata"].name == "usage_record_settlement"

@@ -149,16 +149,19 @@ class BaseTask:
         *,
         model_response: requests.Response | None = None,
         request_id: str | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> requests.Response:
         if model_response is not None:
             return self.query_usage_records_by_model_response_for_billing(
                 request_client,
                 model_response,
+                retry_policy=retry_policy,
             )
         if request_id is not None:
             return self.query_usage_records_by_request_id_for_billing(
                 request_client,
                 request_id,
+                retry_policy=retry_policy,
             )
         raise ValueError("model_response or request_id is required")
 
@@ -167,10 +170,13 @@ class BaseTask:
         self,
         request_client: BaseRequest,
         chat_response: requests.Response,
+        *,
+        retry_policy: RetryPolicy | None = None,
     ) -> requests.Response:
         return self.query_usage_records_by_model_response_for_billing(
             request_client,
             chat_response,
+            retry_policy=retry_policy,
         )
 
     @allure_step("按模型响应查询模型用量记录")
@@ -178,10 +184,13 @@ class BaseTask:
         self,
         request_client: BaseRequest,
         model_response: requests.Response,
+        *,
+        retry_policy: RetryPolicy | None = None,
     ) -> requests.Response:
         return self.query_usage_records_by_request_id_for_billing(
             request_client,
             self.get_request_id_from_response(model_response),
+            retry_policy=retry_policy,
         )
 
     @allure_step("按 request_id 查询模型用量记录: {request_id}")
@@ -189,11 +198,14 @@ class BaseTask:
         self,
         request_client: BaseRequest,
         request_id: str,
+        *,
+        retry_policy: RetryPolicy | None = None,
     ) -> requests.Response:
         return self.wait_for_usage_record_settlement_by_request_id(
             request_client,
             self.get_required_control_api_key(),
             request_id,
+            retry_policy=retry_policy,
         )
 
     @allure_step("等待模型用量记录结算: {request_id}")
@@ -205,6 +217,7 @@ class BaseTask:
         *,
         poll_interval: float = USAGE_RECORD_SETTLEMENT_POLL_INTERVAL_SECONDS,
         poll_timeout: float = USAGE_RECORD_SETTLEMENT_TIMEOUT_SECONDS,
+        retry_policy: RetryPolicy | None = None,
     ) -> requests.Response:
         return self._billing_capability().wait_for_usage_record_settlement_by_request_id(
             request_client,
@@ -212,6 +225,7 @@ class BaseTask:
             request_id,
             poll_interval=poll_interval,
             poll_timeout=poll_timeout,
+            retry_policy=retry_policy,
         )
 
     @allure_step("调用账户余额接口")
