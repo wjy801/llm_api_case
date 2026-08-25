@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "verdict",
+    "overall_score",
+    "missing_lessons",
+    "cross_lesson_issues",
+    "terminology_conflicts",
+    "fact_conflicts",
+    "recommended_review_order",
+    "summary"
+  ],
+  "properties": {
+    "verdict": {"type": "string", "enum": ["pass", "needs_revision"]},
+    "overall_score": {"type": "integer", "minimum": 0, "maximum": 100},
+    "missing_lessons": {
+      "type": "array",
+      "items": {"type": "integer", "minimum": 1, "maximum": 26}
+    },
+    "cross_lesson_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "lesson_ids", "finding", "required_change"],
+        "properties": {
+          "severity": {"type": "string", "enum": ["blocker", "major", "minor"]},
+          "lesson_ids": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 26}},
+          "finding": {"type": "string"},
+          "required_change": {"type": "string"}
+        }
+      }
+    },
+    "terminology_conflicts": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "fact_conflicts": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "recommended_review_order": {
+      "type": "array",
+      "items": {"type": "integer", "minimum": 1, "maximum": 26}
+    },
+    "summary": {"type": "string"}
+  }
+}

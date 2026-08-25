@@ -166,14 +166,14 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    A["一次用户关心的业务动作"]
-
+    RUN["一次测试运行"] --> W["并发 Case 调度<br/>一轮运行可产生多份 worker 事实"]
+    W --> C["单个 Case invocation<br/>归属一个 worker"]
+    C --> A["Case 内的一次业务动作"]
     A --> R["Retry<br/>一次请求意图，多次发送尝试"]
     A --> P["Polling<br/>正常入场后一轮或多轮查询"]
-    A --> W["并发执行<br/>一次运行，多份 worker 事实"]
 ```
 
-图中的三条分支不是固定调用顺序，而是三种打破简单模型的原因。
+图中的 Retry 与 Polling 位于业务动作内部；并发则位于整轮运行与 Case 调度层。它们不是固定调用顺序，也不能理解为单个业务动作会跨多个 worker 分裂执行。
 
 ### 4.1 Retry：一次请求意图不再等于一次发送尝试
 
@@ -375,49 +375,69 @@ PipelineReport 是汇总 Runner、JUnit 和可选质量事实的派生视图，�
 
 ### 7.1 真实依赖图
 
+以下展示 **Quality 启用时的核心事实流**；Quality 关闭时使用 Noop，不创建图中的质量身份与质量产物。
+
 ```mermaid
 flowchart TD
     R["Runner<br/>权威 Case 集合与分池"] --> PY["pytest 执行"]
     R --> RF["Runner 事实<br/>池结果与 final_exit_code"]
+    R --> E["预期 execution IDs<br/>与预期 Case 数量"]
 
     PY --> PL["pytest 生命周期插件"]
     PY --> BX["业务请求执行<br/>Retry / Polling"]
+    PY --> J["JUnit Case 事实"]
 
-    PL --> CS["Case 分片<br/>插件 Integrity 分片"]
+    PL --> CS["Case 分片<br/>Case 上下文、pytest 生命周期/收集与写入相关<br/>P0 Integrity 分片"]
     BX --> RH["中性 Runtime Hooks"]
     RH --> QA["QualityRuntimeHooks Adapter"]
-    QA --> RS["Request 分片<br/>部分 P0 Integrity 分片"]
+    QA --> RS["Request 分片<br/>Request 观察、Case 关联与写入相关<br/>P0 Integrity 分片"]
     QA --> SC["Semantic Collector"]
-    SC --> SS["Operation / Request Group / Polling Session<br/>Semantic Integrity 分片"]
+    SC --> SS["Operation / Request Group / Polling Session<br/>Semantic 上下文、业务归属与完成性相关<br/>Semantic Integrity 分片"]
 
     CS --> PA["P0 Aggregator<br/>有限信任判断"]
     RS --> PA
-    J["JUnit 事实"] -. "对账证据" .-> PA
-    E["Runner 预期 execution<br/>与 Case count"] -. "对账合同" .-> PA
-    PA --> P0["merged P0<br/>+ integrity status"]
+    J -. "对账证据" .-> PA
+    E -. "对账合同" .-> PA
+    PA --> P0["P0 manifest 与 merged<br/>Case / Request / Failure / Integrity"]
+    R --> QR["Quality run.json<br/>Runner 状态与时间"]
+    PA -->|"P0 完整性"| QR
 
     SS --> SM["Semantic Merge"]
-    P0 -->|"P0 Request 证据"| SM
+    P0 --> SQ["Semantic 的 P0 Request 子集门<br/>run / 提交状态 / 哈希 / Schema"]
+    SQ --> SM
+    AR["架构要求：依赖整体可信 P0"] -. "当前未完全落实" .-> SQ
     SM --> S["merged Semantic<br/>+ semantic integrity status"]
 
-    P0 --> M["Metrics<br/>单轮诊断"]
-    S --> M
-    P0 -->|"Case 历史"| K["Flaky<br/>跨运行检测与治理"]
+    P0 --> MG["Metrics 来源门<br/>更强但仍有限"]
+    S --> MG
+    QR --> MG
+    MG --> M["Metrics<br/>单轮诊断"]
 
-    RF --> P["PipelineReport<br/>派生视图"]
-    J --> P
-    P0 -. "可选质量事实" .-> P
-    M -. "可选诊断" .-> P
-    K -. "可选治理信息" .-> P
+    P0 -->|"Case / Failure / Integrity"| FI["Flaky 独立导入门"]
+    QR --> FI
+    FI --> K["Flaky<br/>跨运行检测与治理"]
+
+    RF --> RL["Reporting Source Loader"]
+    J --> RL
+    JB["Jenkins 构建结果"] --> PC["PipelineContext"]
+    JL["Jenkins 阶段状态账页"] --> RL
+    P0 -. "独立门槛下的可选质量事实" .-> RL
+    M -. "可选诊断" .-> RL
+    K -. "可选治理信息" .-> RL
+    RL --> PB["Report Builder"]
+    PC --> PB
+    PB --> P["PipelineReport<br/>派生视图"]
 ```
 
 这张图表达事实来源、所有权与数据依赖。必须读准五条关系：
 
-1. pytest 生命周期独立产生 Case 分片；它不是 Runtime Hooks 的下游。
-2. Runtime Hooks 经 Quality Adapter 产生 Request 与部分 P0 Integrity 事实，同时把业务生命周期交给 Semantic Collector。
-3. Semantic Collector 独立写出 Operation、Request Group、Polling Session 与 Semantic Integrity 分片；Semantic Merge 同时读取这些分片和 P0 Request 证据。
+1. pytest 生命周期独立产生 Case 分片，并记录 Case 上下文、pytest phase、收集和 Case 写入范围内的 P0 Integrity；它不是 Runtime Hooks 的下游。
+2. Runtime Hooks 经 Quality Adapter 产生 Request 分片，并记录 Request 观察、Case 关联和 Request 写入范围内的 P0 Integrity；这些只是 P0 Integrity 的请求侧来源，不代表全部 P0 Integrity。
+3. Semantic Collector 独立写出 Operation、Request Group、Polling Session，并记录 Semantic 上下文、业务归属和完成性范围内的 Semantic Integrity 分片；Semantic Merge 同时读取这些分片和 P0 Request 证据。
 4. Metrics 同时依赖 P0 与合并后的 Semantic；DEGRADED 来源仍可能进入 Metrics，状态和证据必须随结果保留。
 5. Flaky 直接消费 P0 Case 历史，不依赖 Metrics。
+
+图中的 Integrity 分片按“哪个生产者最先掌握直接证据”划分责任范围。P0 Aggregator 在归并时还会新增缺失分片、非法记录、冲突、预期数量和 JUnit 对账等全局 Integrity；这些是归并阶段生成的问题，不属于任一 worker 原始 Integrity 分片。
 
 Semantic 主要作为 Metrics 的上游业务分组与证据层，经 Metrics 间接进入 Pipeline Reporting，不应被描述成与 Metrics 并列的直接报告结论来源。
 

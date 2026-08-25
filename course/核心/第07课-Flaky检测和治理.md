@@ -114,7 +114,7 @@ worker 不直接生产 FailureRecord；Aggregator 在校验 worker 原始分片�
 | 65～70 分钟 | 三类主要失败出口与历史比较边界 | 历史不可比时停止推断 |
 | 70～75 分钟 | 取舍与因果链收束 | 诊断结论不能改写执行事实 |
 
-“学习结果”和“刻意不展开”是讲师备课提示，不逐条占用现场时间。代码首遍只跟踪六个决策点：单次调用隔离、阶段折叠优先级、候选观察（Candidate）到稳定身份与 Observation 的物化、run 存在性、自动状态迁移、治理覆盖与同事务收口；人工写入口留到第 6 节回看。装饰器、报告字段组装、数据库适配和中间变量均为讲师备注，不逐行讲解。人工动作表只对比门禁和写入差异，紧凑状态图只讲迁移拓扑，不逐格重复。Transition ID 冲突、重建限制、完整失败矩阵和当前启用配置用于课后查阅；SQLite repository 与迁移实现不进入本课。
+“学习结果”和“刻意不展开”是讲师备课提示，不逐条占用现场时间。代码首遍只跟踪六个决策点：单次调用隔离、阶段折叠优先级、候选观察（Candidate）到稳定身份与 Observation 的物化、run 存在性、自动状态迁移、治理覆盖与同事务收口；人工写入口留到第 6 节回看。包装入口、报告字段组装、数据库适配和中间变量均为讲师备注，不逐行讲解。人工动作表只对比门禁和写入差异，紧凑状态图只讲迁移拓扑，不逐格重复。Transition ID 冲突、重建限制、完整失败矩阵和当前启用配置用于课后查阅；SQLite repository 与迁移实现不进入本课。
 
 ## 2. 第一性原理与 TOC：先锁定同一个比较对象
 
@@ -164,31 +164,49 @@ SHA256 在这里用于生成固定长度摘要，不代表加密。`invocation_i
 | `rule_version` / `projection_version` | 状态规则版本 / 投影语义版本；既有 State 必须与当前配置兼容 |
 | `last_transition_id` | State 指向最近一次有效 Transition 的回链标识；本轮无新迁移时沿用旧值 |
 
-`run_id` 标识一轮运行；`flaky_key` 是跨运行比较序列的稳定键，第 2 节已经给出组成，第 3 节只展示它在主控制流中的物化位置。`runtime_config` 是 `QualityRuntimeConfig` 运行配置，拥有 run_id、Flaky 数据库路径和阶段开关；`rule_config` 是 `FlakyRuleConfig` 规则配置，只携带窗口、阈值及规则/投影版本。当前自动 Pipeline 固定使用默认规则配置；只有直接调用底层 FlakyStore API 时才能另传规则配置。代码中以 `@report_expected_*` 开头的包装把预期内错误转成 FAILED 或 NO_DATA 报告；两个 `*_stage_fail_open` 包装负责检查开关，并捕获整个 stage 逃出的普通异常。历史 stage 在 run 未结束时写 NO_DATA；状态 stage 在导入结果不可评估时写 NO_DATA。
+`run_id` 标识一轮运行；`flaky_key` 是跨运行比较序列的稳定键，第 2 节已经给出组成，第 3 节只展示它在主控制流中的物化位置。`runtime_config` 是 `QualityRuntimeConfig` 运行配置，拥有 run_id、Flaky 数据库路径和阶段开关；`rule_config` 是 `FlakyRuleConfig` 规则配置，只携带窗口、阈值及规则/投影版本。当前自动 Pipeline 固定使用默认规则配置；只有直接调用底层 FlakyStore API 时才能另传规则配置。`import_with_report()` 与 `evaluate_with_report()` 是教学包装名，其内部精确的错误状态映射与报告写失败降级在第 8 节展开；两个 `*_stage_fail_open` 包装负责检查开关，并捕获整个 stage 逃出的普通异常。历史 stage 在 run 未结束时写 NO_DATA；状态 stage 在导入结果不可评估时写 NO_DATA。
 
 ```python
 class FlakyHistoryModule:
     def finalize(self, run_status, runtime_config):
         rule_config = DEFAULT_FLAKY_RULE_CONFIG  # 当前自动 Pipeline 的固定入口
-        history_result = run_history_stage_fail_open(run_status, runtime_config, self._import_history)
-        evaluate = lambda: self._evaluate_current_run(runtime_config, rule_config)
+        import_history = lambda: import_with_report(runtime_config, self._import_history)
+        history_result = run_history_stage_fail_open(run_status, runtime_config, import_history)
+        evaluate = lambda: evaluate_with_report(
+            runtime_config, rule_config, self._evaluate_current_run
+        )
         run_state_stage_fail_open(runtime_config, history_result, evaluate)
         # 不返回业务结果；pytest、Runner、Jenkins 的事实均不被改写。
 
-    @report_expected_import_failures
     def _import_history(self, runtime_config):
         source = load_and_verify_required_p0(runtime_config)
-        candidates, excluded, issues = [], {}, []
+        source_issues = [
+            FlakyImportIssue(
+                severity=item.severity, code=item.code,
+                summary=safe_summary(item.message), related_id=item.related_id,
+            )
+            for item in source.integrity_issues
+        ]
+        candidates, excluded, fold_issues = [], {}, []
         for invocation_id, phases in group_by_invocation(source.case_results):
             try:
                 candidates.append(fold_invocation_to_candidate(phases, source.failures))
             except FlakyImportError as error:
                 increase_count(excluded, error.code)
-                issues.append(warn_issue(error.code, invocation_id))
+                fold_issues.append(warn_issue(error.code, invocation_id))
+        metadata = build_import_metadata(
+            source,
+            eligible_count=len(candidates),
+            excluded_count=sum(excluded.values()),
+        )
         database = initialize_persistent_store(runtime_config.flaky_database_path)
         with database.transaction():
-            outcome = database.import_idempotently(source.metadata, candidates, materialize=self._materialize_observation)
-        return write_import_report(import_status(outcome, candidates, source.p0_integrity), outcome, excluded, issues)
+            outcome = database.import_idempotently(
+                metadata, candidates, materialize=self._materialize_observation
+            )
+        issues = (*source_issues, *fold_issues)
+        status = import_status(outcome, candidates, metadata.p0_integrity_status)
+        return build_import_result(status, outcome, metadata, excluded, issues)
 
     def _materialize_observation(self, database, candidate):
         scope_key = build_epoch_scope_key(candidate.case_id, candidate.environment, candidate.execution_profile)
@@ -199,36 +217,44 @@ class FlakyHistoryModule:
         database.require_no_observation_identity_conflict(observation_id, candidate.run_id, flaky_key)
         return observation_from_candidate(candidate, scope_key, flaky_key, observation_id)
 
-    @report_expected_evaluation_failures
     def _evaluate_current_run(self, runtime_config, rule_config):
         database = open_existing_store(runtime_config.flaky_database_path)
-        database.require_imported_run(runtime_config.run_id)  # 不存在则 FAILED
-        keys = database.flaky_keys_for_run(runtime_config.run_id)
-        if not keys: return write_evaluation_no_data("run has no observations")
-        plans = []
         with database.transaction():
+            database.require_imported_run(runtime_config.run_id)  # 不存在则 FAILED
+            keys = database.flaky_keys_for_run(runtime_config.run_id)
+            if not keys:
+                return build_evaluation_no_data("run has no observations")
+            plans = []
             for key in keys:
                 history = database.ordered_observations(key)
                 existing = database.current_state_or_none(key)
                 require_compatible_projection_versions(existing, rule_config)
                 automatic = replay_observations(history, rule_config)
                 open_governance = database.open_governance(key)
-                current, reason_code, close_id, resolution = apply_existing_controls_once(
-                    automatic, existing, open_governance, history, rule_config)
+                current, reason_code, close_id, resolution, evaluation_anchor = (
+                    apply_existing_controls_once(
+                        automatic, existing, open_governance, history, rule_config
+                    )
+                )
                 transitions = bootstrap_or_state_change_transitions(
                     existing, current, automatic, reason_code,
                     history=history, trigger_run_id=runtime_config.run_id, rule_config=rule_config)
                 transitions = remove_already_persisted_transitions(database, transitions)
                 last_transition_id = newest_or_existing_transition_id(transitions, existing)
-                state_record = materialize_state_record(current, history, last_transition_id, rule_config)
+                state_record = materialize_state_record(
+                    current, history, last_transition_id, evaluation_anchor, rule_config
+                )
                 changed = state_changed_except_updated_at(existing, state_record)
                 plan = ProjectionPlan(state=state_record, transitions=transitions, changed=changed,
                     close_governance_id=close_id, governance_resolution=resolution)
                 database.write_projection_plan(plan)
                 plans.append(plan)
-        return write_evaluation_report("EVALUATED" if any(plan.changed for plan in plans) else "NOOP", plans)
+            status = "EVALUATED" if any(plan.changed for plan in plans) else "NOOP"
+            return build_evaluation_result(status, plans)
 
 ```
+
+后续代码块优先从这份主骨架抽取；骨架中抽象掉的关键判断和真实接入边界，则用保持相同核心语义的最小源码摘录补证。跨多个真实函数压缩时会明确标为教学重构，并写出宿主；局部代码只证明当前条件，不形成第二套实现。现场每块只追踪正文正在解释的分支，其余错误码和字段留作课后核对，不再逐行讲一遍。
 
 骨架只保留六个核心决策：逐 Invocation 隔离坏证据；折叠为 Candidate；经 Epoch 与稳定身份物化 Observation；验证 run 与 State 版本；由自动投影和既有人工控制形成当前视图；最后按“Transition 去重 → `last_transition_id` → State → 同事务写入”的顺序提交。折叠规则、完整重放和人工合同分别在第 4、5、6 节展开。
 
@@ -248,7 +274,7 @@ class FlakyHistoryModule:
 
 | 校验 | 目的 | 失败时的含义 |
 | --- | --- | --- |
-| run 已结束且状态为 FINISHED | 不把半轮执行写进长期历史 | 本轮不可导入 |
+| run 状态为 FINISHED，且折叠后确认 `end_time` 存在 | 不把半轮执行写进长期历史 | 本轮不可导入 |
 | manifest 已 complete，run_id、manifest_version 和 schema_version 匹配 | 确认读取的是当前已提交 P0；merge_version 与 fingerprint_version 还必须存在 | 来源不可信 |
 | Case、Failure、Integrity 输出哈希匹配 | 防止提交后文件被替换 | 来源不可信 |
 | run 与 manifest 的完整性状态一致且不是 FAILED | 防止双状态矛盾 | 来源不可信 |
@@ -256,6 +282,32 @@ class FlakyHistoryModule:
 | JSONL（每行一个 JSON 对象）记录满足 Schema（字段与类型合同）且属于当前 run | 防止坏行或外来记录混入 | 阻断导入 |
 
 以下完整白名单供课后查阅，现场只讲“只有不损害 Case 信任的明确 WARN 才能放行”：`classification_failed`（失败分类失败），JUnit 文件缺失、过期或解析失败（`junit_file_missing`、`junit_file_stale`、`junit_parse_failed`），以及仅关联 Request 分片的 JSONL/Schema 解析告警。JUnit 数量、invocation 身份或状态不一致不在白名单内，会阻断 Flaky 导入。于是 P0 可以是 DEGRADED，Flaky 导入也标记 DEGRADED，但合格 Case 仍可进入历史；不能概括成“部分 JUnit 对账告警都可接受”。
+
+下面是对 `quality.flaky_importer.prepare_flaky_import()` 的教学重构。前表就是 `_validate_run_and_manifest()` 与 `_validate_output_hashes()` 的精确合同；其中完整性字段必须是已知枚举值，环境也必须能归一化。`require(condition, code)` 在条件为假时抛出 `FlakyImportError`；`_read_jsonl_models()` 逐行做 JSON、Schema 和 `run_id` 校验，任何坏行或外来记录都会拒绝整个来源：
+
+```python
+for path in required_p0_paths.values():
+    require(path.is_file(), "artifact_missing")
+source_hashes = {name: _file_sha256(path)
+                 for name, path in required_p0_paths.items()}
+run = _read_model(required_p0_paths["run_record"], RunRecord)
+manifest = _read_json_object(required_p0_paths["manifest"])
+_validate_run_and_manifest(requested_run_id, run, manifest)
+_validate_output_hashes(manifest, source_hashes)
+cases = _read_jsonl_models(required_p0_paths["case_results"], CaseResult, requested_run_id)
+failures = _read_jsonl_models(required_p0_paths["failures"], FailureRecord, requested_run_id)
+issues = _read_jsonl_models(required_p0_paths["integrity_issues"], IntegrityIssue, requested_run_id)
+_validate_run_integrity_issues(run, issues)
+_validate_integrity_issues(issues)
+fold = fold_case_observations(
+    cases, failures,
+    environment=normalize_flaky_environment(run.environment),
+    fingerprint_version=_manifest_text(manifest, "fingerprint_version"),
+)
+require(run.end_time is not None, "run_not_finished")
+```
+
+`required_p0_paths` 就是前文五项文件；两个来源验证 helper 不增加表外门禁。`_validate_run_integrity_issues()` 把两边问题按规范化 JSON 分别排序后比较，不是只比数量；`_validate_integrity_issues()` 拒绝 ERROR，并按前文完整白名单判断 WARN，其中三类分片解析告警只有 `related_id` 以 `requests-` 开头才安全。注意 `end_time` 与源码一样在折叠后检查，不能用 FINISHED 枚举替它补值。
 
 ### 4.2 从阶段记录折叠成一次观察
 
@@ -276,6 +328,53 @@ pytest 一次用例调用通常包含 setup、call、teardown 三个阶段。`ra
 
 这些状态具有测试策略语义，当前实现不把它们强行压成普通 pass/fail。
 
+表中的身份、执行方式、重复阶段和生命周期门先执行；通过后，`quality.flaky_importer._fold_invocation()` 按下面的真实优先级决定 Observation 候选。`reject(code)` 表示抛出带该错误码的 `FlakyImportError`：
+
+```python
+error_phases = [item for item in phases if item.final_status is CaseStatus.ERROR]
+failed_phases = [item for item in phases if item.final_status is CaseStatus.FAILED]
+if error_phases or failed_phases:
+    relevant = error_phases or failed_phases  # ERROR 优先于 FAILED
+    failure_id = require_single_failure_id((*error_phases, *failed_phases))
+    decisive = earliest_matching_phase(relevant, failure_id)
+    failure = require_unique_failure_record(
+        failure_lookup, failure_id, first.invocation_id, first.case_id, decisive.phase
+    )
+    outcome, failure_category = ObservationOutcome.FAIL, failure.category.value
+    final_status = CaseStatus.ERROR if error_phases else CaseStatus.FAILED
+elif (call := by_phase.get(CasePhase.CALL)) is not None \
+        and call.final_status is CaseStatus.PASSED:
+    if call.raw_status is not CaseStatus.PASSED:
+        reject("unsupported_status")
+    decisive, outcome, failure_id = call, ObservationOutcome.PASS, None
+    final_status, failure_category = CaseStatus.PASSED, None
+elif any(item.final_status in {
+    CaseStatus.SKIPPED, CaseStatus.XFAILED, CaseStatus.XPASSED,
+} for item in phases):
+    reject("expected_outcome_excluded")
+else:
+    reject("unsupported_status")
+
+return CaseObservationCandidate(
+    run_id=first.run_id,
+    invocation_id=first.invocation_id,
+    case_id=first.case_id,
+    param_hash=first.param_hash,
+    environment=environment,
+    execution_profile=profile,
+    decisive_phase=decisive.phase,
+    raw_status=decisive.raw_status,
+    final_status=final_status,
+    observation_outcome=outcome,
+    failure_id=failure_id,
+    failure_category=failure_category,
+    observed_at=decisive.end_time,
+    fingerprint_version=fingerprint_version,
+)
+```
+
+`require_single_failure_id()` 从所有 ERROR/FAILED 阶段收集非空 ID：没有时给出 `missing_failure_fingerprint`，多于一个时给出 `multiple_failure_fingerprints`。`earliest_matching_phase()` 只在优先集合中按 setup、call、teardown 顺序选同一 ID；`require_unique_failure_record()` 再要求 `failure_id + invocation_id + case_id + phase` 恰好匹配一条 FailureRecord。三个 helper 只压缩这三条已明确的条件。Candidate 的 `observed_at` 明确取决定性阶段的 `end_time`；后续历史排序使用的观察时间由此闭合，而不是在数据库导入时另取当前时间。
+
 缺少合格观察是 missing data（缺失数据），不是 pass，也不是数值 0。
 
 ### 4.3 结果签名为什么需要失败指纹
@@ -294,7 +393,18 @@ fail:{failure_id}
 
 连续 `fail:A` 没有签名切换，因此可以成为“稳定失败”。这不是降低失败严重性，而是把“功能正确性”和“结果稳定性”分开。
 
-代码锚点一：`quality.flaky_importer.prepare_flaky_import` 证明 P0 验源与源哈希检查；`fold_case_observations` 证明阶段记录先折叠为合格 Observation，缺失或冲突不会被猜测填补。
+结果签名没有第二套推断逻辑，直接来自 `quality.flaky.build_result_signature()`：
+
+```python
+def build_result_signature(observation):
+    if observation.observation_outcome is ObservationOutcome.PASS:
+        return "pass"
+    if not observation.failure_id:
+        raise ValueError("fail observation must include failure_id")
+    return f"fail:{observation.failure_id}"
+```
+
+本节代码共同证明：P0 验源与源哈希检查先于折叠；阶段记录只有通过明确优先级后才形成合格 Observation，缺失或冲突不会被猜测填补。
 
 ---
 
@@ -312,6 +422,34 @@ fail:{failure_id}
 - 最近签名，以及最多 20 个 Observation/run 证据引用。
 
 “最多 20 条”是当前规则的有限窗口，不是“20 条以后旧事实被删除”。完整 Observation 历史仍在数据库中，状态投影只用规则窗口计算当前证据。
+
+下面抽取 `quality.flaky.derive_evidence_window()` 的核心计算。排序键与切换口径不能省略，否则同一批迟到观察可能得到不同状态：
+
+```python
+ordered = sorted(observations, key=lambda item: (
+    item.observed_at, item.run_end_time, item.run_id, item.observation_id
+))
+if not ordered:
+    raise ValueError("at least one observation is required")
+window = ordered[-config.evidence_window_size:]
+signatures = [build_result_signature(item) for item in window]
+outcomes = [item.observation_outcome for item in window]
+pass_count = sum(item is ObservationOutcome.PASS for item in outcomes)
+fail_count = len(outcomes) - pass_count
+outcome_switch_count = sum(a is not b for a, b in zip(outcomes, outcomes[1:]))
+signature_switch_count = sum(a != b for a, b in zip(signatures, signatures[1:]))
+failure_ids = {item.failure_id for item in window
+               if item.observation_outcome is ObservationOutcome.FAIL and item.failure_id}
+distinct_failure_fingerprint_count = len(failure_ids)
+trailing_same_signature_count = 1
+for signature in reversed(signatures[:-1]):
+    if signature != signatures[-1]:
+        break
+    trailing_same_signature_count += 1
+evidence_refs = window[-config.max_transition_evidence_refs:]
+```
+
+这些计算值与最近签名会写入 `FlakyEvidence`；`evidence_refs` 再提供 Observation ID 和去重后保持顺序的 run ID。空历史在切片前就被拒绝，因此尾部计数从 1 开始。
 
 ### 5.2 四个自动状态
 
@@ -337,6 +475,47 @@ stateDiagram-v2
 
 阈值顺序很重要：在 `SUSPECTED` 中先判断是否满足确认条件，再判断是否可由连续同签名清除。
 
+`quality.flaky.replay_observations()` 会对每个历史前缀重新计算上述 Evidence。下面的最小教学重构完整保留四个状态分支；`remember_transition()` 只把前态、后态、原因、触发 Observation 和 Evidence 保存成内存中的迁移决定：
+
+```python
+ordered = sort_observations(observations)
+state, stable_signature = None, None
+for index, observation in enumerate(ordered, start=1):
+    evidence = derive_evidence_window(ordered[:index], config)
+    previous, reason = state, None
+    if state is None:
+        state, reason = FlakyState.OBSERVING, "first_observation"
+    elif state is FlakyState.OBSERVING:
+        if evidence.signature_switch_count > 0:
+            state = FlakyState.SUSPECTED
+            reason = ("outcome_changed" if evidence.outcome_switch_count > 0
+                      else "failure_fingerprint_changed")
+        elif evidence.sample_size >= config.stable_min_samples:
+            state, stable_signature = FlakyState.STABLE, evidence.latest_signature
+            reason = "consistent_signature_threshold_met"
+    elif state is FlakyState.STABLE:
+        stable_signature = stable_signature or evidence.latest_signature
+        if build_result_signature(observation) != stable_signature:
+            state, reason = FlakyState.SUSPECTED, "stable_signature_broken"
+    elif state is FlakyState.SUSPECTED:
+        confirmed = (
+            evidence.sample_size >= config.confirmed_min_samples
+            and evidence.pass_count >= config.confirmed_min_pass_count
+            and evidence.fail_count >= config.confirmed_min_fail_count
+            and evidence.outcome_switch_count >= config.confirmed_min_outcome_switches
+        )
+        if confirmed:
+            state, reason = FlakyState.CONFIRMED, "confirmation_threshold_met"
+        elif (evidence.trailing_same_signature_count
+              >= config.suspected_clear_signature_streak):
+            state, stable_signature = FlakyState.STABLE, evidence.latest_signature
+            reason = "suspected_cleared_by_streak"
+    elif state is FlakyState.CONFIRMED:
+        pass
+    if reason is not None:
+        remember_transition(previous, state, reason, observation, evidence)
+```
+
 ### 5.3 六组历史的准确解释
 
 | 历史 | 当前自动结论 | 原因 |
@@ -350,7 +529,7 @@ stateDiagram-v2
 
 一旦自动进入 CONFIRMED，继续出现相同结果不会自动清除。恢复必须进入显式治理流程，防止历史波动被短期安静期悄悄抹掉。
 
-代码锚点二：`quality.flaky.derive_evidence_window` 证明窗口、两类切换与连续签名的计算；`replay_observations` 证明 OBSERVING、STABLE、SUSPECTED、CONFIRMED 的真实迁移顺序和默认阈值使用方式。
+本节代码共同证明：窗口明确计算两类切换与尾部连续签名，状态重放再按固定顺序使用这些证据和默认阈值。
 
 ---
 
@@ -366,17 +545,63 @@ stateDiagram-v2
 
 状态记录同时保存 `detected_state`（检测判断轴）和 `current_state`（当前呈现状态）。`detected_state` 只取 OBSERVING、STABLE、SUSPECTED、CONFIRMED 四个检测值，却也不是不可变的“纯自动档案”：人工确认或标记非 Flaky 会同时重设两个字段，取消隔离也会把二者设回 CONFIRMED；隔离和开始恢复则主要改变 `current_state`，使其可取 QUARANTINED 或 RECOVERING。人工与自动的区别要联合查看 Override、Transition、评估锚点（evaluation anchor，后续重评包含该 Observation）和 Governance 生命周期记录，不能只靠这两个状态字段推断。
 
-### 6.2 人工入口先校验，再同事务写入
-
-FlakyStore Facade（Flaky 持久化模块的对外操作入口）接收人工动作；`actor` 是操作者身份，`reason` 是操作原因。隔离请求还要求非空的 `owner`（治理负责人），以及带时区且晚于当前时间的 `expires_at`（计划到期时间）。它不是“收到命令就改一个状态字段”，而是先按动作校验，再把相关审计事实放进同一事务：
+主骨架中的 `apply_existing_controls_once()` 只压缩下面这段固定优先级。代码是对 `quality.flaky_store.projection.build_projection_plan()` 的最小教学重构；分支命中后不再落到后项，若全不命中才保留 `automatic`：
 
 ```python
-def apply_manual_action(store, action, request):
-    contract = manual_contract_for(action)
-    with store.transaction():
-        state = store.require_state(request.flaky_key)
-        validate_manual_contract(store, request, state, contract)
-        return execute_manual_writes(store, action, request, state, contract)
+current_state = automatic.current_state
+detected_state = automatic.detected_state
+latest = history[-1]
+evaluation_anchor = (existing.evaluation_anchor_observation_id
+                     if existing is not None else None)
+
+if (open_governance is not None
+        and open_governance.status is GovernanceStatus.RECOVERING):
+    after_anchor = observations_after_anchor(
+        history, open_governance.recovery_anchor_observation_id
+    )
+    recovery = evaluate_recovery(after_anchor, rule_config)
+    if recovery.target_state is None:
+        current_state = FlakyState.RECOVERING
+        detected_state = (existing.detected_state if existing is not None
+                          else FlakyState.CONFIRMED)
+    else:
+        current_state = detected_state = recovery.target_state
+        evaluation_anchor = (
+            latest.observation_id
+            if recovery.target_state is FlakyState.STABLE
+            else existing.evaluation_anchor_observation_id
+            if existing is not None else None
+        )
+        close_id = open_governance.governance_id
+        resolution = (GovernanceResolution.RECOVERED
+                      if recovery.target_state is FlakyState.STABLE
+                      else GovernanceResolution.REGRESSED)
+elif open_governance is not None:
+    current_state = FlakyState.QUARANTINED
+    detected_state = (FlakyState.CONFIRMED
+                      if existing is not None
+                      and existing.detected_state is FlakyState.CONFIRMED
+                      else automatic.detected_state)
+elif existing is not None and existing.current_state is FlakyState.CONFIRMED:
+    current_state = detected_state = FlakyState.CONFIRMED
+elif existing is not None and existing.evaluation_anchor_observation_id is not None:
+    current_state, detected_state = evaluate_from_manual_anchor(
+        existing, history, rule_config
+    )[:2]
+```
+
+完整实现还在同一命中分支内同步 evidence、稳定签名、原因码和治理收口字段；这里不重复第 6.3 节的字段计算，只证明决定最终 State 视图的顺序：恢复治理 → 其他开放治理 → 既有 CONFIRMED → 人工评估锚点 → 自动投影。
+
+### 6.2 人工入口先校验，再同事务写入
+
+FlakyStore Facade（Flaky 持久化模块的对外操作入口）接收人工动作；`actor` 是操作者身份，`reason` 是操作原因。隔离请求还要求非空的 `owner`（治理负责人），以及带时区且晚于当前时间的 `expires_at`（计划到期时间）。它不是“收到命令就改一个状态字段”，而是先按动作校验，再把相关审计事实放进同一事务。下面是 `quality.flaky_store.facade.FlakyStore._governance_write()` 的真实结构；具体动作抛出异常时，事务会回滚：
+
+```python
+def _governance_write(self, operation, request):
+    with self.repository.connection(require_existing=True) as connection:
+        initialize_store(connection, self.repository, self.migrations_directory)
+        with self.repository.transaction(connection):
+            return operation(connection, self.repository, request)
 ```
 
 `GovernanceStatus` 是治理记录自己的生命周期状态：ACTIVE、RECOVERING、CLOSED。它与 `current_state` 分属不同轴，即使都出现 RECOVERING 也不能等同。
@@ -389,6 +614,40 @@ def apply_manual_action(store, action, request):
 | 开始恢复 | QUARANTINED；存在 ACTIVE Governance | 更新 Governance + Transition + State |
 | 取消隔离 | QUARANTINED；存在 ACTIVE Governance | 关闭 Governance + Transition + Override + State |
 | Epoch reset | Epoch scope 已存在；没有 ACTIVE 或 RECOVERING Governance | Epoch scope + Override；不写 State 或 Transition |
+
+隔离是最容易越权的动作，下面用跨 `FlakyQuarantineRequest` 模型与 `quality.flaky_store.governance.quarantine()` 的最小教学重构展开其门禁和写入。`require_text()` 也用于基类中的 `flaky_key`、`actor` 和 `reason`；长度上限等外围字段约束省略：
+
+```python
+owner = require_text(request.owner)
+if request.expires_at.tzinfo is None or request.expires_at.utcoffset() is None:
+    raise ValueError("expires_at must include timezone information")
+now = datetime.now(UTC)
+if request.expires_at.astimezone(UTC) <= now:
+    raise FlakyStoreError("invalid_expiry", "expires_at must be in the future")
+
+state = repository.require_state(connection, request.flaky_key)
+if state.current_state is not FlakyState.CONFIRMED:
+    raise FlakyStoreError(
+        "invalid_state_transition", "quarantine requires current_state=CONFIRMED"
+    )
+repository.require_no_open_governance(connection, request.flaky_key)
+governance_id = new_governance_id()
+repository.insert_governance(
+    connection, governance_id=governance_id, flaky_key=request.flaky_key,
+    owner=owner, reason=request.reason, actor=request.actor,
+    created_at=now, expires_at=request.expires_at,
+)
+transition = manual_transition(
+    connection, repository, state, to_state=FlakyState.QUARANTINED,
+    reason_code="manual_quarantine", actor=request.actor, now=now,
+)
+repository.update_state_transition(
+    connection, request.flaky_key, state=FlakyState.QUARANTINED,
+    transition_id=transition.transition_id, updated_at=now,
+)
+```
+
+`new_governance_id()` 只压缩源码中的随机 Governance ID 构造。Transition、Governance 与 State 写入都处于上一个 Facade 事务内；代码中没有 pytest、Runner 或 Jenkins 调用。
 
 表格回答“能否执行、写入什么”；下图只补足 `current_state` 的生命周期，不重复存储合同：
 
@@ -412,6 +671,64 @@ stateDiagram-v2
 
 人工标记非 Flaky 时，当前最新 Observation 会成为评估锚点，`current_state` 与 `detected_state` 同时写为 STABLE。后续评估截取包含该锚点的范围并计算一次 Evidence（证据汇总），不逐条重放积压观察；STABLE 只在范围内最新签名不同于锚点稳定签名时进入 SUSPECTED，锚点之前的旧历史不会立刻推翻这次人工决定。例如锚点是 A，尚未评估时依次积压 B、A，最新签名仍为 A，当前实现可能保持 STABLE；它不会先因 B 迁移为 SUSPECTED，再因 A 迁回。
 
+两个锚点的切片方向不同。下面对 `quality.flaky_store.governance.manual_override()`、`start_recovery()`、`quality.flaky.evaluate_recovery()`，以及 `quality.flaky_store.projection.observations_after_anchor()`、`build_projection_plan()` / `evaluate_from_manual_anchor()` 做最小教学重构，只保留锚点与状态条件：
+
+```python
+# 标记非 Flaky：把当前最新观察同时保存为稳定签名来源和评估锚点。
+latest = repository.observations_for_key(connection, state.flaky_key)[-1]
+stable_outcome, stable_failure_id = latest.observation_outcome.value, latest.failure_id
+evaluation_anchor_id = latest.observation_id
+
+# 开始恢复：保存当时的最新观察；后续只看它之后的新观察。
+recovery_anchor_id = state.latest_observation_id
+recovery_anchor_index = index_of(observations, recovery_anchor_id)
+# 恢复锚点之后，不包含锚点本身。
+after_anchor = observations[recovery_anchor_index + 1:]
+if after_anchor:
+    recovery_evidence = derive_evidence_window(after_anchor, config)
+    if recovery_evidence.signature_switch_count > 0:
+        target, resolution = FlakyState.CONFIRMED, GovernanceResolution.REGRESSED
+    elif (recovery_evidence.trailing_same_signature_count
+          >= config.recovery_signature_streak):
+        target, resolution = FlakyState.STABLE, GovernanceResolution.RECOVERED
+        # 恢复成功后从当前最新观察建立新的人工评估范围。
+        latest = observations[-1]
+        evaluation_anchor = latest.observation_id
+
+# 人工评估锚点范围包含锚点；STABLE 只比较范围内的最新签名。
+evaluation_anchor_index = index_of(
+    observations, existing.evaluation_anchor_observation_id
+)
+scoped = observations[evaluation_anchor_index:]
+evidence = derive_evidence_window(scoped, config)
+if existing.current_state is FlakyState.STABLE:
+    anchored_stable_signature = stored_signature_or_raise(existing)
+    if evidence.latest_signature != anchored_stable_signature:
+        current_state = FlakyState.SUSPECTED
+        stable_outcome = stable_failure_id = None
+        reason = "stable_signature_broken"
+elif existing.current_state is FlakyState.SUSPECTED:
+    confirmation_met = (
+        evidence.sample_size >= config.confirmed_min_samples
+        and evidence.pass_count >= config.confirmed_min_pass_count
+        and evidence.fail_count >= config.confirmed_min_fail_count
+        and evidence.outcome_switch_count >= config.confirmed_min_outcome_switches
+    )
+    if confirmation_met:
+        current_state = FlakyState.CONFIRMED
+        stable_outcome = stable_failure_id = None
+        reason = "confirmation_threshold_met"
+    elif (evidence.trailing_same_signature_count
+          >= config.suspected_clear_signature_streak):
+        current_state = FlakyState.STABLE
+        stable_outcome, stable_failure_id = signature_values(
+            evidence.latest_signature
+        )
+        reason = "suspected_cleared_by_streak"
+```
+
+`start_recovery()` 会把 `recovery_anchor_id` 写入 Governance。`index_of()` 只压缩源码的顺序查找；任一锚点不在当前 Epoch 历史中都会抛出专用错误，而不是退回全量历史。`stored_signature_or_raise()` 精确映射 PASS → `pass`、带 ID 的 FAIL → `fail:{failure_id}`，其余情况以 `stable_signature_missing` 拒绝。若恢复锚点后没有观察，或已有观察但两项条件都不满足，治理继续保持 RECOVERING，不会伪造一次迁移。恢复到 STABLE 时还会从最新签名恢复 `stable_outcome` 与 `stable_failure_id`，并把最新 Observation 设为新的评估锚点；回退到 CONFIRMED 时不保存稳定签名。锚定后的 SUSPECTED 不做全历史逐前缀重放，而是继续使用从人工锚点开始的一次 Evidence：先判断确认阈值，再判断连续同签名清除阈值。
+
 ### 6.4 `QUARANTINED` 当前不会自动跳过 Case
 
 这是本课最重要的执行边界：
@@ -425,7 +742,7 @@ Flaky current_state = QUARANTINED
 
 当前 Runner 仍按自己的权威 Case 集合执行。若未来要让隔离影响执行，必须增加一个显式、可审计的策略入口，并由执行所有者决定如何处理；不能让诊断数据库暗中改写计划。
 
-代码锚点三：`quality.flaky_store.projection.build_projection_plan` 证明自动投影与治理覆盖怎样形成 `current_state`；`quality.flaky_store.governance.quarantine` 证明隔离要求 CONFIRMED，并记录 owner、reason、expires_at，而不是调用 pytest 跳过接口。
+主骨架与本节局部代码共同证明：自动投影和治理覆盖一起形成 `current_state`；隔离只记录 owner、reason、expires_at、Transition 与 State，不调用 pytest 跳过接口。
 
 ---
 
@@ -472,6 +789,53 @@ Epoch 解决的是“Observation 的比较规则已变，旧样本还能否与�
 - 同一 `run_id` 对应不同来源摘要，拒绝覆盖旧历史；同一来源摘要也不能换一个 `run_id` 重复使用。
 - 一轮 run 元数据与全部 Observation 在同一事务写入；状态评估中的 State、Transition 和治理收口也按事务提交。
 
+下面跨 `quality.flaky_store.facade.FlakyStore.import_run()` 与 `quality.flaky_store.import_service` 做最小教学重构：Facade 先验证候选数与元数据守恒，再打开事务；内部导入则在物化 Observation 前完成幂等判断。
+
+```python
+def facade_import_run(store, metadata, candidates):
+    validate_import_candidates(metadata, candidates)
+    with store.repository.connection(require_existing=False) as connection:
+        initialization = initialize_store(connection)
+        with store.repository.transaction(connection):
+            return import_run(
+                connection, store.repository, metadata, candidates,
+                initialization=initialization,
+            )
+
+def validate_import_candidates(metadata, candidates):
+    if len(candidates) != metadata.eligible_count:
+        raise FlakyStoreError(
+            "eligible_count_mismatch", "candidate count differs from metadata"
+        )
+
+def import_run(connection, repository, metadata, candidates, *, initialization):
+    existing = repository.source_digest_for_run(connection, metadata.run_id)
+    if existing == metadata.source_digest:
+        return StoreImportOutcome(imported=False, inserted_count=0,
+                                  initialization=initialization)
+    if existing is not None:
+        raise FlakyStoreError("run_source_conflict", "run already has another source")
+    owner = repository.run_id_for_source_digest(connection, metadata.source_digest)
+    if owner is not None:
+        raise FlakyStoreError("source_digest_conflict", "source belongs to another run")
+    imported_at = datetime.now(UTC)
+    observations = [materialize_observation(connection, repository, item, imported_at)
+                    for item in sorted_candidates(candidates)]
+    repository.insert_import_run(connection, metadata, imported_at)
+    for observation in observations:
+        repository.insert_observation(connection, observation)
+    inserted = repository.observation_count_for_run(connection, metadata.run_id)
+    if inserted != len(observations):
+        raise FlakyStoreError("observation_count_mismatch", "count would not balance")
+    return StoreImportOutcome(
+        imported=True,
+        inserted_count=inserted,
+        initialization=initialization,
+    )
+```
+
+`facade_import_run()` 对应真实的 `FlakyStore.import_run()`；`initialize_store()` 只省略 repository 与迁移目录参数。候选数守恒在连接和事务之前失败，不能先按错误数量写入。`sorted_candidates()` 只压缩源码按 Case、参数、执行方式和 Invocation 的稳定排序，不参与幂等身份；最后的数量守恒失败也会回滚 run 元数据和全部 Observation。成功出口显式返回 `imported=True` 与实际插入数，主骨架才能据此区分 IMPORTED、NO_DATA 或 DEGRADED；重复来源的早退则返回 `imported=False`，形成 NOOP。
+
 ---
 
 ## 8. 失败、无数据和降级怎样收口
@@ -481,6 +845,96 @@ Epoch 解决的是“Observation 的比较规则已变，旧样本还能否与�
 1. 来源不可信：导入 FAILED，不向历史追加观察。
 2. 流水线发现 run 未完成，或已完成 run 没有合格观察：NO_DATA，不能解释成零失败或通过。
 3. 诊断模块异常：内部尽量写失败报告，外层仍 fail-open，不改写 pytest、Runner 或 Jenkins 事实。
+
+主骨架中的两个 stage 包装按真实入口重构为以下决策。代码只保留开关、可评估状态和异常出口；配置告警文本与日志文本省略：
+
+```python
+if not quality_config.flaky_history_enabled:
+    history_result = None
+else:
+    try:
+        reason = ("run_not_finished" if run_status is not RunStatus.FINISHED
+                  else "invalid_flaky_history_configuration"
+                  if quality_config.flaky_history_warning
+                  else "flaky_database_path_missing"
+                  if quality_config.flaky_database_path is None else None)
+        history_result = (write_history_no_data(reason) if reason
+                          else import_flaky_history(build_import_request(quality_config)))
+    except Exception as error:
+        warn_without_changing_business_result(error)
+        history_result = None
+
+if quality_config.flaky_state_enabled:
+    try:
+        evaluable = history_result is not None and history_result.status in {
+            FlakyImportStatus.IMPORTED, FlakyImportStatus.NOOP,
+            FlakyImportStatus.DEGRADED,
+        }
+        reason = ("flaky_database_path_missing"
+                  if quality_config.flaky_database_path is None
+                  else "flaky_history_import_not_ready" if not evaluable else None)
+        result = (write_state_no_data(reason) if reason else evaluate_flaky_state())
+    except Exception as error:
+        warn_without_changing_business_result(error)
+```
+
+`build_import_request()` 只把运行配置中的 `run_id`、输出目录和数据库路径装入真实请求对象；`write_history_no_data(code)` 与 `write_state_no_data(code)` 是教学适配名，分别把 `run_id`、输出目录、错误码和摘要转发给真实的两个 NO_DATA 报告函数；`evaluate_flaky_state()` 的真实调用还会传数据库路径、`run_id` 和输出目录。代码已经保留配置告警、路径缺失和导入不可评估三类 NO_DATA 分支，只省略重复参数与日志文本。功能关闭则直接返回，不生成对应报告。
+
+外层 fail-open 之前，导入器与评估器会先把预期内异常结果化。主骨架中的 `import_with_report()` 与 `evaluate_with_report()` 精确展开为下面这些决策；代码对 `quality.flaky_importer.import_flaky_history()`、`evaluate_flaky_state()`、`_write_import_report()` 和 `_write_evaluation_report()` 做最小教学重构。`error_issue()` 只构造同一错误码的 ERROR issue，不参与状态选择：
+
+```python
+NO_DATA_CODES = {"db_busy", "database_not_found", "invalid_database_path"}
+
+try:
+    import_result = prepare_and_import(request)
+except (FlakyImportError, FlakyStoreError, ValidationError,
+        OSError, ValueError) as error:
+    code = getattr(error, "code", "flaky_import_failed")
+    import_result = FlakyImportResult(
+        run_id=request.run_id,
+        status=(FlakyImportStatus.NO_DATA if code in NO_DATA_CODES
+                else FlakyImportStatus.FAILED),
+        issues=(error_issue(code, error),),
+    )
+
+try:
+    evaluation_result = store.evaluate_run(run_id)
+except (FlakyStoreError, ValidationError, OSError, ValueError) as error:
+    code = getattr(error, "code", "flaky_state_evaluation_failed")
+    evaluation_result = FlakyEvaluationResult(
+        run_id=run_id,
+        status=(FlakyEvaluationStatus.NO_DATA if code in NO_DATA_CODES
+                else FlakyEvaluationStatus.FAILED),
+        evaluated_at=now(), stale_count=1,
+        issues=(error_issue(code, error),),
+    )
+
+def write_report_or_degrade(path, result, successful, degraded, error_code):
+    try:
+        write_json_atomic(path, result)
+        return result
+    except Exception as error:
+        status = degraded if result.status in successful else result.status
+        return result.model_copy(update={
+            "status": status,
+            "issues": (*result.issues, error_issue(error_code, error)),
+        })
+
+import_result = write_report_or_degrade(
+    import_report_path, import_result,
+    {FlakyImportStatus.IMPORTED, FlakyImportStatus.NOOP,
+     FlakyImportStatus.DEGRADED},
+    FlakyImportStatus.DEGRADED, "import_report_write_failed",
+)
+evaluation_result = write_report_or_degrade(
+    evaluation_report_path, evaluation_result,
+    {FlakyEvaluationStatus.EVALUATED, FlakyEvaluationStatus.NOOP,
+     FlakyEvaluationStatus.DEGRADED},
+    FlakyEvaluationStatus.DEGRADED, "evaluation_report_write_failed",
+)
+```
+
+因此只有三个数据库环境错误码映射为 NO_DATA；其他已知异常映射为 FAILED。报告写失败不会再逃到 stage 包装：原结果为 IMPORTED/EVALUATED、NOOP 或 DEGRADED 时降为 DEGRADED；原结果已经是 FAILED 或 NO_DATA 时保持状态，只追加写报告失败的问题。真实导入错误结果还会尽量保留 `prepared` 中已经取得的来源摘要、计数和问题证据，这里省略这些不改变出口选择的重复字段。
 
 ### 8.1 完整失败矩阵（课后查阅）
 
