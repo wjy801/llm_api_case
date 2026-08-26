@@ -63,16 +63,16 @@ Semantic 回答“这些请求属于哪次业务动作”；Metrics 回答“在
 
 | 时间 | 内容 | 本段要形成的认识 |
 | ---: | --- | --- |
-| 0～7 分钟 | 异步图片场景与词汇 | 请求次数不是业务动作 |
-| 7～23 分钟 | 模块级精简教学代码 | 看懂 Semantic 与 Metrics 的连续转换 |
-| 23～31 分钟 | 第一性原理与 TOC（约束理论） | 当前约束是归属和分母，不是公式 |
-| 31～43 分钟 | Semantic 关系与归并 | P0 和 Semantic 缺一不可 |
-| 43～53 分钟 | Metrics 输入门禁与状态 | 可读取不等于可统计 |
-| 53～65 分钟 | 四种统计粒度 | 每种粒度回答不同问题 |
+| 0～6 分钟 | 异步图片场景与词汇 | 请求次数不是业务动作 |
+| 6～18 分钟 | 模块级精简教学代码 | 看懂 Semantic 与 Metrics 的连续转换 |
+| 18～25 分钟 | 第一性原理与 TOC（约束理论） | 当前约束是归属和分母，不是公式 |
+| 25～40 分钟 | Semantic 关系与归并 | P0 和 Semantic 缺一不可 |
+| 40～55 分钟 | Metrics 输入门禁与状态 | 可读取不等于可统计 |
+| 55～65 分钟 | 四种统计粒度 | 每种粒度回答不同问题 |
 | 65～71 分钟 | 零、未知、无数据、不适用 | 缺失绝不能自动变成零 |
 | 71～75 分钟 | 所有权、取舍与收束 | 指标必须能回到事实和状态 |
 
-第 9.1 节的完整失败表与第 9.3 节的启用范围用于课后查阅，不占现场讲授时间。
+第 5、6 节代码只现场追踪“记录关系问题 → 计算完整性”和“重新验源 → 硬拒绝 → 保存降级原因”两条路径；错误码逐项对照用于课后复核。第 9.1 节的完整失败表与第 9.3 节的启用范围也不占现场讲授时间。
 
 ---
 
@@ -82,7 +82,7 @@ Semantic 回答“这些请求属于哪次业务动作”；Metrics 回答“在
 
 下面是**教学伪代码**，不是仓库源码的逐行复制。它保留真实依赖、两阶段来源核验、主状态分支、四类指标输出和提交顺序；其中 Semantic 对已知问题记录完整性问题（Integrity）后继续，只有 Metrics 执行硬输入门禁。代码省略 JSONL（每行一个 JSON 对象）解析、字段与类型合同（Schema）的校验细节、排序和路径拼装。
 
-先看 Semantic 阶段：`run_id` 标识一轮运行；`SemanticState` 只保存本阶段待归并记录、P0 Request/哈希和问题。Semantic 产物清单（`manifest`）的提交状态区分 `merging`（正在合并）、`complete`（完整提交）和 `failed`（提交失败）；内容完整性状态 `integrity_status` 表示已发现问题的严重度，是另一条独立状态轴。
+先看 Semantic 阶段：`run_id` 标识一轮运行；`SemanticState` 保存本阶段待归并记录、P0 Request/哈希、问题和来源分片扫描统计（`source_stats`）。Semantic 产物清单（`manifest`）的提交状态区分 `merging`（正在合并）、`complete`（完整提交）和 `failed`（提交失败）；内容完整性状态 `integrity_status` 表示已发现问题的严重度，是另一条独立状态轴。
 
 ```python
 # 第一阶段：Semantic 同时读取自己的分片和可信提交的 P0 Request 证据。
@@ -97,14 +97,23 @@ def merge_semantic(run_id, output_dir):
         load_p0_evidence_or_record_error(state, output_dir)
         # 不把 P0 integrity_status 当门禁；缺失引用会继续成为关系错误。
         validate_semantic_relationships(state, state.p0_requests)
-        integrity = severity_status(state.all_issues)
+        severities = {issue.severity for issue in state.all_issues}
+        if IssueSeverity.ERROR in severities:
+            integrity = IntegrityStatus.FAILED
+        elif IssueSeverity.WARN in severities:
+            integrity = IntegrityStatus.DEGRADED
+        else:
+            integrity = IntegrityStatus.COMPLETE
         # atomic：单文件完整写入临时文件后替换目标，不代表多文件事务。
         outputs = write_each_semantic_output_atomic(state)
         # complete 表示本阶段输出已完整提交。
         write_semantic_manifest(
             "complete", state, integrity=integrity,
             # SHA256 是用于复核文件内容是否变化的摘要。
-            p0_evidence=state.p0_hashes, output_hashes=sha256_each(outputs),
+            p0_evidence=state.p0_hashes,
+            source_shards=source_shard_evidence(state.source_stats, output_dir),
+            output_counts=semantic_counts(state, outputs),
+            output_hashes=sha256_each(outputs),
         )
         # SemanticResult 保存完整性、各类数量和问题。
         return SemanticResult(integrity, count_by_kind(outputs), tuple(state.all_issues))
@@ -120,6 +129,10 @@ def merge_semantic(run_id, output_dir):
 ```python
 # 第二阶段：Metrics 重新读取磁盘证据，不接收内存归并结果。
 def aggregate_metrics(run_id, output_dir):
+    run_id = run_id.strip()
+    if not run_id:
+        # 真实 service 在首次写 manifest 前拒绝空身份；异常交给外层 stage。
+        raise ValueError("run_id must not be empty")
     # 首次 aggregating（正在聚合）manifest 也在内部 try 之外。
     write_metrics_manifest("aggregating", metrics_status=None)
     try:
@@ -134,20 +147,34 @@ def aggregate_metrics(run_id, output_dir):
         require_relationship_contract(p0.requests, semantic.records)
         workload = select_workload(semantic.operations, semantic.groups, p0.requests)
         issues, reasons = explain_exclusions_and_gaps(run, p0, semantic)
-        status = ("degraded" if reasons or not run.is_finished
-                  else "no_data" if not workload.operations else "aggregated")
-        # RunMetrics 是整轮摘要、四类指标、排除项和证据组成的指标主体。
-        result = RunMetrics(
-            status=status, run_summary=build_run_summary(workload),
+        status = metrics_status(run.status, len(workload.operations), reasons)
+        integrity = MetricsIntegrity(
+            p0_integrity_status=p0.integrity_status,
+            semantic_integrity_status=semantic.integrity_status,
+            issue_count=len(issues),
+            error_count=count_severity(issues, "error"),
+            warning_count=count_severity(issues, "warn"),
+            degraded_reasons=tuple(reasons),
+        )
+        result = RunMetricsResult(
+            run_id=run_id, status=status, generated_at=now(), run_status=run.status,
+            source_evidence=current_source_hashes(p0, semantic),
+            integrity=integrity, exclusions=workload.exclusions,
+            run_metrics=build_run_summary(workload),
             case_invocations=group_by_case_and_invocation(workload),
             operation_buckets=group_operations(workload),
             request_group_buckets=group_request_groups(workload),
             request_event_buckets=group_request_events(workload),
-            exclusions=workload.exclusions, issues=issues,
-            source_evidence=current_source_hashes(p0, semantic),
+            issues=tuple(issues),
         )
         digest = write_run_metrics_atomic(result)
-        write_metrics_manifest("complete", status, {"run_metrics": digest})
+        write_metrics_manifest(
+            "complete", metrics_status=result.status,
+            source_evidence=result.source_evidence,
+            output_hashes={"run_metrics": digest},
+            output_counts=metrics_output_counts(result),
+            issues=result.issues,
+        )
         # MetricsResult 保存状态、可选指标主体和问题。
         return MetricsResult(status=status, metrics=result, issues=tuple(issues))
     except Exception as error:
@@ -155,6 +182,8 @@ def aggregate_metrics(run_id, output_dir):
         best_effort_failed_metrics_manifest(issue)
         return MetricsResult(status="failed", metrics=None, issues=(issue,))
 ```
+
+`metrics_output_counts()` 对四类输出项、workload Operation/Group/Event 和 issues 分别计数；主骨架没有省略这些计数的提交，只压缩了重复的字典字段。
 
 最后看外层 `fail-open`（故障开放）包装：它隔离普通观察异常，不反向改变业务、pytest（Python 测试框架）或 Jenkins（持续集成流水线）结论。
 
@@ -167,6 +196,10 @@ def finalize_quality_semantics(run_id, output_dir):
         except Exception as error:
             warn_without_changing_business_result(stage, error)
 ```
+
+后续代码块分为两类：一类从主骨架抽取，另一类是保持真实核心语义的**教学重构代码**。跨真实函数拼接、压缩重复字段或使用教学 helper 时，会注明真实宿主函数；它们不是仓库源码的逐行摘录。
+
+为避免把教学 helper 误认成生产接口，后文代码按宿主模块分组：第 4 节对应 `quality.request_metrics`；第 5 节对应 `quality.semantic_aggregator` 与 `quality.semantic_collector`；第 6 节对应 `quality.metrics.sources/validation/builder/service`；第 7～8 节除 Operation 原始计时来自 `quality.semantic_collector` 外，其余对应 `quality.metrics` 下的 `case`、`operation`、`request_group`、`request_event` 与 `primitives`。除明确写明“真实调用片段”的地方外，均按教学重构理解。
 
 这段代码最值得记住的不是函数名，而是三个设计动作：
 
@@ -254,6 +287,22 @@ flowchart LR
 
 这会产生一个重要边界：基础 Request 分片写入失败后，Semantic 分片仍可能留下对该 Event 的引用。运行时不伪造成功；Semantic 归并随后会把“引用指向缺失 P0 Request”记录为完整性错误。
 
+`quality.request_metrics.record_response()` 与 `record_exception()` 的真实尾部调用没有用 P0 写入的布尔返回值控制 Semantic 观察；两条写入各自 fail-open：
+
+```python
+# record_response() 与 record_exception() 构造出同一个 metric 后：
+collector.record_request(metric)  # 写失败返回 False，但这里不作门禁
+_observe_semantic(context, metric)
+
+def _observe_semantic(context, metric):
+    try:
+        observe_request_metric(context, metric)
+    except Exception:
+        return
+```
+
+因此叙事上可以先讲 P0、再讲 Semantic，依赖上却不能画成“P0 写成功 → 才允许 Semantic 写”。
+
 ### 4.2 为什么 Semantic 不能只读自己的分片
 
 Semantic 分片保存关系声明，例如“这个 Group 包含 Event A、B”。P0 Request 保存发送边界事实，例如状态码、耗时、业务状态和用量。
@@ -290,6 +339,77 @@ Semantic Aggregator 先扫描 Group、Session、Operation 和 Integrity（完整
 - 对 `usage.source_request_event_ids`：Event 是否属于该 Operation，且没有被多个 Operation 占有。
 - 异步 Operation 是否至少同时具有 Group 和 Polling Session 引用。
 
+下面是对真实宿主函数 `quality.semantic_aggregator._validate_relationships()` 的教学重构。`record_error()` 在条件为假时追加 ERROR 后继续；`claim_once()` 用 `setdefault` 记录首个 owner，遇到不同 owner 时记录 ERROR。代码保留四类关系的决定性条件，压缩重复的 source/message 字段：
+
+```python
+event_owner = {}
+for group in state.request_groups.values():
+    operation = state.operations.get(group.operation_id)
+    record_error(operation is not None, "group_operation_missing", group.operation_id)
+    check_group_operation_backref(group, operation, record_error)
+    metrics = []
+    for event_id in group.attempt_event_ids:
+        claim_once(event_owner, event_id, group.request_group_id,
+                   "request_event_multiple_groups")
+        metric = state.p0_requests.get(event_id)
+        record_error(metric is not None, "request_event_missing", event_id)
+        if metric is not None:
+            metrics.append(metric)
+            record_error(metric.invocation_id == group.invocation_id,
+                         "group_event_invocation_mismatch", group.request_group_id)
+    indexes = [metric.attempt_index for metric in metrics]
+    record_error(
+        not indexes or indexes == list(range(1, len(metrics) + 1)),
+        "attempt_index_sequence_invalid",
+        group.request_group_id,
+    )
+    record_error(
+        group.final_request_event_id in group.attempt_event_ids,
+        "final_request_event_invalid",
+        group.request_group_id,
+    )
+
+for session in state.polling_sessions.values():
+    operation = state.operations.get(session.operation_id)
+    record_error(operation is not None, "polling_operation_missing", session.operation_id)
+    check_session_operation_backref(session, operation, record_error)
+    for group_id in session.request_group_ids:
+        check_session_group_link(session, state.request_groups.get(group_id), record_error)
+
+group_owner, usage_owner = {}, {}
+for operation in state.operations.values():
+    operation_event_ids = event_ids_from_existing_groups(operation, state.request_groups)
+    for group_id in operation.request_group_ids:
+        claim_once(group_owner, group_id, operation.operation_id,
+                   "request_group_multiple_operations")
+        check_operation_group_link(operation, state.request_groups.get(group_id), record_error)
+    for session_id in operation.polling_session_ids:
+        session = state.polling_sessions.get(session_id)
+        check_operation_session_link(operation, session, record_error)
+    if operation.operation_kind is OperationKind.ASYNC_TASK:
+        has_both = bool(operation.request_group_ids and operation.polling_session_ids)
+        record_error(has_both, "async_operation_incomplete", operation.operation_id)
+    if operation.completeness is RecordCompleteness.INCOMPLETE:
+        record_warn("operation_incomplete", operation.operation_id)
+    for event_id in operation.usage.source_request_event_ids:
+        record_error(event_id in operation_event_ids, "usage_event_outside_operation", event_id)
+        claim_once(usage_owner, event_id, operation.operation_id,
+                   "usage_event_multiple_operations")
+```
+
+这里的 `metrics` 只收集实际找到的 P0 Event，因此 Attempt 连续性也只在这些 Event 上检查。Semantic 当前只要求 final Event 属于 Attempt 列表，并不要求它是列表最后一项。其余教学 helper 的合同如下，名字不替代条件：
+
+| helper | 精确判断范围 |
+| --- | --- |
+| `check_group_operation_backref` | Operation 存在时，它必须反向列出该 Group，且双方 `invocation_id` 相同 |
+| `check_session_operation_backref` | Operation 存在时，它必须反向列出该 Session，且双方 `invocation_id` 相同 |
+| `check_session_group_link` | Group 必须存在；其 `polling_session_id`、`operation_id`、`invocation_id` 必须分别匹配当前 Session |
+| `event_ids_from_existing_groups` | 只合并 Operation 所引用且实际存在的 Group 的全部 Attempt Event ID |
+| `check_operation_group_link` | Group 必须存在；其 `operation_id`、`invocation_id` 必须匹配当前 Operation |
+| `check_operation_session_link` | Session 必须存在；其 `operation_id`、`invocation_id` 必须匹配当前 Operation |
+
+这里特意没有把 Semantic 写成硬门：这些分支记录问题并继续归并，最终由问题严重度决定内容完整性。SSE 完成证据另有专用校验，但其算法留给扩展课；本课不展开。当前实现也不额外补做下段所述的 `Group.polling_session_id → Session` 全量反查。
+
 这不是任意字段的全量双向等价检查。当前 Semantic 归并不会专门反查“某个 Group 只要填写了非空 `polling_session_id`，该 Session 就必须存在并反向列出它”，也没有比较所有关联记录的每个身份字段。它还不检查 `usage.missing_request_event_ids`；后续 Metrics 才把已知和缺失两类 usage Event ID 一起核验是否存在于 P0、是否属于该 Operation，以及是否被多个 Operation 占有。
 
 关系错误生成 `SemanticIntegrityIssue`（Semantic 完整性问题记录），但“发现错误”不等于“文件提交失败”。只要输出写入成功，Semantic manifest 仍可以是：
@@ -301,15 +421,68 @@ integrity_status = FAILED
 
 前者表示整组 Semantic 输出已经提交，后者表示提交的内容包含不可忽略的关系错误。
 
+真实宿主函数 `_integrity_status()` 的三个分支已经在主骨架展开：ERROR 优先得到 FAILED，其次 WARN 得到 DEGRADED，无问题才是 COMPLETE。`_SourceStats.as_manifest()` 则把每个来源分片转成以下证据；主骨架再把它与四类输出计数、P0 evidence 和输出哈希一起交给 `_write_manifest()`：
+
+| 分片证据 | 写入内容 |
+| --- | --- |
+| 身份与内容 | 相对路径、分片类型、实际 SHA256 |
+| 扫描范围 | 非空物理行、去重前通过解析与 Schema 校验的本轮记录、其他 run 记录 |
+| 无效数据 | 非法 JSON、Schema 不合法 |
+| 重复数据 | 完全重复、同身份内容冲突 |
+
+于是 COMPLETE、DEGRADED 或 FAILED 不只是一个标签，还能追溯到读过哪些分片、识别多少条去重前的有效本轮记录，以及发现多少坏行或冲突。
+
 ### 5.3 Semantic 对 P0 的信任上界
 
 当前 Semantic 归并明确核验：P0 manifest 存在且可解析、`run_id` 相同、提交状态为 `complete`、Request 输出存在且 SHA256 匹配，以及每条 RequestMetric 满足 Schema。
 
 这里的“核验”不是统一的异常门禁：上述多数已知失败会向 state 记录 ERROR 后返回，主流程仍继续关系校验和输出提交；单条坏 RequestMetric 也会记录错误后继续读取其他行。
 
+这组“记录后继续”的分支不能只藏在 `load_p0_evidence_or_record_error()` 名字里。下面先显式判断文件存在，再在解析前保存实际哈希；教学 helper `read_json_or_record()` 捕获 JSON 读取或解析失败，`model_validate_or_record()` 捕获单行 JSON/Schema 错误，二者都记录 ERROR 并返回 `None`：
+
+```python
+if not manifest_path.exists():
+    p0_error("p0_manifest_missing")
+    return
+state.p0_manifest_sha256 = _file_sha256(manifest_path)
+manifest = read_json_or_record(
+    manifest_path, invalid="p0_manifest_invalid"
+)
+if manifest is None:
+    return
+wrong_identity = manifest.get("run_id") != state.request.run_id
+if wrong_identity or manifest.get("status") != "complete":
+    p0_error("p0_manifest_untrusted")
+    return
+if not requests_path.exists():
+    p0_error("p0_request_metrics_missing")
+    return
+
+actual_hash = _file_sha256(requests_path)
+state.p0_request_metrics_sha256 = actual_hash
+expected_hash = (manifest.get("output_hashes") or {}).get("request-metrics")
+if expected_hash != actual_hash:
+    p0_error("p0_request_metrics_hash_mismatch")
+    return
+
+with requests_path.open("r", encoding="utf-8") as handle:
+    for line in handle:
+        if not line.strip():
+            continue
+        metric = model_validate_or_record(
+            RequestMetric, line, "p0_request_metric_invalid"
+        )
+        if metric is None:
+            continue
+        if metric.run_id == state.request.run_id:
+            keep_or_record_conflict(state.p0_requests, metric)
+```
+
+`p0_error()` 只追加 Semantic ERROR；`keep_or_record_conflict()` 保留首条相同身份记录，并在内容冲突时记录 ERROR。它们都不抛出“停止整个归并”的门禁异常。
+
 它**不读取 P0 的 `integrity_status` 作为门禁**。因此不能把 Semantic 描述成“只接受 P0 COMPLETE”。Semantic manifest 会记录它实际读取的 P0 manifest 哈希和 Request 输出哈希，供 Metrics 再次核对。
 
-代码锚点：`quality.semantic_aggregator.merge_semantic_run` 证明扫描 Semantic、加载 P0、关系校验、写四类输出和最后提交 manifest 的顺序；其中 `_load_p0_evidence` 与 `_validate_relationships` 分别证明 P0 门槛和关系检查范围。
+上面的教学重构对应 `quality.semantic_aggregator._load_p0_evidence()` 与 `_validate_relationships()`；完整提交顺序仍以第 2 节模块骨架为主线。
 
 ### 5.4 完整与准确不是同一个词
 
@@ -318,6 +491,27 @@ integrity_status = FAILED
 例如异步 Operation 只有同时取得创建请求耗时和 Polling 总耗时，当前 timing 才是 complete。缺一项时应是 partial，而不是把缺失项补成 0。
 
 Operation 的 Semantic 终态也只属于观察层：当前实现有 RequestMetric 证据时，可以把原先的成功观察校正为 FAILED；它只修改 `OperationRecord.outcome`，不改业务响应、pytest 结果或 P0 Request。
+
+下面的教学重构来自两个真实宿主：终态校正在 `quality.semantic_collector.SemanticCollector.finish_operation()` 中完成；异步 timing 的完整性由 `quality.semantic_collector._build_operation_timing()` 判断。终态校正只发生在构造派生的 `OperationRecord` 之前。
+
+```python
+if outcome is OperationOutcome.SUCCESS and operation.metrics:
+    final_metric = operation.metrics[-1]
+    if (
+        final_metric.status_code is None
+        or not 200 <= final_metric.status_code < 300
+        or final_metric.business_status is BusinessStatus.FAILED
+    ):
+        outcome = OperationOutcome.FAILED
+
+if operation.kind is OperationKind.ASYNC_TASK:
+    timing_complete = (
+        operation.create_request_ms is not None
+        and operation.polling_total_ms is not None
+    )
+```
+
+第二个条件说明异步 timing 的 complete 需要创建请求与 Polling 两段都存在；缺一段是 partial，不会补零。
 
 ---
 
@@ -334,9 +528,107 @@ Metrics 的输入门禁包括：
 3. Semantic 已提交，`manifest_version`、`schema_version` 与 `merge_version` 都受支持，完整性不是 FAILED；四类输出哈希一致，且其中保存的两个 P0 哈希仍指向当前 P0。
 4. 所有记录满足 Schema，Event、Group、Session、Operation 的引用再次满足 Metrics 来源合同。
 
+下面是对真实宿主函数 `quality.metrics.sources.load_sources()` 的教学重构。`require_fields()` 逐项比较预期字段并按首个不匹配字段拒绝；P0 预期 `run_id + complete + manifest/schema version`，Semantic 还要求 merge version。`verified_output()` 先要求路径存在且为普通文件，再计算实际 SHA256；预期值不是字符串或与实际值不同时拒绝，否则返回实际哈希。上述已知合同失败会映射为 `MetricsSourceError`；但哈希读取发生 `OSError` 时不会在这里包装，而会越过来源加载并由 Metrics service 归为 `metrics_aggregation_failed`：
+
+```python
+run = read_model(run_path, RunRecord, "run_record_invalid")
+require(run.run_id == run_id, "run_id_mismatch")
+p0_manifest = read_json_object(p0_manifest_path, "p0_manifest_invalid")
+require_fields(p0_manifest, p0_contract(run_id), "p0")
+p0_integrity = str(p0_manifest.get("integrity_status") or "unknown")
+require(p0_integrity != IntegrityStatus.FAILED.value, "p0_integrity_failed")
+p0_hashes = p0_manifest.get("output_hashes") or {}
+p0_request_hash = verified_output(request_metrics_path,
+                                  p0_hashes.get("request-metrics"),
+                                  "p0_request_metrics")
+requests = tuple(read_jsonl_models(
+    request_metrics_path, RequestMetric, "p0_request_metric_invalid"
+))
+
+semantic_manifest = read_json_object(semantic_manifest_path, "semantic_manifest_invalid")
+require_fields(semantic_manifest, semantic_contract(run_id), "semantic")
+semantic_integrity = str(semantic_manifest.get("integrity_status") or "unknown")
+require(semantic_integrity != IntegrityStatus.FAILED.value, "semantic_integrity_failed")
+p0_manifest_hash = source_file_sha256(p0_manifest_path)
+semantic_p0 = semantic_manifest.get("p0_evidence") or {}
+require(semantic_p0.get("manifest_sha256") == p0_manifest_hash,
+        "semantic_p0_manifest_evidence_mismatch")
+require(semantic_p0.get("request_metrics_sha256") == p0_request_hash,
+        "semantic_p0_request_evidence_mismatch")
+```
+
+`p0_contract()` 展开为 `run_id + complete + manifest/schema version`；`semantic_contract()` 还增加 merge version。`FAILED.value` 对应 JSON 字面值 `"failed"`：当前实现只拒绝这个精确值，缺失或未知值会继续并成为降级原因。P0 的动态 `merge_version` 不参与门禁，但进入证据。
+
+四类 Semantic 输出逐文件走同一个 `verified_output()`，随后逐行按各自模型解析。已验证的实际值不能丢失，必须进入 `MetricsSources`：
+
+```python
+parsed, semantic_hashes = {}, {}
+for name, model in _SEMANTIC_OUTPUT_MODELS.items():
+    path = semantic_dir / f"{name}.jsonl"
+    expected = (semantic_manifest.get("output_hashes") or {}).get(name)
+    prefix = f"semantic_{name.replace('-', '_')}"
+    semantic_hashes[name] = verified_output(path, expected, prefix)
+    code = f"semantic_{name.replace('-', '_')}_invalid"
+    parsed[name] = tuple(read_jsonl_models(path, model, code))
+
+evidence = build_source_evidence(
+    p0_manifest=(p0_manifest_path, p0_manifest_hash, p0_manifest),
+    p0_requests=(request_metrics_path, p0_request_hash),
+    semantic_manifest=(semantic_manifest_path, semantic_manifest),
+    semantic_outputs=(semantic_dir, semantic_hashes))
+sources = assemble_typed_metrics_sources(
+    run, requests, parsed,
+    p0_integrity_status=p0_integrity, semantic_integrity_status=semantic_integrity,
+    evidence=evidence)
+```
+
+这里的 `build_source_evidence()` 是教学 helper：真实 `SourceEvidence` 对 P0 manifest 保存相对路径、实际哈希、schema/manifest 版本和动态 merge version；对 P0 Request 保存路径、哈希和 schema；对 Semantic manifest 保存路径、实际哈希及三种固定版本；对四类 Semantic 输出分别保存路径、实际哈希和 schema。四类 JSONL 任一坏行都会抛来源错误，不会像 Semantic 那样跳过后继续。
+
+Metrics 的关系合同比 Semantic 当前归并更严格。下面是对真实宿主函数 `quality.metrics.validation.validate_source_relationships()` 的教学重构；`require()` 条件失败便立即抛 `MetricsSourceError`。`unique_index()` 逐项建索引并拒绝重复身份，不会像普通字典那样覆盖旧值：
+
+```python
+events = unique_index(
+    sources.requests, lambda item: item.request_event_id, "request_event_duplicate"
+)
+groups = unique_index(
+    sources.groups, lambda item: item.request_group_id, "request_group_duplicate"
+)
+sessions = unique_index(
+    sources.sessions, lambda item: item.polling_session_id, "polling_session_duplicate"
+)
+operations = unique_index(
+    sources.operations, lambda item: item.operation_id, "operation_duplicate"
+)
+records = (*sources.requests, *sources.groups, *sources.sessions, *sources.operations)
+for record in records:
+    require(record.run_id == run_id, "foreign_run_record")
+
+event_owner, group_owner, session_owner, usage_owner = {}, {}, {}, {}
+for group in sources.groups:
+    validate_group_and_events(group, events, operations, event_owner)
+for operation in sources.operations:
+    validate_operation_links_and_usage(
+        operation, events, groups, sessions,
+        group_owner, session_owner, usage_owner,
+    )
+require(set(groups) == set(group_owner), "request_group_unassigned")
+for session in sources.sessions:
+    validate_session_links_and_owner(session, groups, operations)
+```
+
+三个教学 helper 的判断范围不是黑盒：
+
+| helper | 必须成立的源码条件 |
+| --- | --- |
+| `validate_group_and_events` | Group 的 Operation 存在并反向列出 Group；final Event 是 Attempt 列表末项；Event 存在且只有一个 Group owner；Attempt 序号连续；run、Case、invocation、接口四字段一致；Group 首尾传输结果和状态码等于 Event 证据 |
+| `validate_operation_links_and_usage` | Operation 引用的 Group/Session 存在且双向身份一致；Group/Session owner 唯一；known 与 missing usage ID 不重叠；usage Event 存在、位于该 Operation 且 owner 唯一 |
+| `validate_session_links_and_owner` | Session 有且仅有一个反向列出它的 Operation；其 Group 存在，且 Session、Operation、run、Case、invocation 身份一致 |
+
+表中任一条件失败都会立即拒绝整个 Metrics 来源；这与 Semantic 的“记录问题后继续归并”不同。重复异常消息和 `related_id` 构造未展开。
+
 任何一项硬门禁失败，本轮返回的 MetricsResult 为 FAILED，且 `metrics=None`。这不保证磁盘上没有旧文件，或没有本轮已完整写出但尚未由 `complete` manifest 提交的新文件；只有 `complete` manifest 及其匹配哈希才能证明指标主体已可信提交。
 
-代码锚点：`quality.metrics.sources.load_sources` 证明 P0/Semantic 的提交、版本、完整性、哈希与交叉证据门禁；`quality.metrics.validation.validate_source_relationships` 证明 Metrics 在计算前重新校验关系，而不是盲信 Semantic manifest。
+上面的教学重构对应 `quality.metrics.sources.load_sources()` 与 `quality.metrics.validation.validate_source_relationships()`；它们补充第 2 节骨架中的来源门，不另建一条执行主线。
 
 ### 6.2 FAILED、DEGRADED、NO_DATA、AGGREGATED
 
@@ -371,9 +663,24 @@ flowchart TD
 
 图中的 FAILED 描述返回结果和可信提交，不描述磁盘物理文件一定不存在。来源门禁失败不会主动删除旧指标；若新 `run-metrics.json` 已写入而最终 complete manifest 提交失败，新文件也可能残留。下游必须同时看到 complete manifest 和匹配哈希，才能消费该文件。
 
+提交顺序不再重复一遍代码，直接回看第 2 节 `aggregate_metrics()`：初始 `aggregating` manifest 位于内部 `try` 之前；内部依次加载来源、构造主体、原子写主体、最后写 `complete` manifest。内部任一步失败都尽力写 `failed` manifest，并返回 `metrics=None`；`complete` manifest 尚未提交时，磁盘上的主体不能被视为可信结果。
+
 P0 manifest 缺失、不可解析、状态不可信，或 Request 文件缺失/哈希不符，属于 Semantic 已知问题路径：记录 ERROR、保持空的 P0 Request 集合并保留已取得的部分哈希，然后继续关系校验，最终通常是 `complete + FAILED`，而不是图中的内部异常分支。
 
 状态判断先看 degraded，再看是否有 workload Operation。因此“运行未结束且没有 Operation”是 DEGRADED，不是 NO_DATA。
+
+这一优先级直接来自 `quality.metrics.builder.metrics_status()`，而不是图示自行约定：
+
+```python
+def metrics_status(run_status, workload_operation_count, degraded_reasons):
+    if degraded_reasons or run_status is not RunStatus.FINISHED:
+        return RunMetricsStatus.DEGRADED
+    if workload_operation_count == 0:
+        return RunMetricsStatus.NO_DATA
+    return RunMetricsStatus.AGGREGATED
+```
+
+`degraded_reasons` 不是状态判断后的临时变量。第 2 节主骨架把 P0/Semantic 完整性状态、问题总数、ERROR/WARN 数量和完整的 `degraded_reasons` 一并写入 `MetricsIntegrity`，再放入指标主体；因此仅由“run 未结束”或上游 DEGRADED 引起的降级，也不会失去解释证据。
 
 P0 或 Semantic 为 DEGRADED 时，Metrics 可以继续读取，但最终 Metrics 会记录相应降级原因。P0 或 Semantic 为 FAILED 时则被门禁拒绝。这正是“有限信任”而不是“一刀切相信”或“一律丢弃”。
 
@@ -389,6 +696,22 @@ Metrics 只把 `workload` Operation、Group 及其 Event 放入业务指标。�
 - usage not_applicable：该 Operation 的用量指标不适用，单独列出。
 
 Operation 不完整、workload Operation 用量 partial/missing、P0 或 Semantic 降级，也会形成降级原因。相关对象仍可能进入聚合，但 Metrics 会把整体标为 DEGRADED 并保留 completeness；它不会静默把它们说成完整样本。
+
+下面的教学重构对应 `quality.metrics.builder.build_run_metrics()` 与 `build_exclusions()`：workload Event 没有独立角色字段，必须跟随所属 Group；没有 owner 的 Event 进入排除项。
+
+```python
+event_owner = {current_id: group for group in sources.groups
+               for current_id in group.attempt_event_ids}
+workload_operations = select_role(sources.operations, TrafficRole.WORKLOAD)
+workload_groups = select_role(sources.groups, TrafficRole.WORKLOAD)
+workload_events = tuple(event for event in sources.requests
+                        if (owner := event_owner.get(event.request_event_id)) is not None
+                        and owner.traffic_role is TrafficRole.WORKLOAD)
+unassigned_event_ids = tuple(event.request_event_id for event in sources.requests
+                             if event.request_event_id not in event_owner)
+```
+
+`select_role()` 只展开为 `item.traffic_role is role` 的筛选。`control` 与 `unknown` 的 Operation、Group、Event 使用同样条件进入对应排除集合；只有 unknown 和 unassigned 会添加降级原因，control 只是明确排除。
 
 ---
 
@@ -407,9 +730,30 @@ Operation 不完整、workload Operation 用量 partial/missing、P0 或 Semanti
 
 当前还会生成整轮 run summary（运行汇总），但它是对 workload 的总览，不替代上面四种粒度。若要查看单个 Event、Group 或 Operation，需根据 bucket 的 evidence（成员 ID 与来源引用）回查 P0 或 Semantic 原始记录。
 
+表中的分区键分别来自 `quality.metrics.case.case_metrics()`、`operation.operation_buckets()`、`request_group.request_group_buckets()` 与 `request_event.request_event_buckets()`；四类输出的构造已经在第 2 节主骨架集中展示，这里不重复代码。Case Invocation 只从已有 workload Operation 建分区；没有 Operation 的 invocation 不会自动生成零值项。
+
 ### 7.2 Request Event：观察一次发送边界
 
 Event bucket 能看见：发送事件数量、timeout（超时）、HTTP 2xx～5xx 分类、429 次数、业务状态分布、Event 耗时聚合，以及 Token（模型处理文本的计量单位）或媒体数量的覆盖。
+
+下面直接展开 `quality.metrics.request_event.transport_category()` 的核心分支：传输分类先看 timeout，再区分“无响应”和状态码区间。
+
+```python
+def transport_category(event):
+    if event.timeout:
+        return "timeout"
+    if event.status_code is None:
+        return "transport_error"
+    if 200 <= event.status_code < 300:
+        return "http_2xx"
+    if 300 <= event.status_code < 400:
+        return "http_3xx"
+    if 400 <= event.status_code < 500:
+        return "http_4xx"
+    if 500 <= event.status_code < 600:
+        return "http_5xx"
+    return "http_other"
+```
 
 它适合回答“底层传输发生了什么”，不适合直接回答“一次图片生成是否成功”。一次成功图片生成完全可能包含多个非成功的中间 Event。
 
@@ -423,6 +767,23 @@ Group 先把同一请求意图的 Attempt 放在一起；Metrics 再以 Group �
 - Group 总耗时、Retry 等待、首次 Attempt 耗时和额外 Attempt 耗时。
 - 首次与 Retry 额外产生的已知用量。
 
+下面的教学重构对应 `quality.metrics.request_group.request_group_stability()`：Retry 挽救率的分母只包含真正重试过的 Group，并分别比较首个与最终 Event。
+
+```python
+retried = tuple(group for group in groups if group.attempt_count > 1)
+http_retry_rescue_rate = ratio_aggregate(
+    not http_success(events[group.attempt_event_ids[0]])
+    and http_success(events[group.final_request_event_id])
+    for group in retried
+)
+business_retry_rescue_rate = ratio_aggregate(
+    None if first is None or final is None else (not first and final)
+    for first, final in business_success_pairs(retried, events)
+)
+```
+
+`business_success_pairs()` 只把每个重试 Group 的首尾 Event 映射为 `True`、`False` 或 `None`；任一端未知时，该组增加 unknown count，不进入已知挽救率分母。
+
 “最终成功率高”与“首次成功率高”含义不同。前者可能隐藏大量由 Retry 挽救的请求，后者更接近接口初始稳定性。
 
 ### 7.4 Operation：观察一次业务动作
@@ -434,6 +795,16 @@ Semantic 的单个 Operation 保存业务动作的 outcome（观察终态）、�
 > 这一类异步图片生成的 Operation 总耗时和轮询等待分布怎样？
 
 单次 Operation 的实际耗时需回查 Semantic 记录。它也不是所有 Event 耗时的简单相加，因为还可能包含 Polling sleep、状态解析和业务代码开销；Event 相加可能重复或遗漏这些等待。
+
+Operation 总耗时来自业务动作自身的单调时钟区间，异步子阶段再作为独立字段保存。下面是 `quality.semantic_collector.SemanticCollector.finish_operation()` 调用 `_build_operation_timing()` 前的最小教学重构；异步完整性条件已在第 5.4 节展示，这里不再重复：
+
+```python
+ended_perf = operation.terminal_perf or self._monotonic()
+total_duration_ms = _elapsed_ms(operation.started_perf, ended_perf)
+timing = _build_operation_timing(operation, total_duration_ms)
+```
+
+因此 Metrics 聚合的是 Operation 已记录的计时，而不是重新把 Event duration 相加。
 
 ### 7.5 Case Invocation：汇总本次用例里的业务动作
 
@@ -474,7 +845,64 @@ completeness   = complete / partial / no_data / not_applicable
 
 例如传入 `[0, None]` 时，结果是 `sample_size=1`、`missing_count=1`、`total=0`、`completeness=partial`。但 `eligible_count` 只描述调用方真正传给 primitive（基础聚合函数）的候选值；当前部分用量构建器会先过滤 `None`，更高层缺口还要结合 usage completeness 分布和 source event 计数读取，不能只看一个 NumericAggregate。
 
+下面的教学重构分别对应 `quality.metrics.primitives.numeric_aggregate()`、`quality.metrics.operation.known_field_aggregate()` 与 `quality.metrics.primitives.ratio_aggregate()`：零值不会被过滤，只有 `None` 被排除出已知样本；没有已知样本时数值保持 `None`。
+
+```python
+# numeric_aggregate() 的核心分母与状态分支
+observations = tuple(values)
+known = tuple(value for value in observations if value is not None)
+eligible_count, sample_size = len(observations), len(known)
+missing_count = len(observations) - len(known)
+if sample_size == 0:
+    total = mean = minimum = maximum = None
+    completeness = (MetricCompleteness.NOT_APPLICABLE
+                    if not_applicable and eligible_count == 0
+                    else MetricCompleteness.NO_DATA)
+else:
+    total, mean, minimum, maximum = aggregate_known_numbers(known)
+    completeness = (MetricCompleteness.COMPLETE if missing_count == 0
+                    else MetricCompleteness.PARTIAL)
+
+# 部分 usage 构建器会在调用 primitive 前先过滤 None。
+known_values = tuple(value for item in items if (value := getter(item)) is not None)
+usage_metric = numeric_aggregate(known_values, not_applicable=not items)
+
+# ratio_aggregate() 的已知分母
+observations = tuple(values)
+known = tuple(value for value in observations if value is not None)
+numerator = sum(value is True for value in known)
+sample_size, unknown_count = len(known), len(observations) - len(known)
+if sample_size == 0:
+    value = None
+    completeness = MetricCompleteness.NO_DATA
+else:
+    value = round(numerator / sample_size, 6)
+    completeness = (MetricCompleteness.PARTIAL if unknown_count
+                    else MetricCompleteness.COMPLETE)
+```
+
+`aggregate_known_numbers()` 只压缩源码中的非负有限数校验、排序和舍入。比率的 completeness 在无已知值时为 no_data，有未知值时为 partial，否则为 complete。
+
 比率也必须保留 numerator（分子）、sample size 和 unknown count。`[True, False, None]` 的已知成功率是 `1/2=0.5`，不是 `1/3`；同时 completeness 为 partial，提醒读者还有一个未知观察。
+
+下面的教学重构对应 `quality.metrics.request_event.business_success()`，以及 `operation.operation_stability()`、`case.case_metrics()` 对 outcome 的判断。不同指标对 unknown 的映射确实不同，而不是统一规则：
+
+```python
+def business_success(event):
+    if event.business_status is BusinessStatus.UNKNOWN:
+        return None
+    return event.business_status is BusinessStatus.SUCCESS
+
+event_business_rate = ratio_aggregate(
+    business_success(event) for event in events
+)
+operation_success_rate = ratio_aggregate(
+    operation.outcome is OperationOutcome.SUCCESS
+    for operation in operations
+)
+```
+
+前者把 UNKNOWN 留在已知分母之外；后者的布尔表达式会把 UNKNOWN 变成 `False`，但 Operation 结果分布和 `incomplete_or_unknown_count` 仍保留其存在。
 
 ### 8.2 两种 no_data 不要混淆
 
@@ -483,7 +911,7 @@ completeness   = complete / partial / no_data / not_applicable
 
 一个已经 AGGREGATED 的 run 内，某个具体字段仍可以是 no_data 或 not_applicable。整体状态不能替代字段覆盖状态。
 
-代码锚点：`quality.metrics.builder.build_run_metrics` 证明 workload 选择、排除项、状态和四类输出的组装；`quality.metrics.primitives.numeric_aggregate` 与 `ratio_aggregate` 证明零值、缺失样本、未知分母和 no_data 的实际计算。三者都不证明每个上游字段一定有值。
+上面的局部代码分别来自 Metrics builder 与聚合 primitive；它们证明 workload 选择、四类输出及缺失分母语义，但不证明每个上游字段一定有值。
 
 ---
 

@@ -1,0 +1,858 @@
+﻿[CmdletBinding()]
+param(
+    [ValidateRange(1, 26)]
+    [int]$FromLesson = 1,
+
+    [ValidateRange(1, 26)]
+    [int]$ToLesson = 26,
+
+    [string]$Model = "",
+
+    [ValidateRange(-1, 10)]
+    [int]$MaxRevisionRounds = -1,
+
+    [switch]$Force,
+    [switch]$StopOnFailure,
+    [switch]$SkipFinalAudit,
+    [switch]$DryRun
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[Console]::OutputEncoding = $script:Utf8NoBom
+$OutputEncoding = $script:Utf8NoBom
+
+function Resolve-ProjectPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$BasePath,
+        [Parameter(Mandatory = $true)][string]$ConfiguredPath
+    )
+
+    if ([System.IO.Path]::IsPathRooted($ConfiguredPath)) {
+        return [System.IO.Path]::GetFullPath($ConfiguredPath)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $BasePath $ConfiguredPath))
+}
+
+function Read-JsonFile {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "JSON 文件不存在：$Path"
+    }
+    return Get-Content -Raw -Encoding UTF8 -LiteralPath $Path | ConvertFrom-Json
+}
+
+function Write-JsonAtomic {
+    param(
+        [Parameter(Mandatory = $true)]$Value,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    $parent = Split-Path -Parent $Path
+    if (-not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Path $parent | Out-Null
+    }
+
+    $temporaryPath = "$Path.tmp.$PID"
+    $backupPath = "$Path.previous"
+    $json = $Value | ConvertTo-Json -Depth 20
+    [System.IO.File]::WriteAllText($temporaryPath, $json + [Environment]::NewLine, $script:Utf8NoBom)
+
+    if (Test-Path -LiteralPath $Path) {
+        [System.IO.File]::Replace($temporaryPath, $Path, $backupPath, $true)
+    }
+    else {
+        Move-Item -LiteralPath $temporaryPath -Destination $Path
+    }
+}
+
+function Expand-PromptTemplate {
+    param(
+        [Parameter(Mandatory = $true)][string]$TemplatePath,
+        [Parameter(Mandatory = $true)][hashtable]$Values
+    )
+
+    $content = Get-Content -Raw -Encoding UTF8 -LiteralPath $TemplatePath
+    foreach ($key in $Values.Keys) {
+        $content = $content.Replace("{{$key}}", [string]$Values[$key])
+    }
+
+    $unresolved = [regex]::Matches($content, "\{\{[A-Z0-9_]+\}\}") | ForEach-Object { $_.Value } | Select-Object -Unique
+    if ($unresolved) {
+        throw "提示词仍有未替换变量：$($unresolved -join ', ')"
+    }
+    return $content
+}
+
+function New-PipelineState {
+    param([Parameter(Mandatory = $true)]$Tasks)
+
+    $lessonStates = @()
+    foreach ($task in $Tasks) {
+        $lessonStates += [PSCustomObject][ordered]@{
+            id = [int]$task.id
+            title = [string]$task.title
+            status = "pending"
+            score = $null
+            revision_rounds = 0
+            evidence_path = $null
+            output_path = $null
+            last_review_path = $null
+            last_error = $null
+            updated_at = $null
+        }
+    }
+
+    return [PSCustomObject][ordered]@{
+        schema_version = 1
+        created_at = (Get-Date).ToString("o")
+        updated_at = (Get-Date).ToString("o")
+        final_audit = $null
+        lessons = $lessonStates
+    }
+}
+
+function Get-LessonState {
+    param(
+        [Parameter(Mandatory = $true)]$State,
+        [Parameter(Mandatory = $true)][int]$LessonId
+    )
+
+    $entry = $State.lessons | Where-Object { [int]$_.id -eq $LessonId } | Select-Object -First 1
+    if ($null -eq $entry) {
+        throw "状态文件缺少第 $LessonId 课。请备份并删除状态文件后重新初始化。"
+    }
+    return $entry
+}
+
+function Set-LessonState {
+    param(
+        [Parameter(Mandatory = $true)]$State,
+        [Parameter(Mandatory = $true)]$Entry,
+        [Parameter(Mandatory = $true)][string]$Status,
+        [string]$ErrorMessage = ""
+    )
+
+    $Entry.status = $Status
+    $Entry.updated_at = (Get-Date).ToString("o")
+    if ($ErrorMessage) {
+        $Entry.last_error = $ErrorMessage
+    }
+    elseif ($Status -in @("researching", "writing", "reviewing", "revising", "completed")) {
+        $Entry.last_error = $null
+    }
+    $State.updated_at = (Get-Date).ToString("o")
+}
+
+function Test-LessonStructure {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][int]$LessonId,
+        [Parameter(Mandatory = $true)][int]$MinimumCharacters
+    )
+
+    $issues = New-Object System.Collections.Generic.List[string]
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        $issues.Add("课程文件不存在：$Path")
+        return $issues.ToArray()
+    }
+
+    $content = Get-Content -Raw -Encoding UTF8 -LiteralPath $Path
+    if ($content.Trim().Length -lt $MinimumCharacters) {
+        $issues.Add("正文长度为 $($content.Trim().Length) 字符，低于最低值 $MinimumCharacters。")
+    }
+
+    $numberPattern = "(?m)^#\s*第\s*0?$LessonId\s*课[：:]"
+    if ($content -notmatch $numberPattern) {
+        $issues.Add("一级标题没有正确标明第 $LessonId 课。")
+    }
+
+    $requiredHeadings = @(
+        "本课在事实链中的位置",
+        "核心问题",
+        "从一个具体现象开始",
+        "为什么原有解释不够",
+        "核心概念",
+        "完整运行过程",
+        "正常路径",
+        "复杂路径",
+        "对应的框架实现",
+        "能够保证什么",
+        "保证成立的前提",
+        "不能保证什么",
+        "与下一课的关系"
+    )
+    foreach ($heading in $requiredHeadings) {
+        $pattern = "(?m)^##\s+" + [regex]::Escape($heading) + "\s*$"
+        if ($content -notmatch $pattern) {
+            $issues.Add("缺少二级标题：$heading")
+        }
+    }
+
+    if (($content -notmatch "```mermaid") -and ($content -notmatch "```text")) {
+        $issues.Add("缺少 Mermaid 图或文本关系图。")
+    }
+    if ($content -notmatch "```python") {
+        $issues.Add("缺少用于解释机制的 Python 源码片段。")
+    }
+
+    foreach ($forbidden in @("显然", "不难发现", "从源码可以看出", "相信读者已经理解", "这里不再赘述", "TODO", "待补充")) {
+        if ($content.Contains($forbidden)) {
+            $issues.Add("包含禁止的省略或占位表达：$forbidden")
+        }
+    }
+
+    return $issues.ToArray()
+}
+
+function ConvertTo-NativeArgument {
+    param([AllowEmptyString()][string]$Value)
+
+    if ($null -eq $Value -or $Value.Length -eq 0) {
+        return '""'
+    }
+    if ($Value -notmatch '[\s"]') {
+        return $Value
+    }
+
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append('"')
+    $backslashCount = 0
+    foreach ($character in $Value.ToCharArray()) {
+        if ($character -eq '\') {
+            $backslashCount++
+            continue
+        }
+        if ($character -eq '"') {
+            [void]$builder.Append(('\' * (($backslashCount * 2) + 1)))
+            [void]$builder.Append('"')
+            $backslashCount = 0
+            continue
+        }
+        if ($backslashCount -gt 0) {
+            [void]$builder.Append(('\' * $backslashCount))
+            $backslashCount = 0
+        }
+        [void]$builder.Append($character)
+    }
+    if ($backslashCount -gt 0) {
+        [void]$builder.Append(('\' * ($backslashCount * 2)))
+    }
+    [void]$builder.Append('"')
+    return $builder.ToString()
+}
+
+function Resolve-CodexLaunch {
+    $commands = @(Get-Command codex -All -ErrorAction SilentlyContinue)
+    if ($commands.Count -eq 0) {
+        throw "未找到 codex 命令。请先安装并登录 Codex CLI。"
+    }
+
+    $nativeExecutable = $commands |
+        Where-Object { $_.CommandType -eq 'Application' -and [System.IO.Path]::GetExtension($_.Source) -eq '.exe' } |
+        Select-Object -First 1
+    if ($null -ne $nativeExecutable) {
+        return [PSCustomObject]@{
+            Executable = $nativeExecutable.Source
+            ArgumentPrefix = @()
+        }
+    }
+
+    $commandShim = $commands |
+        Where-Object { $_.CommandType -eq 'Application' -and [System.IO.Path]::GetExtension($_.Source) -eq '.cmd' } |
+        Select-Object -First 1
+    if ($null -ne $commandShim) {
+        $shimDirectory = Split-Path -Parent $commandShim.Source
+        $cliScript = Join-Path $shimDirectory 'node_modules\@openai\codex\bin\codex.js'
+        $bundledNode = Join-Path $shimDirectory 'node.exe'
+        $nodeExecutable = if (Test-Path -LiteralPath $bundledNode -PathType Leaf) {
+            $bundledNode
+        }
+        else {
+            $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
+            if ($null -ne $nodeCommand) { $nodeCommand.Source } else { $null }
+        }
+
+        if (($null -ne $nodeExecutable) -and (Test-Path -LiteralPath $cliScript -PathType Leaf)) {
+            return [PSCustomObject]@{
+                Executable = $nodeExecutable
+                ArgumentPrefix = @($cliScript)
+            }
+        }
+    }
+
+    throw "找到了 Codex 命令，但无法解析可安全重定向 UTF-8 输入的原生启动方式。请使用 npm 或原生可执行文件安装 Codex CLI。"
+}
+
+function Invoke-CodexProcess {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$Prompt,
+        [Parameter(Mandatory = $true)][string]$StdoutLogPath,
+        [Parameter(Mandatory = $true)][string]$StderrLogPath
+    )
+
+    [System.IO.File]::WriteAllText($StdoutLogPath, "", $script:Utf8NoBom)
+    [System.IO.File]::WriteAllText($StderrLogPath, "", $script:Utf8NoBom)
+
+    $allArguments = @($script:CodexArgumentPrefix) + @($Arguments)
+    $argumentText = ($allArguments | ForEach-Object { ConvertTo-NativeArgument -Value ([string]$_) }) -join ' '
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $script:CodexExecutable
+    $startInfo.Arguments = $argumentText
+    $startInfo.WorkingDirectory = $script:CourseRoot
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.StandardOutputEncoding = $script:Utf8NoBom
+    $startInfo.StandardErrorEncoding = $script:Utf8NoBom
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $started = $false
+    try {
+        $started = $process.Start()
+        if (-not $started) {
+            throw "无法启动 Codex 子进程。"
+        }
+
+        $stdoutTask = $process.StandardOutput.ReadLineAsync()
+        $stderrTask = $process.StandardError.ReadLineAsync()
+        $promptBytes = $script:Utf8NoBom.GetBytes($Prompt)
+        $process.StandardInput.BaseStream.Write($promptBytes, 0, $promptBytes.Length)
+        $process.StandardInput.BaseStream.Flush()
+        $process.StandardInput.Close()
+
+        while (($null -ne $stdoutTask) -or ($null -ne $stderrTask)) {
+            $pendingTasks = New-Object System.Collections.Generic.List[System.Threading.Tasks.Task]
+            $channels = New-Object System.Collections.Generic.List[string]
+            if ($null -ne $stdoutTask) {
+                $pendingTasks.Add($stdoutTask)
+                $channels.Add('stdout')
+            }
+            if ($null -ne $stderrTask) {
+                $pendingTasks.Add($stderrTask)
+                $channels.Add('stderr')
+            }
+
+            $completedIndex = [System.Threading.Tasks.Task]::WaitAny($pendingTasks.ToArray(), 250)
+            if ($completedIndex -lt 0) {
+                continue
+            }
+
+            $channel = $channels[$completedIndex]
+            if ($channel -eq 'stdout') {
+                $line = $stdoutTask.Result
+                if ($null -eq $line) {
+                    $stdoutTask = $null
+                }
+                else {
+                    Write-Host $line
+                    [System.IO.File]::AppendAllText($StdoutLogPath, $line + [Environment]::NewLine, $script:Utf8NoBom)
+                    $stdoutTask = $process.StandardOutput.ReadLineAsync()
+                }
+            }
+            else {
+                $line = $stderrTask.Result
+                if ($null -eq $line) {
+                    $stderrTask = $null
+                }
+                else {
+                    Write-Host "[codex stderr] $line" -ForegroundColor DarkYellow
+                    [System.IO.File]::AppendAllText($StderrLogPath, $line + [Environment]::NewLine, $script:Utf8NoBom)
+                    $stderrTask = $process.StandardError.ReadLineAsync()
+                }
+            }
+        }
+
+        $process.WaitForExit()
+        return $process.ExitCode
+    }
+    catch {
+        if ($started -and -not $process.HasExited) {
+            try { $process.Kill() } catch { }
+        }
+        throw
+    }
+    finally {
+        $process.Dispose()
+    }
+}
+
+function Invoke-CodexStep {
+    param(
+        [Parameter(Mandatory = $true)][string]$StepName,
+        [Parameter(Mandatory = $true)][string]$Prompt,
+        [Parameter(Mandatory = $true)][string]$Sandbox,
+        [Parameter(Mandatory = $true)][string]$LastMessagePath,
+        [Parameter(Mandatory = $true)][string]$LogPath,
+        [string]$OutputSchemaPath = ""
+    )
+
+    $lastFailure = ""
+    for ($attempt = 1; $attempt -le $script:MaximumStepAttempts; $attempt++) {
+        $lastFailure = ""
+        Write-Host "[$StepName] 第 $attempt/$($script:MaximumStepAttempts) 次调用" -ForegroundColor Cyan
+        [System.IO.File]::WriteAllText($LastMessagePath, "", $script:Utf8NoBom)
+        $stderrLogPath = "$LogPath.stderr.log"
+
+        $arguments = @(
+            "--approve-for-me",
+            "exec",
+            "-C", $script:CourseRoot,
+            "-s", $Sandbox,
+            "--ephemeral",
+            "--color", "never",
+            "--json",
+            "-o", $LastMessagePath
+        )
+        if ($script:SelectedModel) {
+            $arguments += @("-m", $script:SelectedModel)
+        }
+        if ($OutputSchemaPath) {
+            $arguments += @("--output-schema", $OutputSchemaPath)
+        }
+        $arguments += "-"
+
+        $exitCode = $null
+        try {
+            $exitCode = Invoke-CodexProcess -Arguments $arguments -Prompt $Prompt -StdoutLogPath $LogPath -StderrLogPath $stderrLogPath
+        }
+        catch {
+            $lastFailure = "Codex 步骤 '$StepName' 无法正常运行：$($_.Exception.Message)。日志：$LogPath；错误日志：$stderrLogPath"
+        }
+
+        if (($exitCode -eq 0) -and (Test-Path -LiteralPath $LastMessagePath -PathType Leaf) -and ((Get-Item -LiteralPath $LastMessagePath).Length -gt 0)) {
+            return
+        }
+
+        if (-not $lastFailure) {
+            $lastFailure = "Codex 步骤 '$StepName' 退出码为 $exitCode，或没有产生最终消息。日志：$LogPath；错误日志：$stderrLogPath"
+        }
+        if ($attempt -lt $script:MaximumStepAttempts) {
+            Write-Warning "$lastFailure 将在 $($script:RetryDelaySeconds) 秒后重试。"
+            Start-Sleep -Seconds $script:RetryDelaySeconds
+        }
+    }
+    throw $lastFailure
+}
+
+function Read-ReviewResult {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    try {
+        $review = Read-JsonFile -Path $Path
+    }
+    catch {
+        throw "审稿结果不是合法 JSON：$Path。$($_.Exception.Message)"
+    }
+
+    $scores = $review.dimension_scores
+    $calculatedScore =
+        [int]$scores.factual_accuracy +
+        [int]$scores.explanatory_completeness +
+        [int]$scores.beginner_readability +
+        [int]$scores.structure_and_continuity +
+        [int]$scores.boundary_accuracy +
+        [int]$scores.expression_quality
+
+    $gateReasons = New-Object System.Collections.Generic.List[string]
+    if ([int]$review.overall_score -ne $calculatedScore) {
+        $gateReasons.Add("审稿总分与分项之和不一致；以分项之和 $calculatedScore 为准。")
+    }
+    if ([string]$review.verdict -ne "pass") {
+        $gateReasons.Add("审稿 verdict 不是 pass。")
+    }
+    if ($calculatedScore -lt $script:MinimumTotalScore) {
+        $gateReasons.Add("总分 $calculatedScore 低于门槛 $($script:MinimumTotalScore)。")
+    }
+    if ([int]$scores.factual_accuracy -lt $script:MinimumFactualAccuracy) {
+        $gateReasons.Add("事实准确性 $($scores.factual_accuracy)/40 低于门槛 $($script:MinimumFactualAccuracy)。")
+    }
+    if ([int]$scores.boundary_accuracy -lt $script:MinimumBoundaryAccuracy) {
+        $gateReasons.Add("边界准确性 $($scores.boundary_accuracy)/10 低于门槛 $($script:MinimumBoundaryAccuracy)。")
+    }
+    if (@($review.hard_failures).Count -gt 0) {
+        $gateReasons.Add("存在硬失败项。")
+    }
+    if (@($review.issues | Where-Object { $_.severity -in @("blocker", "major") }).Count -gt 0) {
+        $gateReasons.Add("仍存在 blocker 或 major 问题。")
+    }
+
+    return [PSCustomObject]@{
+        Review = $review
+        Score = $calculatedScore
+        Passed = ($gateReasons.Count -eq 0)
+        GateReasons = $gateReasons.ToArray()
+    }
+}
+
+function New-TemplateValues {
+    param(
+        [Parameter(Mandatory = $true)]$Task,
+        [Parameter(Mandatory = $true)][string]$EvidencePath,
+        [Parameter(Mandatory = $true)][string]$OutputPath,
+        [Parameter(Mandatory = $true)][string]$PreviousLessonPath,
+        [string]$ReviewPath = "无",
+        [string[]]$StaticIssues = @()
+    )
+
+    return @{
+        COURSE_ROOT = $script:CourseRoot
+        REPOSITORY_ROOT = $script:RepositoryRoot
+        COURSE_OUTLINE = $script:CourseOutlinePath
+        COURSE_SPEC = $script:CourseSpecPath
+        LESSON_DIRECTORY = $script:LessonDirectory
+        LESSON_ID = [string]$Task.id
+        LESSON_NUMBER = ("{0:D2}" -f [int]$Task.id)
+        MODULE = [string]$Task.module
+        TITLE = [string]$Task.title
+        FOCUS = [string]$Task.focus
+        EVIDENCE_PATH = $EvidencePath
+        OUTPUT_PATH = $OutputPath
+        PREVIOUS_LESSON_PATH = $PreviousLessonPath
+        REVIEW_PATH = $ReviewPath
+        STATIC_ISSUES = $(if ($StaticIssues.Count -gt 0) { $StaticIssues -join "；" } else { "无" })
+    }
+}
+
+function Write-RunSummary {
+    param(
+        [Parameter(Mandatory = $true)]$State,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    $counts = @{}
+    foreach ($entry in $State.lessons) {
+        $status = [string]$entry.status
+        if (-not $counts.ContainsKey($status)) { $counts[$status] = 0 }
+        $counts[$status]++
+    }
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add("# 课程自动化执行摘要")
+    $lines.Add("")
+    $lines.Add("- 更新时间：$($State.updated_at)")
+    $lines.Add("- 完成：$($(if ($counts.ContainsKey('completed')) { $counts['completed'] } else { 0 }))/26")
+    $lines.Add("- 待人工复核：$($(if ($counts.ContainsKey('needs_review')) { $counts['needs_review'] } else { 0 }))")
+    $lines.Add("- 执行失败：$($(if ($counts.ContainsKey('failed')) { $counts['failed'] } else { 0 }))")
+    $lines.Add("")
+    $lines.Add("| 课次 | 标题 | 状态 | 分数 | 返修轮数 | 最近错误 |")
+    $lines.Add("| ---: | --- | --- | ---: | ---: | --- |")
+    foreach ($entry in $State.lessons | Sort-Object id) {
+        $scoreText = if ($null -eq $entry.score) { "-" } else { [string]$entry.score }
+        $errorText = if ($entry.last_error) { ([string]$entry.last_error).Replace("|", "\\|").Replace("`r", " ").Replace("`n", " ") } else { "" }
+        $lines.Add("| $($entry.id) | $($entry.title) | $($entry.status) | $scoreText | $($entry.revision_rounds) | $errorText |")
+    }
+    if ($null -ne $State.final_audit) {
+        $lines.Add("")
+        $lines.Add("## 整套课程总审")
+        $lines.Add("")
+        $lines.Add("- 状态：$($State.final_audit.verdict)")
+        $lines.Add("- 分数：$($State.final_audit.overall_score)")
+        $lines.Add("- 报告：$($State.final_audit.path)")
+    }
+
+    [System.IO.File]::WriteAllLines($Path, $lines.ToArray(), $script:Utf8NoBom)
+}
+
+$script:CourseRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+$automationRoot = Join-Path $script:CourseRoot ".course-automation"
+$configPath = Join-Path $automationRoot "config.json"
+$tasksPath = Join-Path $automationRoot "tasks.json"
+$config = Read-JsonFile -Path $configPath
+$taskDocument = Read-JsonFile -Path $tasksPath
+$allTasks = @($taskDocument.lessons | Sort-Object { [int]$_.id })
+
+if ($FromLesson -gt $ToLesson) {
+    throw "FromLesson 不能大于 ToLesson。"
+}
+if ($allTasks.Count -ne 26) {
+    throw "任务清单必须恰好包含 26 课，当前为 $($allTasks.Count)。"
+}
+if (@($allTasks.id | Select-Object -Unique).Count -ne 26) {
+    throw "任务清单中的课次存在重复。"
+}
+if (@($allTasks.output | Select-Object -Unique).Count -ne 26) {
+    throw "任务清单中的输出文件名存在重复。"
+}
+for ($expectedId = 1; $expectedId -le 26; $expectedId++) {
+    $taskAtPosition = $allTasks[$expectedId - 1]
+    if ([int]$taskAtPosition.id -ne $expectedId) {
+        throw "任务清单必须连续包含第 1～26 课，缺失或错位发生在第 $expectedId 个位置。"
+    }
+    if ([System.IO.Path]::GetFileName([string]$taskAtPosition.output) -ne [string]$taskAtPosition.output) {
+        throw "任务输出必须是单个文件名，不能包含目录跳转：$($taskAtPosition.output)"
+    }
+}
+
+$script:RepositoryRoot = Resolve-ProjectPath -BasePath $script:CourseRoot -ConfiguredPath ([string]$config.repository_root)
+$script:CourseOutlinePath = Resolve-ProjectPath -BasePath $script:CourseRoot -ConfiguredPath ([string]$config.course_outline)
+$script:CourseSpecPath = Resolve-ProjectPath -BasePath $script:CourseRoot -ConfiguredPath ([string]$config.course_spec)
+$script:LessonDirectory = Resolve-ProjectPath -BasePath $script:CourseRoot -ConfiguredPath ([string]$config.lesson_directory)
+$runtimeRoot = Resolve-ProjectPath -BasePath $script:CourseRoot -ConfiguredPath ([string]$config.runtime_directory)
+$promptRoot = Join-Path $automationRoot "prompts"
+$schemaRoot = Join-Path $automationRoot "schemas"
+$reviewSchemaPath = Join-Path $schemaRoot "review.schema.json"
+$finalAuditSchemaPath = Join-Path $schemaRoot "final-audit.schema.json"
+
+foreach ($requiredFile in @($script:CourseOutlinePath, $script:CourseSpecPath, $reviewSchemaPath, $finalAuditSchemaPath)) {
+    if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
+        throw "缺少必要文件：$requiredFile"
+    }
+}
+$null = Read-JsonFile -Path $reviewSchemaPath
+$null = Read-JsonFile -Path $finalAuditSchemaPath
+foreach ($templateName in @("researcher.md", "author.md", "reviewer.md", "reviser.md", "final-auditor.md")) {
+    $templatePath = Join-Path $promptRoot $templateName
+    if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) {
+        throw "缺少提示词模板：$templatePath"
+    }
+}
+
+$coursePrefix = $script:CourseRoot.TrimEnd('\') + '\'
+foreach ($writePath in @($script:LessonDirectory, $runtimeRoot)) {
+    $fullWritePath = [System.IO.Path]::GetFullPath($writePath).TrimEnd('\') + '\'
+    if (-not $fullWritePath.StartsWith($coursePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "写入目录越出课程根目录：$writePath"
+    }
+}
+
+$script:SelectedModel = $Model
+$script:MinimumTotalScore = [int]$config.minimum_total_score
+$script:MinimumFactualAccuracy = [int]$config.minimum_factual_accuracy
+$script:MinimumBoundaryAccuracy = [int]$config.minimum_boundary_accuracy
+$script:MinimumLessonCharacters = [int]$config.minimum_lesson_characters
+$script:MaximumRevisionRounds = if ($MaxRevisionRounds -ge 0) { $MaxRevisionRounds } else { [int]$config.maximum_revision_rounds }
+$script:MaximumStepAttempts = [int]$config.maximum_step_attempts
+$script:RetryDelaySeconds = [int]$config.retry_delay_seconds
+$codexLaunch = Resolve-CodexLaunch
+$script:CodexExecutable = [string]$codexLaunch.Executable
+$script:CodexArgumentPrefix = @($codexLaunch.ArgumentPrefix)
+
+$selectedTasks = @($allTasks | Where-Object { [int]$_.id -ge $FromLesson -and [int]$_.id -le $ToLesson })
+if ($DryRun) {
+    Write-Host "DryRun 通过：配置、Schema、提示词和 26 课任务清单均可读取。" -ForegroundColor Green
+    Write-Host "课程目录：$($script:CourseRoot)"
+    Write-Host "源码目录：$($script:RepositoryRoot)"
+    Write-Host "质量门槛：总分 >= $($script:MinimumTotalScore)，事实 >= $($script:MinimumFactualAccuracy)/40，边界 >= $($script:MinimumBoundaryAccuracy)/10"
+    $selectedTasks | Select-Object id, module, title, output | Format-Table -AutoSize
+    return
+}
+
+foreach ($directory in @(
+    $script:LessonDirectory,
+    $runtimeRoot,
+    (Join-Path $runtimeRoot "evidence"),
+    (Join-Path $runtimeRoot "reviews"),
+    (Join-Path $runtimeRoot "logs"),
+    (Join-Path $runtimeRoot "messages"),
+    (Join-Path $runtimeRoot "reports")
+)) {
+    if (-not (Test-Path -LiteralPath $directory)) {
+        New-Item -ItemType Directory -Path $directory | Out-Null
+    }
+}
+
+$lockPath = Join-Path $runtimeRoot "pipeline.lock"
+$lockStream = $null
+try {
+    try {
+        $lockStream = [System.IO.File]::Open(
+            $lockPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+    }
+    catch {
+        throw "另一个课程流水线可能正在运行，无法取得锁：$lockPath"
+    }
+
+    $statePath = Join-Path $runtimeRoot "state.json"
+    if (Test-Path -LiteralPath $statePath -PathType Leaf) {
+        try {
+            $state = Read-JsonFile -Path $statePath
+        }
+        catch {
+            $corruptBackup = "$statePath.corrupt.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+            Copy-Item -LiteralPath $statePath -Destination $corruptBackup
+            Write-Warning "状态文件损坏，已备份到 $corruptBackup 并重新初始化。"
+            $state = New-PipelineState -Tasks $allTasks
+        }
+    }
+    else {
+        $state = New-PipelineState -Tasks $allTasks
+    }
+
+    $summaryPath = Join-Path $runtimeRoot "summary.md"
+
+    foreach ($task in $selectedTasks) {
+        $lessonId = [int]$task.id
+        $lessonNumber = "{0:D2}" -f $lessonId
+        $entry = Get-LessonState -State $state -LessonId $lessonId
+        $outputPath = Join-Path $script:LessonDirectory ([string]$task.output)
+        $evidencePath = Join-Path (Join-Path $runtimeRoot "evidence") "lesson-$lessonNumber-evidence.md"
+        $previousLessonPath = "无（本课为第一课）"
+        if ($lessonId -gt 1) {
+            $previousTask = $allTasks | Where-Object { [int]$_.id -eq ($lessonId - 1) } | Select-Object -First 1
+            $candidate = Join-Path $script:LessonDirectory ([string]$previousTask.output)
+            $previousLessonPath = if (Test-Path -LiteralPath $candidate -PathType Leaf) { $candidate } else { "无（上一课尚未形成可读文件）" }
+        }
+
+        $completedStaticIssues = @(Test-LessonStructure -Path $outputPath -LessonId $lessonId -MinimumCharacters $script:MinimumLessonCharacters)
+        if ((-not $Force) -and ([string]$entry.status -eq "completed") -and ($completedStaticIssues.Count -eq 0)) {
+            Write-Host "[第 $lessonNumber 课] 已完成，跳过。" -ForegroundColor DarkGreen
+            continue
+        }
+
+        if ($Force) {
+            $entry.status = "pending"
+            $entry.score = $null
+            $entry.revision_rounds = 0
+            $entry.last_review_path = $null
+            $entry.last_error = $null
+        }
+
+        $entry.evidence_path = $evidencePath
+        $entry.output_path = $outputPath
+        Write-Host "`n===== 第 $lessonNumber 课：$($task.title) =====" -ForegroundColor Yellow
+
+        try {
+            $values = New-TemplateValues -Task $task -EvidencePath $evidencePath -OutputPath $outputPath -PreviousLessonPath $previousLessonPath
+
+            if ($Force -or -not (Test-Path -LiteralPath $evidencePath -PathType Leaf) -or ((Get-Item -LiteralPath $evidencePath -ErrorAction SilentlyContinue).Length -lt 1000)) {
+                Set-LessonState -State $state -Entry $entry -Status "researching"
+                Write-JsonAtomic -Value $state -Path $statePath
+                $researchPrompt = Expand-PromptTemplate -TemplatePath (Join-Path $promptRoot "researcher.md") -Values $values
+                $researchMessage = Join-Path (Join-Path $runtimeRoot "messages") "lesson-$lessonNumber-research.txt"
+                $researchLog = Join-Path (Join-Path $runtimeRoot "logs") "lesson-$lessonNumber-research.jsonl"
+                Invoke-CodexStep -StepName "第 $lessonNumber 课源码取证" -Prompt $researchPrompt -Sandbox "workspace-write" -LastMessagePath $researchMessage -LogPath $researchLog
+            }
+            if (-not (Test-Path -LiteralPath $evidencePath -PathType Leaf) -or (Get-Item -LiteralPath $evidencePath).Length -lt 1000) {
+                throw "源码取证步骤没有生成有效证据包：$evidencePath"
+            }
+
+            if ($Force -or -not (Test-Path -LiteralPath $outputPath -PathType Leaf)) {
+                Set-LessonState -State $state -Entry $entry -Status "writing"
+                Write-JsonAtomic -Value $state -Path $statePath
+                $authorPrompt = Expand-PromptTemplate -TemplatePath (Join-Path $promptRoot "author.md") -Values $values
+                $authorMessage = Join-Path (Join-Path $runtimeRoot "messages") "lesson-$lessonNumber-author.txt"
+                $authorLog = Join-Path (Join-Path $runtimeRoot "logs") "lesson-$lessonNumber-author.jsonl"
+                Invoke-CodexStep -StepName "第 $lessonNumber 课成稿" -Prompt $authorPrompt -Sandbox "workspace-write" -LastMessagePath $authorMessage -LogPath $authorLog
+            }
+            else {
+                Write-Host "[第 $lessonNumber 课] 发现已有正文，保留原稿并直接进入独立审校。" -ForegroundColor DarkCyan
+            }
+            if (-not (Test-Path -LiteralPath $outputPath -PathType Leaf)) {
+                throw "作者步骤没有生成课程文件：$outputPath"
+            }
+
+            $passed = $false
+            $lastGateReasons = @()
+            for ($reviewRound = 0; $reviewRound -le $script:MaximumRevisionRounds; $reviewRound++) {
+                Set-LessonState -State $state -Entry $entry -Status "reviewing"
+                Write-JsonAtomic -Value $state -Path $statePath
+
+                $reviewPath = Join-Path (Join-Path $runtimeRoot "reviews") "lesson-$lessonNumber-review-$('{0:D2}' -f $reviewRound).json"
+                $reviewValues = New-TemplateValues -Task $task -EvidencePath $evidencePath -OutputPath $outputPath -PreviousLessonPath $previousLessonPath
+                $reviewPrompt = Expand-PromptTemplate -TemplatePath (Join-Path $promptRoot "reviewer.md") -Values $reviewValues
+                $reviewLog = Join-Path (Join-Path $runtimeRoot "logs") "lesson-$lessonNumber-review-$('{0:D2}' -f $reviewRound).jsonl"
+                Invoke-CodexStep -StepName "第 $lessonNumber 课第 $reviewRound 轮审稿" -Prompt $reviewPrompt -Sandbox "read-only" -LastMessagePath $reviewPath -LogPath $reviewLog -OutputSchemaPath $reviewSchemaPath
+
+                $reviewResult = Read-ReviewResult -Path $reviewPath
+                $staticIssues = @(Test-LessonStructure -Path $outputPath -LessonId $lessonId -MinimumCharacters $script:MinimumLessonCharacters)
+                $entry.score = $reviewResult.Score
+                $entry.last_review_path = $reviewPath
+                $entry.revision_rounds = $reviewRound
+                $lastGateReasons = @($reviewResult.GateReasons) + $staticIssues
+
+                if ($reviewResult.Passed -and $staticIssues.Count -eq 0) {
+                    $passed = $true
+                    Set-LessonState -State $state -Entry $entry -Status "completed"
+                    Write-JsonAtomic -Value $state -Path $statePath
+                    Write-Host "[第 $lessonNumber 课] 通过：$($reviewResult.Score)/100" -ForegroundColor Green
+                    break
+                }
+
+                if ($reviewRound -ge $script:MaximumRevisionRounds) {
+                    break
+                }
+
+                Set-LessonState -State $state -Entry $entry -Status "revising"
+                Write-JsonAtomic -Value $state -Path $statePath
+                $revisionValues = New-TemplateValues -Task $task -EvidencePath $evidencePath -OutputPath $outputPath -PreviousLessonPath $previousLessonPath -ReviewPath $reviewPath -StaticIssues $staticIssues
+                $revisionPrompt = Expand-PromptTemplate -TemplatePath (Join-Path $promptRoot "reviser.md") -Values $revisionValues
+                $revisionMessage = Join-Path (Join-Path $runtimeRoot "messages") "lesson-$lessonNumber-revision-$('{0:D2}' -f ($reviewRound + 1)).txt"
+                $revisionLog = Join-Path (Join-Path $runtimeRoot "logs") "lesson-$lessonNumber-revision-$('{0:D2}' -f ($reviewRound + 1)).jsonl"
+                Invoke-CodexStep -StepName "第 $lessonNumber 课第 $($reviewRound + 1) 轮返修" -Prompt $revisionPrompt -Sandbox "workspace-write" -LastMessagePath $revisionMessage -LogPath $revisionLog
+            }
+
+            if (-not $passed) {
+                $reason = if ($lastGateReasons.Count -gt 0) { $lastGateReasons -join "；" } else { "达到最大返修轮数后仍未通过。" }
+                Set-LessonState -State $state -Entry $entry -Status "needs_review" -ErrorMessage $reason
+                Write-JsonAtomic -Value $state -Path $statePath
+                Write-Warning "第 $lessonNumber 课未通过质量门槛：$reason"
+                if ($StopOnFailure) {
+                    throw "第 $lessonNumber 课未通过质量门槛，StopOnFailure 已启用。"
+                }
+            }
+        }
+        catch {
+            if ([string]$entry.status -ne "needs_review") {
+                Set-LessonState -State $state -Entry $entry -Status "failed" -ErrorMessage $_.Exception.Message
+                Write-JsonAtomic -Value $state -Path $statePath
+            }
+            Write-Warning "第 $lessonNumber 课执行失败：$($_.Exception.Message)"
+            if ($StopOnFailure) {
+                throw
+            }
+        }
+
+        Write-RunSummary -State $state -Path $summaryPath
+    }
+
+    $allLessonFilesExist = $true
+    foreach ($task in $allTasks) {
+        if (-not (Test-Path -LiteralPath (Join-Path $script:LessonDirectory ([string]$task.output)) -PathType Leaf)) {
+            $allLessonFilesExist = $false
+            break
+        }
+    }
+
+    if ((-not $SkipFinalAudit) -and $allLessonFilesExist -and ($FromLesson -eq 1) -and ($ToLesson -eq 26)) {
+        Write-Host "`n===== 执行整套课程一致性总审 =====" -ForegroundColor Yellow
+        $auditValues = @{
+            COURSE_OUTLINE = $script:CourseOutlinePath
+            COURSE_SPEC = $script:CourseSpecPath
+            REPOSITORY_ROOT = $script:RepositoryRoot
+            LESSON_DIRECTORY = $script:LessonDirectory
+        }
+        $auditPrompt = Expand-PromptTemplate -TemplatePath (Join-Path $promptRoot "final-auditor.md") -Values $auditValues
+        $auditPath = Join-Path (Join-Path $runtimeRoot "reports") "final-audit.json"
+        $auditLog = Join-Path (Join-Path $runtimeRoot "logs") "final-audit.jsonl"
+        Invoke-CodexStep -StepName "整套课程一致性总审" -Prompt $auditPrompt -Sandbox "read-only" -LastMessagePath $auditPath -LogPath $auditLog -OutputSchemaPath $finalAuditSchemaPath
+        $audit = Read-JsonFile -Path $auditPath
+        $state.final_audit = [PSCustomObject]@{
+            verdict = [string]$audit.verdict
+            overall_score = [int]$audit.overall_score
+            path = $auditPath
+            updated_at = (Get-Date).ToString("o")
+        }
+        $state.updated_at = (Get-Date).ToString("o")
+        Write-JsonAtomic -Value $state -Path $statePath
+    }
+
+    Write-RunSummary -State $state -Path $summaryPath
+    Write-Host "`n流水线结束。摘要：$summaryPath" -ForegroundColor Green
+}
+finally {
+    if ($null -ne $lockStream) {
+        $lockStream.Dispose()
+    }
+}
