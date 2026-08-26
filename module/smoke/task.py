@@ -20,8 +20,9 @@ if TYPE_CHECKING:
     from common.retry import RetryPolicy
 
 
-KEY_CHAT_COMPLETIONS_MODEL_ID = "DeepSeek-V4-Flash"
-SYNC_IMAGE_GENERATION_MODEL_ID = "gpt-image-2"
+KEY_CHAT_COMPLETIONS_MODEL_ID = "deepseek-v4-flash"
+KEY_CHAT_COMPLETIONS_RESPONSE_MODEL_ID = "DeepSeek-V4-Flash"
+SYNC_IMAGE_GENERATION_MODEL_ID = "gpt-image-2-gw"
 ASYNC_IMAGE_GENERATION_MODEL_ID = "gpt-image-2"
 B_ACCOUNT_API_KEY = os.getenv("B_ACCOUNT_API_KEY", "").strip()
 B_ACCOUNT_CONTROL_KEY = os.getenv("B_ACCOUNT_CONTROL_KEY", "").strip()
