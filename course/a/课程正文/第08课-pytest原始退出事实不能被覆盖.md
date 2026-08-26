@@ -28,7 +28,7 @@ TestAsyncImageGeneration::
 test_f8_09_async_image_generation_task_succeeds_with_result
 ```
 
-该 Case 调用异步图像生成与轮询后，在 `module/smoke/test_图片生成异步调用.py:65-70` 检查最终业务状态是否属于 `succeeded/success`，并继续检查输出是否存在。下面固定一组教学输入：外部响应的最终状态为 `failed`，因此状态断言失败。这个输入用于推导框架控制流，不表示当前真实环境已经出现该响应，也不表示外部服务承诺成功或失败。
+该 Case 调用异步图像生成与轮询后，在 `module/smoke/test_图片生成异步调用.py:65-70` 检查最终业务状态是否属于 `succeeded/success`，并继续检查输出是否存在。下面固定一组教学输入：外部响应的最终状态为 `completed`。默认媒体轮询策略把 `completed` 列为成功终态，所以 `poll_get()` 会把响应交还给 Case；但 Case C 自己接受的成功状态集合只有 `succeeded/success`，因此随后在第 66 行触发状态断言失败。这个输入用于推导框架控制流，不表示当前真实环境已经出现该响应，也不表示外部服务承诺成功或失败。
 
 运行条件如下：
 
@@ -39,7 +39,7 @@ run_id        = image-smoke-104-20260826T010000Z-a1b2c3d4
 execution_id  = serial-pool
 worker_id     = master
 权威产物写入  = 成功
-业务输入      = 轮询终态 failed，触发 Case C 的 call 阶段断言失败
+业务输入      = 最终响应体 {"status":"completed"}；轮询返回响应，Case C 的 call 阶段断言失败
 ```
 
 先看 Quality 正常最终化的基线路径，再只增加一个变化：Quality 最终化抛出普通 `OSError`。
@@ -47,7 +47,7 @@ worker_id     = master
 | 时点 | pytest 与 Runner 主线 | Case 观察线 | Quality 最终化线 |
 | --- | --- | --- | --- |
 | T0 | Runner 已完成权威收集，开始 `serial-pool` | 五级上下文已建立 | 尚未开始 |
-| T1 | Case C 得到业务终态 `failed`，断言不成立 | 尚未收到 call 报告 | 尚未开始 |
+| T1 | 轮询把 `completed` 判为成功终态并返回响应；Case C 不接受该状态，断言不成立 | 尚未收到 call 报告 | 尚未开始 |
 | T2 | pytest 形成 call 阶段的 failed `TestReport` | 插件尝试写入 `raw_status=failed`、`final_status=failed` | 尚未开始 |
 | T3 | pytest 会话完成并返回整数 `1` | CaseResult 可能已写入；若写失败则可能只留下完整性问题或告警 | 尚未开始 |
 | T4 | 池结果成为 `COMPLETED + raw_pytest_exit_code=1` | 不再改变 pytest 报告 | 尚未开始 |
@@ -90,7 +90,7 @@ pytest 原始退出事实，是一次 `pytest.main(...)` 调用实际返回的�
 | 4 | `PYTEST_EXIT_USAGE_ERROR` | pytest 调用参数或用法是否错误 |
 | 5 | `PYTEST_EXIT_NO_TESTS_COLLECTED` | 是否没有收集到测试 |
 
-它的生命周期是一轮具体 pytest 调用，从 `pytest.main()` 返回时产生，进入对应池的 `PoolExecutionResult.raw_pytest_exit_code`。它与业务状态不同：外部任务的 `failed` 是异步图像业务事实，pytest 的 `1` 是测试会话事实。
+它的生命周期是一轮具体 pytest 调用，从 `pytest.main()` 返回时产生，进入对应池的 `PoolExecutionResult.raw_pytest_exit_code`。它与业务状态不同：外部任务的 `completed` 是异步图像业务事实，pytest 的 `1` 是测试会话事实。
 
 ### 2. Case 结果：Case result
 
@@ -142,7 +142,7 @@ flowchart TD
 
 ### 第一步：pytest 先形成阶段报告
 
-Case C 在 call 阶段执行断言。给定业务状态为 `failed` 时，断言抛出失败，pytest 构造 `TestReport`。Quality 的 `pytest_runtest_logreport()` 接收的是这个已经形成的报告；它读取 `report.when`、`report.duration` 和 outcome，再尝试构造 CaseResult。
+默认媒体轮询策略把 `completed` 放在成功集合中。Case C 在 call 阶段先收到轮询返回的这份响应，再执行自己的、更窄的 `succeeded/success` 断言；给定状态不在该集合中，断言抛出失败，pytest 构造 `TestReport`。如果输入改成默认策略的失败终态 `failed`，`poll_get()` 会更早抛出 `PollingFailedError`，第 65～70 行不会执行；这不是本课选用的路径。Quality 的 `pytest_runtest_logreport()` 接收的是已经形成的阶段报告，它读取 `report.when`、`report.duration` 和 outcome，再尝试构造 CaseResult。
 
 输入是 pytest 报告，输出是旁路观察记录。插件没有给 `report.outcome` 赋新值，也没有设置 session exit status。即使 CaseResult 写入失败，已形成的 failed 报告仍归 pytest 所有。
 
@@ -203,7 +203,7 @@ Runner 在 `try` 中计算并准备返回 `final_exit_code`，随后 Python 必�
 ```text
 T0：权威收集成功，collection_exit_code = 0
 T1：serial-pool 开始执行 Case C
-T2：业务返回终态 failed，call 断言失败
+T2：轮询按默认策略返回终态 completed，Case C 的成功集合不接受它，call 断言失败
 T3：pytest 形成 call failed 报告
 T4：Quality 插件写 CaseResult(raw_status=failed, final_status=failed)
 T5：pytest.main() 返回 1
@@ -215,7 +215,7 @@ T9：run_master.py 以 SystemExit(1) 结束
 
 这条路径中，Quality 最终 RunRecord 可以是 `status=finished`。这里的 `finished` 只表示 Runner 没有把执行池判为 `ERROR`，并把生命周期带到了最终化；用例失败是 pytest 正常返回的一种结果，所以池仍为 `COMPLETED`。两个“完成”词都没有把 call 阶段的 `failed` 或原始退出码 `1`改成通过。
 
-从输入到输出的推导是闭合的：业务终态不满足断言，pytest 产生 failed 报告并返回 `1`；Quality 保存报告副本并形成派生资料；Runner 保存池级 `1`，单池合成仍为 `1`；CLI 最终退出 `1`。
+从输入到输出的推导是闭合的：默认轮询策略接受 `completed` 并返回响应，Case C 自己的成功集合不接受它，pytest 因断言失败产生 failed 报告并返回 `1`；Quality 保存报告副本并形成派生资料；Runner 保存池级 `1`，单池合成仍为 `1`；CLI 最终退出 `1`。
 
 ---
 
@@ -248,7 +248,7 @@ Runner 已求得并准备返回 1
 
 恢复 Quality 最终化本身可运行，只把 T4 改为 Collector 写 CaseResult 时磁盘抛出普通 `OSError`。Collector 捕获主事实写入异常，尝试增加 `case_write_failed` Integrity；若 Integrity 自身也写失败，则只尝试输出告警。
 
-这条旁路没有获得修改 `TestReport` 的引用操作，也没有把写入返回值送进 pytest 退出码计算：
+这条观察路径会向 `report.user_properties` 追加用于 JUnit 的 Case 与 Invocation 身份，但没有修改 `report.outcome`，也没有把 Collector 的写入返回值送进 pytest 会话退出码计算：
 
 ```text
 failed TestReport 已形成
@@ -418,9 +418,11 @@ CLI 不读取 Quality 完整性或失败分类来重新解释结果。它的输�
 ### 源码与测试定位
 
 - `module/smoke/test_图片生成异步调用.py:57-70`：Case C 的真实轮询调用、成功状态断言与输出断言。
+- `common/polling.py:189-224,269-275`、`common/base_request.py:492-538`：默认轮询策略把 `completed` 判为成功并返回，把 `failed` 判为失败并抛出 `PollingFailedError`。
 - `run_orchestration/pytest_execution.py:25-38,86-101,311-380`：退出码常量、池状态、原始码捕获和多池合成。
 - `run_orchestration/runner.py:92-211,227-297`：Quality 生命周期位置、Runner 最终码、执行产物和 `finally` 顺序。
 - `run_orchestration/quality_lifecycle.py:59-121`：普通 Quality 初始化/最终化异常的隔离边界。
+- `run_orchestration/quality_run_record.py:11-61`：初始降级记录与最终 RunRecord 的写入行为。
 - `quality/pytest_plugin_runtime.py:179-257,345-353`：Case 上下文包围 pytest 协议、报告映射及观察写入异常处理。
 - `quality/models.py:15-33,167-180`、`quality/case_lifecycle.py:8-20`：Quality Run/Case 状态模型与阶段折叠。
 - `quality/collector.py:47-72,101-134`：主事实写入失败、Integrity 回退及告警边界。
@@ -459,7 +461,7 @@ CLI 不读取 Quality 完整性或失败分类来重新解释结果。它的输�
 - 需要得到 CaseResult 时，Quality pytest 插件、五级上下文和 Collector 必须实际工作且写入成功。退出码存在不能证明观察分片也存在。
 - “最终化异常不影响已求得返回值”只覆盖生命周期捕获的普通 `Exception`。`KeyboardInterrupt`、`SystemExit` 等 `BaseException` 不属于这个捕获范围。
 - pytest 自身对插件或内部故障返回什么整数，就形成什么原始事实。若未隔离的插件故障使 pytest 返回 `3`，框架保存的是实际 `3`，不能猜测移除插件后本来会是什么值。
-- 教学输入中的外部业务终态 `failed` 只用于触发真实断言。源码不证明生产服务会返回该状态，也不证明服务一定成功、幂等或在给定时限内完成。
+- 教学输入中的外部业务终态 `completed` 只用于触发真实断言：它由默认轮询策略当作成功终态返回，却不属于 Case C 接受的 `succeeded/success` 集合。源码不证明生产服务会返回该状态，也不证明服务一定成功、幂等或在给定时限内完成。
 
 ---
 
