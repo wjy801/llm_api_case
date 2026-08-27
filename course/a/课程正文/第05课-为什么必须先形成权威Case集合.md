@@ -180,18 +180,18 @@ observed_count = 2
 先用一张数据流图把三个用途放在同一条链上：
 
 ```mermaid
-flowchart TD
-    A[目标路径 + 选择参数] -->|Runner 发起权威预收集| B[pytest collect-only]
-    B -->|退出码 0 且 nodeid 无重复| C[权威 Case 集合 P<br/>实现为有序元组]
-    B -->|退出码非 0 或收集异常| X[停止，不进入 Case 执行]
-    C -->|明确 nodeid| D[后续调度与执行]
-    C -->|完整列表与数量| E[runner-execution.v1]
-    C -->|仅传 len(P)，且 Quality 启用| F[后续完整性参照]
-    D --> G[实际 Case 观察事实]
-    F --> H{观察数量是否等于计划数量}
+flowchart TB
+    A["A 目标路径<br/>+ 选择参数"] -->|"Runner 发起<br/>权威预收集"| B["B pytest collect-only"]
+    B -->|"退出码 0<br/>且 nodeid 无重复"| C["C 权威 Case 集合 P<br/>实现为有序元组"]
+    B -->|"退出码非 0<br/>或收集异常"| X["X 停止<br/>不进入 Case 执行"]
+    C -->|"明确 nodeid"| D["D 后续调度与执行"]
+    C -->|"完整列表<br/>与数量"| E["E runner-execution.v1"]
+    C -->|"仅传 len(P)<br/>且 Quality 启用"| F["F 后续完整性参照"]
+    D --> G["G 实际 Case 观察事实"]
+    F --> H{"H 观察数量是否<br/>等于计划数量"}
     G --> H
-    H -->|否| I[记录完整性错误]
-    H -->|是| J[只通过数量关卡]
+    H -->|"否"| I["I 记录完整性错误"]
+    H -->|"是"| J["J 只通过数量关卡"]
 ```
 
 图中的每条边承担不同责任：
