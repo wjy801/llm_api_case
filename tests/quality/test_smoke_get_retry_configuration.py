@@ -3,7 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from module.smoke import CONCURRENT_CHAT_429_RETRY_POLICY, SMOKE_GET_RETRY_POLICY
+from common import RetryPolicy
+from module.smoke import CONCURRENT_CHAT_RETRY_POLICY, SMOKE_GET_RETRY_POLICY
 
 
 SMOKE_DIR = Path(__file__).resolve().parents[2] / "module" / "smoke"
@@ -45,11 +46,15 @@ def test_smoke_get_retry_policy_is_bounded_and_get_only() -> None:
     assert SMOKE_GET_RETRY_POLICY.allow_post is False
 
 
-def test_concurrent_chat_retry_policy_only_retries_429() -> None:
-    assert CONCURRENT_CHAT_429_RETRY_POLICY.max_attempts == 3
-    assert CONCURRENT_CHAT_429_RETRY_POLICY.retry_statuses == frozenset({429})
-    assert CONCURRENT_CHAT_429_RETRY_POLICY.retry_exceptions == ()
-    assert CONCURRENT_CHAT_429_RETRY_POLICY.allow_post is True
+def test_concurrent_chat_retry_policy_uses_defaults_and_allows_post() -> None:
+    default_policy = RetryPolicy()
+    configured_defaults = CONCURRENT_CHAT_RETRY_POLICY.model_dump(exclude={"allow_post"})
+    framework_defaults = default_policy.model_dump(exclude={"allow_post"})
+
+    assert 429 in default_policy.retry_statuses
+    assert CONCURRENT_CHAT_RETRY_POLICY.max_attempts == 3
+    assert CONCURRENT_CHAT_RETRY_POLICY.allow_post is True
+    assert configured_defaults == framework_defaults
 
 
 def test_billing_control_get_calls_use_retry() -> None:
@@ -158,7 +163,7 @@ def test_only_concurrent_chat_post_receives_retry_policy() -> None:
                 retry_calls.append((test_file, node))
                 assert len(retry_keywords) == 1
                 assert isinstance(retry_keywords[0].value, ast.Name)
-                assert retry_keywords[0].value.id == "CONCURRENT_CHAT_429_RETRY_POLICY"
+                assert retry_keywords[0].value.id == "CONCURRENT_CHAT_RETRY_POLICY"
 
     assert len(retry_calls) == 1
     retry_file, retry_call = retry_calls[0]

@@ -6,7 +6,7 @@ import pytest
 
 from common import submit_with_context
 from module.smoke import (
-    CONCURRENT_CHAT_429_RETRY_POLICY,
+    CONCURRENT_CHAT_RETRY_POLICY,
     SMOKE_GET_RETRY_POLICY,
     SmokeAssertions,
     SmokeRequest,
@@ -159,7 +159,7 @@ class TestCallBillingCorrectness:
         try:
             chat_response = smoke_task.create_chat_completion_for_billing(
                 smoke_request,
-                retry_policy=CONCURRENT_CHAT_429_RETRY_POLICY,
+                retry_policy=CONCURRENT_CHAT_RETRY_POLICY,
             )
             smoke_assertions.assert_status_code(chat_response, 200)
             return chat_response.headers["x-oneapi-request-id"].strip()
