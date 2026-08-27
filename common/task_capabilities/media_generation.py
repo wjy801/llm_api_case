@@ -45,6 +45,8 @@ class MediaGenerationCapability:
         self,
         request_client: BaseRequest,
         payload: dict[str, Any],
+        *,
+        retry_policy: RetryPolicy | None = None,
     ) -> requests.Response:
         with operation_scope(
             RuntimeOperationKind.HTTP,
@@ -52,7 +54,11 @@ class MediaGenerationCapability:
             role=RuntimeTrafficRole.WORKLOAD,
             model_id=model_id_from_kwargs({"json": payload}),
         ):
-            return request_client.post(self.chat_completions_path, json=payload)
+            return request_client.post(
+                self.chat_completions_path,
+                json=payload,
+                retry_policy=retry_policy,
+            )
 
     def create_media_generation(
         self,

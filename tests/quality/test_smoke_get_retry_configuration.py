@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from module.smoke import SMOKE_GET_RETRY_POLICY
+from module.smoke import CONCURRENT_CHAT_429_RETRY_POLICY, SMOKE_GET_RETRY_POLICY
 
 
 SMOKE_DIR = Path(__file__).resolve().parents[2] / "module" / "smoke"
@@ -43,6 +43,13 @@ def test_smoke_get_retry_policy_is_bounded_and_get_only() -> None:
     assert SMOKE_GET_RETRY_POLICY.max_elapsed == 10
     assert SMOKE_GET_RETRY_POLICY.allowed_methods == frozenset({"GET", "HEAD"})
     assert SMOKE_GET_RETRY_POLICY.allow_post is False
+
+
+def test_concurrent_chat_retry_policy_only_retries_429() -> None:
+    assert CONCURRENT_CHAT_429_RETRY_POLICY.max_attempts == 3
+    assert CONCURRENT_CHAT_429_RETRY_POLICY.retry_statuses == frozenset({429})
+    assert CONCURRENT_CHAT_429_RETRY_POLICY.retry_exceptions == ()
+    assert CONCURRENT_CHAT_429_RETRY_POLICY.allow_post is True
 
 
 def test_billing_control_get_calls_use_retry() -> None:
@@ -125,13 +132,15 @@ def test_async_polling_calls_use_retry() -> None:
         assert _uses_smoke_get_retry(calls[0])
 
 
-def test_smoke_workload_post_calls_do_not_receive_retry_policy() -> None:
+def test_only_concurrent_chat_post_receives_retry_policy() -> None:
     post_methods = {
         "create_async_image_generation",
         "create_chat_completion",
+        "create_chat_completion_for_billing",
         "create_image_generation",
         "create_stream_chat_completion",
     }
+    retry_calls: list[tuple[Path, ast.Call]] = []
 
     for test_file in SMOKE_DIR.glob("test_*.py"):
         tree = ast.parse(test_file.read_text(encoding="utf-8"))
@@ -140,6 +149,19 @@ def test_smoke_workload_post_calls_do_not_receive_retry_policy() -> None:
                 continue
             if node.func.attr not in post_methods:
                 continue
-            assert all(keyword.arg != "retry_policy" for keyword in node.keywords), (
-                f"POST retry is not allowed in {test_file.name}:{node.lineno}"
-            )
+            retry_keywords = [
+                keyword
+                for keyword in node.keywords
+                if keyword.arg == "retry_policy"
+            ]
+            if retry_keywords:
+                retry_calls.append((test_file, node))
+                assert len(retry_keywords) == 1
+                assert isinstance(retry_keywords[0].value, ast.Name)
+                assert retry_keywords[0].value.id == "CONCURRENT_CHAT_429_RETRY_POLICY"
+
+    assert len(retry_calls) == 1
+    retry_file, retry_call = retry_calls[0]
+    assert retry_file.name == "test_call_billing_correctness.py"
+    assert isinstance(retry_call.func, ast.Attribute)
+    assert retry_call.func.attr == "create_chat_completion_for_billing"

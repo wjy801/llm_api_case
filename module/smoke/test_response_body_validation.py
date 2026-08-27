@@ -6,7 +6,7 @@ import pytest
 
 from module.smoke import SmokeAssertions, SmokeRequest, SmokeTask
 from module.smoke.response_schemas import CHAT_COMPLETION_SUCCESS_SCHEMA, STANDARD_ERROR_RESPONSE_SCHEMA
-from module.smoke.task import KEY_CHAT_COMPLETIONS_RESPONSE_MODEL_ID
+from module.smoke.task import KEY_CHAT_COMPLETIONS_MODEL_ID
 
 
 UNKNOWN_TEXT_MODEL_ID = "GLM-5-unknown"
@@ -44,7 +44,7 @@ class TestResponseBodyValidation:
         self.smoke_assertions.assert_json_value(
             response,
             "$.model",
-            KEY_CHAT_COMPLETIONS_RESPONSE_MODEL_ID,
+            KEY_CHAT_COMPLETIONS_MODEL_ID,
         )
 
     def test_stream_chat_completions_chunk_fields(self):

@@ -67,8 +67,14 @@ class BaseTask:
         self,
         request_client: BaseRequest,
         payload: dict[str, Any],
+        *,
+        retry_policy: RetryPolicy | None = None,
     ) -> requests.Response:
-        return self._media_capability().create_chat_completion(request_client, payload)
+        return self._media_capability().create_chat_completion(
+            request_client,
+            payload,
+            retry_policy=retry_policy,
+        )
 
     @allure_step("异步媒体任务创建：/v1/media/generations")
     def create_media_generation(

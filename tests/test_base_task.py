@@ -106,7 +106,30 @@ class TestBaseTask:
         response = task.create_chat_completion(request_client, payload)
 
         assert response.json() == {"choices": [{"message": {"content": "ok"}}]}
-        assert request_client.post_calls == [{"path": "/v1/chat/completions", "kwargs": {"json": payload}}]
+        assert request_client.post_calls == [
+            {
+                "path": "/v1/chat/completions",
+                "kwargs": {"json": payload, "retry_policy": None},
+            }
+        ]
+
+    def test_create_chat_completion_passes_retry_policy(self):
+        task = BaseTask()
+        request_client = FakeGenerationRequest()
+        retry_policy = RetryPolicy(
+            max_attempts=3,
+            retry_statuses=frozenset({429}),
+            retry_exceptions=(),
+            allow_post=True,
+        )
+
+        task.create_chat_completion(
+            request_client,
+            {"model": "deepseek-v4-flash", "messages": []},
+            retry_policy=retry_policy,
+        )
+
+        assert request_client.post_calls[0]["kwargs"]["retry_policy"] is retry_policy
 
     def test_create_media_generation_calls_request_client(self):
         task = BaseTask()

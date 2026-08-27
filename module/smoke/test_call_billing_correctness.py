@@ -5,7 +5,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pytest
 
 from common import submit_with_context
-from module.smoke import SMOKE_GET_RETRY_POLICY, SmokeAssertions, SmokeRequest, SmokeTask
+from module.smoke import (
+    CONCURRENT_CHAT_429_RETRY_POLICY,
+    SMOKE_GET_RETRY_POLICY,
+    SmokeAssertions,
+    SmokeRequest,
+    SmokeTask,
+)
 
 
 UNKNOWN_IMAGE_MODEL_ID = "wan2.7-image111"
@@ -151,7 +157,10 @@ class TestCallBillingCorrectness:
         smoke_task = SmokeTask()
         smoke_assertions = SmokeAssertions()
         try:
-            chat_response = smoke_task.create_chat_completion_for_billing(smoke_request)
+            chat_response = smoke_task.create_chat_completion_for_billing(
+                smoke_request,
+                retry_policy=CONCURRENT_CHAT_429_RETRY_POLICY,
+            )
             smoke_assertions.assert_status_code(chat_response, 200)
             return chat_response.headers["x-oneapi-request-id"].strip()
         finally:

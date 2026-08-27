@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 
 
 KEY_CHAT_COMPLETIONS_MODEL_ID = "deepseek-v4-flash"
-KEY_CHAT_COMPLETIONS_RESPONSE_MODEL_ID = "DeepSeek-V4-Flash"
 SYNC_IMAGE_GENERATION_MODEL_ID = "gpt-image-2-gw"
 ASYNC_IMAGE_GENERATION_MODEL_ID = "gpt-image-2"
 B_ACCOUNT_API_KEY = os.getenv("B_ACCOUNT_API_KEY", "").strip()
@@ -40,10 +39,16 @@ class StreamChatCompletionChunks:
 
 
 class SmokeTask(BaseTask):
-    def create_chat_completion_for_billing(self, smoke_request: SmokeRequest) -> requests.Response:
+    def create_chat_completion_for_billing(
+        self,
+        smoke_request: SmokeRequest,
+        *,
+        retry_policy: RetryPolicy | None = None,
+    ) -> requests.Response:
         chat_response = self.create_chat_completion(
             smoke_request,
             self.build_chat_completions_payload(),
+            retry_policy=retry_policy,
         )
         self.get_request_id_from_response(chat_response)
         return chat_response
