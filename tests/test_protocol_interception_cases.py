@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+from module.protocol_testing.image_model.protocol_interception_cases import (
+    load_protocol_interception_cases as load_image_protocol_interception_cases,
+)
 from module.protocol_testing.text_model.protocol_interception_cases import load_protocol_interception_cases
 
 
@@ -50,3 +53,27 @@ class TestProtocolInterceptionCases:
         assert len(cases) == 14
         assert cases[0].case_id == "openai_qwen_allow"
         assert cases[-1].case_id == "anthropic_gemini_block"
+
+    def test_gpt_image_generation_matches_current_supported_interface(self):
+        cases = load_image_protocol_interception_cases()
+        matching_case = next(
+            case
+            for case in cases
+            if case.protocol_path == "images_generations"
+            and case.model_id == "gpt-image-2"
+        )
+
+        assert matching_case.case_id == "images_generations_openai_gpt_image_allow"
+        assert matching_case.expected == "allow"
+
+    def test_image_cases_can_define_case_specific_block_error_contract(self):
+        cases = load_image_protocol_interception_cases()
+        matching_case = next(
+            case
+            for case in cases
+            if case.case_id == "images_edits_openai_gpt_image_block"
+        )
+
+        assert matching_case.expected_error_code == "invalid_request_error"
+        assert matching_case.expected_error_category == "user_request_invalid"
+        assert matching_case.expected_message_fragment == "请求参数不合法"

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import Any
 
 from jsonpath_ng.ext import parse
@@ -48,25 +47,17 @@ class TestSyncImageGeneration:
         self._assert_image_generation_output_exists(response)
 
     def test_f8_03_sync_image_generation_billing_deduction_matches_usage_quota(self):
-        before_balance_response = self.smoke_task.query_account_balance_for_billing(
-            self.smoke_request,
-            retry_policy=SMOKE_GET_RETRY_POLICY,
-        )
         image_response = self.smoke_task.create_sync_image_generation_for_billing(self.smoke_request)
-        usage_records_response = self.smoke_task.query_usage_records_by_model_response_for_billing(
+        request_id = self.smoke_task.get_request_id_from_response(image_response)
+        usage_records_response = self.smoke_task.query_usage_records_by_request_id_for_billing(
             self.smoke_request,
-            image_response,
-            retry_policy=SMOKE_GET_RETRY_POLICY,
-        )
-        after_balance_response = self.smoke_task.query_account_balance_after_settlement_for_billing(
-            self.smoke_request,
+            request_id,
             retry_policy=SMOKE_GET_RETRY_POLICY,
         )
 
-        self.smoke_assertions.assert_call_billing_deduction_matches(
-            before_balance_response,
+        self.smoke_assertions.assert_successful_usage_record(
             usage_records_response,
-            after_balance_response,
+            expected_request_id=request_id,
         )
 
     def test_f8_04_sync_image_generation_failed_call_does_not_deduct_balance(self):
@@ -88,10 +79,9 @@ class TestSyncImageGeneration:
             request_id,
             retry_policy=SMOKE_GET_RETRY_POLICY,
         )
-        usage_quota = self.smoke_assertions.get_usage_quota_yuan(usage_records_response)
-        assert usage_quota == Decimal("0"), (
-            f"Failed sync image generation should not charge, actual data.quota_yuan: {usage_quota}. "
-            f"Usage response body: {usage_records_response.text}"
+        self.smoke_assertions.assert_usage_record_not_charged(
+            usage_records_response,
+            expected_request_id=request_id,
         )
 
     @pytest.mark.skip(reason="F8-05 暂无稳定服务端 504/超时触发方式，按确认结果先占位。")

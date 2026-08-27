@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import struct
 from typing import Any
+import zlib
 
 
 def build_text_v1_chat_completions_payload(model_id: str) -> dict[str, Any]:
@@ -80,6 +82,27 @@ def build_image_v1_images_edits_payload(model_id: str) -> dict[str, Any]:
         "model": model_id,
         "prompt": "在图片中添加陡峭的山脉",
     }
+
+
+def build_protocol_interception_image_png() -> bytes:
+    """Build a small valid RGB PNG for multipart image-edit protocol checks."""
+    width = 256
+    height = 256
+    png_signature = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    scanline = b"\x00" + (b"\xff\xff\xff" * width)
+    image_data = zlib.compress(scanline * height)
+    return (
+        png_signature
+        + _png_chunk(b"IHDR", ihdr)
+        + _png_chunk(b"IDAT", image_data)
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
+    checksum = zlib.crc32(chunk_type + data) & 0xFFFFFFFF
+    return struct.pack(">I", len(data)) + chunk_type + data + struct.pack(">I", checksum)
 
 
 def build_video_v1_media_generations_payload(model_id: str) -> dict[str, Any]:

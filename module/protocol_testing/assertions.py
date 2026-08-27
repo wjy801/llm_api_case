@@ -52,6 +52,8 @@ class ResponsesAssertions(BaseAssertions):
 class ProtocolInterceptionAssertions(BaseAssertions):
     forbidden_error_text_values = ["traceback", "stack trace", "exception", "sql", "internal server error"]
     blocked_message_fragment = "当前使用协议"
+    blocked_message_fragments = (blocked_message_fragment,)
+    blocked_error_codes = frozenset({"model_capability_not_supported"})
     blocked_error_type = "invalid_request_error"
 
     def assert_protocol_interception_allowed(
@@ -70,12 +72,23 @@ class ProtocolInterceptionAssertions(BaseAssertions):
         response: requests.Response,
         *,
         case_id: str,
+        expected_error_code: str | None = None,
+        expected_error_category: str | None = None,
+        expected_message_fragment: str | None = None,
     ) -> requests.Response:
-        assert response.status_code != 200, (
-            f"协议拦截 block 用例应返回非 200。case_id={case_id!r}，响应内容：{response.text}"
+        assert 400 <= response.status_code < 500, (
+            f"协议拦截 block 用例应返回 4xx。case_id={case_id!r}，"
+            f"实际状态码={response.status_code}，响应内容：{response.text}"
         )
         body = self._json_body(response, case_id)
-        self._assert_blocked_error(body, response, case_id)
+        self._assert_blocked_error(
+            body,
+            response,
+            case_id,
+            expected_error_code=expected_error_code,
+            expected_error_category=expected_error_category,
+            expected_message_fragment=expected_message_fragment,
+        )
         self._assert_response_text_not_contains_internal_information(response, case_id)
         return response
 
@@ -94,6 +107,10 @@ class ProtocolInterceptionAssertions(BaseAssertions):
         body: dict[str, Any],
         response: requests.Response,
         case_id: str,
+        *,
+        expected_error_code: str | None,
+        expected_error_category: str | None,
+        expected_message_fragment: str | None,
     ) -> None:
         assert "error" in body, (
             f"协议拦截 block 用例应包含 error 字段。"
@@ -107,10 +124,50 @@ class ProtocolInterceptionAssertions(BaseAssertions):
         )
 
         message = error.get("message")
-        assert isinstance(message, str) and self.blocked_message_fragment in message, (
-            f"协议拦截 block 用例的 error.message 应包含 "
-            f"{self.blocked_message_fragment!r}。case_id={case_id!r}，响应内容：{response.text}"
+        assert isinstance(message, str) and message.strip(), (
+            f"协议拦截 block 用例的 error.message 应为非空字符串。"
+            f"case_id={case_id!r}，响应内容：{response.text}"
         )
+
+        error_code = error.get("code")
+        if expected_error_code is not None:
+            assert error_code == expected_error_code, (
+                f"协议拦截 block 用例的 error.code 应为 {expected_error_code!r}，"
+                f"实际为 {error_code!r}。case_id={case_id!r}，响应内容：{response.text}"
+            )
+
+        error_category = error.get("category")
+        if expected_error_category is not None:
+            assert error_category == expected_error_category, (
+                f"协议拦截 block 用例的 error.category 应为 {expected_error_category!r}，"
+                f"实际为 {error_category!r}。case_id={case_id!r}，响应内容：{response.text}"
+            )
+
+        if expected_message_fragment is not None:
+            assert expected_message_fragment in message, (
+                f"协议拦截 block 用例的 error.message 应包含 {expected_message_fragment!r}。"
+                f"case_id={case_id!r}，响应内容：{response.text}"
+            )
+
+        if all(
+            expected_value is None
+            for expected_value in (
+                expected_error_code,
+                expected_error_category,
+                expected_message_fragment,
+            )
+        ):
+            has_protocol_reason = (
+                isinstance(error_code, str) and error_code in self.blocked_error_codes
+            ) or any(
+                fragment in message for fragment in self.blocked_message_fragments
+            )
+            assert has_protocol_reason, (
+                "协议拦截 block 用例应返回稳定的协议/模型能力错误标识。"
+                f"允许的 error.code={sorted(self.blocked_error_codes)!r}，"
+                f"允许的 error.message 片段={self.blocked_message_fragments!r}。"
+                f"case_id={case_id!r}，响应内容：{response.text}"
+            )
 
         error_type = error.get("type")
         assert error_type == self.blocked_error_type, (

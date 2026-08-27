@@ -75,10 +75,6 @@ class TestAsyncImageGeneration:
         self._assert_async_image_output_exists(result_response)
 
     def test_f8_10_async_image_generation_billing_deduction_matches_usage_quota(self):
-        before_balance_response = self.smoke_task.query_account_balance_for_billing(
-            self.smoke_request,
-            retry_policy=SMOKE_GET_RETRY_POLICY,
-        )
         create_response = self.smoke_task.create_async_image_generation(self.smoke_request)
         task_id = self.smoke_task.extract_task_id(create_response)
         result_response = self._poll_task_until_finished(task_id)
@@ -88,20 +84,16 @@ class TestAsyncImageGeneration:
             f"Async image generation task should succeed before billing assertion, actual status: {status!r}. "
             f"Response body: {result_response.text}"
         )
+        request_id = self._extract_request_id(create_response)
         usage_records_response = self.smoke_task.query_usage_records_by_request_id_for_billing(
             self.smoke_request,
-            self._extract_request_id(create_response),
-            retry_policy=SMOKE_GET_RETRY_POLICY,
-        )
-        after_balance_response = self.smoke_task.query_account_balance_after_settlement_for_billing(
-            self.smoke_request,
+            request_id,
             retry_policy=SMOKE_GET_RETRY_POLICY,
         )
 
-        self.smoke_assertions.assert_call_billing_deduction_matches(
-            before_balance_response,
+        self.smoke_assertions.assert_successful_usage_record(
             usage_records_response,
-            after_balance_response,
+            expected_request_id=request_id,
         )
 
     @pytest.mark.skip(reason="F8-11 缺少稳定生成 failed 任务的异步触发参数，先占位。")

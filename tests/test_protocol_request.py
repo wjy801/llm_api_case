@@ -219,3 +219,41 @@ class TestProtocolRequest:
                 },
             }
         ]
+
+    def test_image_edit_uses_multipart_without_json_content_type(self):
+        request = FakeProtocolRequest()
+        image = b"png-content"
+
+        response = request.create_image_edit(
+            {"model": "gpt-image-2", "prompt": "edit image"},
+            image,
+            headers={"X-Case-Id": "image-edit"},
+        )
+
+        assert response is request.response
+        assert request.post_calls == [
+            {
+                "path": "/v1/images/edits",
+                "kwargs": {
+                    "data": {"model": "gpt-image-2", "prompt": "edit image"},
+                    "files": {
+                        "image": (
+                            "protocol-interception.png",
+                            image,
+                            "image/png",
+                        )
+                    },
+                    "headers": {
+                        "Accept": "application/json",
+                        "Authorization": "Bearer test-key",
+                        "X-Case-Id": "image-edit",
+                    },
+                    "_inherit_session_headers": False,
+                },
+                "session_headers": {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "Authorization": "Bearer test-key",
+                },
+            }
+        ]

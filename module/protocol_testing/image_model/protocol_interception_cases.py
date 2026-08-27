@@ -29,6 +29,9 @@ class ProtocolInterceptionCase:
     body_protocol: str
     model_id: str
     expected: str
+    expected_error_code: str | None = None
+    expected_error_category: str | None = None
+    expected_message_fragment: str | None = None
 
 
 def load_protocol_interception_cases(
@@ -63,6 +66,9 @@ def _build_case(row: dict[str, str], path: Path, line_number: int) -> ProtocolIn
         body_protocol=_required_cell(row, "body_protocol", path, line_number),
         model_id=_required_cell(row, "model_id", path, line_number),
         expected=_required_cell(row, "expected", path, line_number),
+        expected_error_code=_optional_cell(row, "expected_error_code"),
+        expected_error_category=_optional_cell(row, "expected_error_category"),
+        expected_message_fragment=_optional_cell(row, "expected_message_fragment"),
     )
     _validate_case(case, path, line_number)
     return case
@@ -73,6 +79,11 @@ def _required_cell(row: dict[str, str], column_name: str, path: Path, line_numbe
     if not value:
         raise ValueError(f"协议拦截 CSV 第 {line_number} 行字段 {column_name!r} 为空: {path}")
     return value
+
+
+def _optional_cell(row: dict[str, str], column_name: str) -> str | None:
+    value = (row.get(column_name) or "").strip()
+    return value or None
 
 
 def _validate_case(case: ProtocolInterceptionCase, path: Path, line_number: int) -> None:

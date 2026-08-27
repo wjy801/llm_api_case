@@ -6,7 +6,11 @@ import pytest
 import requests
 
 from module.protocol_testing import ProtocolInterceptionAssertions, ProtocolRequest, ProtocolTask
-from module.protocol_testing.payloads import build_image_v1_media_generations_payload
+from module.protocol_testing.payloads import (
+    build_image_v1_images_edits_payload,
+    build_image_v1_media_generations_payload,
+    build_protocol_interception_image_png,
+)
 from module.protocol_testing.image_model.protocol_interception_cases import (
     ProtocolInterceptionCase,
     load_protocol_interception_cases,
@@ -34,6 +38,8 @@ def protocol_interception_case_params() -> list[pytest.ParameterSet]:
 
 
 def build_protocol_interception_payload(case: ProtocolInterceptionCase) -> dict[str, Any]:
+    if case.protocol_path == "images_edits":
+        return build_image_v1_images_edits_payload(case.model_id)
     if case.body_protocol == "image_media":
         return build_image_v1_media_generations_payload(case.model_id)
     raise ValueError(f"Unsupported body protocol: {case.body_protocol!r}")
@@ -58,7 +64,13 @@ class TestImageModelProtocolInterception:
             self.protocol_assertions.assert_protocol_interception_allowed(response, case_id=case.case_id)
             return
 
-        self.protocol_assertions.assert_protocol_interception_blocked(response, case_id=case.case_id)
+        self.protocol_assertions.assert_protocol_interception_blocked(
+            response,
+            case_id=case.case_id,
+            expected_error_code=case.expected_error_code,
+            expected_error_category=case.expected_error_category,
+            expected_message_fragment=case.expected_message_fragment,
+        )
 
     def _create_by_protocol_path(
         self,
@@ -80,9 +92,10 @@ class TestImageModelProtocolInterception:
                 headers=headers,
             )
         if protocol_path == "images_edits":
-            return self.protocol_request.post(
-                self.protocol_request.image_edits_path,
-                json=payload,
+            return self.protocol_task.create_image_edit(
+                self.protocol_request,
+                payload,
+                build_protocol_interception_image_png(),
                 headers=headers,
             )
         if protocol_path == "openai_chat_completions":

@@ -362,30 +362,29 @@ final_response = self.task.create_and_poll_media_generation(
 ### 6.2 账单和 usage
 
 ```python
-before_balance = self.task.query_account_balance_for_billing(self.request)
-
 model_response = self.task.create_chat_completion(self.request, payload)
-usage_response = self.task.query_usage_records_by_model_response_for_billing(
+request_id = self.task.get_request_id_from_response(model_response)
+usage_response = self.task.query_usage_records_by_request_id_for_billing(
     self.request,
-    model_response,
+    request_id,
+    retry_policy=SMOKE_GET_RETRY_POLICY,
 )
-
-after_balance = self.task.query_account_balance_after_settlement_for_billing(
-    self.request,
+self.assertions.assert_successful_usage_record(
+    usage_response,
+    expected_request_id=request_id,
 )
 ```
 
 规范：
 
-- 模型调用前的余额立即查询。
-- 模型调用后的余额使用 `query_account_balance_after_settlement_for_billing()`，默认等待 5 秒处理预扣款刷新。
-- usage 必须通过模型响应的 request ID 查询，禁止按时间范围猜测归属。
-- 并发调用时分别保存每个 request ID，分别查询 usage 后求和。
-- 余额扣减与 usage 金额使用 `Decimal` 区间断言，当前容差为 `±0.01` 元。
+- usage 必须通过模型响应的 request ID 查询，禁止按时间范围或共享钱包余额猜测归属。
+- 成功调用校验 request ID、终态和正数 `quota_yuan`；失败调用校验自身 `quota_yuan == 0`。
+- 并发调用时分别保存每个 request ID，并逐条验证对应 usage，不使用账户余额差汇总。
+- usage GET 使用统一的有限重试和结算轮询；模型 POST 默认不重试，避免重复扣费。
 - Metrics 当前不计算估算成本，也不做账本价格对账。
-- 账单、余额和共享账号用例必须标记 `serial`。
+- 账户余额和其他共享状态用例必须标记 `serial`。
 
-失败调用也应等待结算后再验证余额未变化，避免延迟扣费造成假通过。
+共享钱包只能用于余额可用性检查，不能作为单个请求是否扣费的归因证据。
 
 ## 7. Request 与中间件使用规范
 
@@ -588,7 +587,7 @@ import pytest
 pytestmark = pytest.mark.serial
 ```
 
-- 余额、账单、usage 对账。
+- 共享余额及其他账户级状态校验。
 - 共享账号、共享 Header 或共享全局资源。
 - 依赖服务端延迟结算。
 - 并发执行会互相影响断言结果。

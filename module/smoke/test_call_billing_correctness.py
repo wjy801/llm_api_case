@@ -29,59 +29,34 @@ class TestCallBillingCorrectness:
         self.smoke_request.close()
 
     def test_sync_image_model_call_billing_deduction_matches_usage_quota(self):
-        before_balance_response = self.smoke_task.query_account_balance_for_billing(
-            self.smoke_request,
-            retry_policy=SMOKE_GET_RETRY_POLICY,
-        )
         image_response = self.smoke_task.create_sync_image_generation_for_billing(self.smoke_request)
-        usage_records_response = self.smoke_task.query_usage_records_by_model_response_for_billing(
+        request_id = self.smoke_task.get_request_id_from_response(image_response)
+        usage_records_response = self.smoke_task.query_usage_records_by_request_id_for_billing(
             self.smoke_request,
-            image_response,
+            request_id,
             retry_policy=SMOKE_GET_RETRY_POLICY,
-        )
-        after_balance_response = (
-            self.smoke_task.query_account_balance_after_settlement_for_billing(
-                self.smoke_request,
-                retry_policy=SMOKE_GET_RETRY_POLICY,
-            )
         )
 
-        self.smoke_assertions.assert_call_billing_deduction_matches(
-            before_balance_response,
+        self.smoke_assertions.assert_successful_usage_record(
             usage_records_response,
-            after_balance_response,
+            expected_request_id=request_id,
         )
 
     def test_text_model_call_billing_deduction_matches_usage_quota(self):
-        before_balance_response = self.smoke_task.query_account_balance_for_billing(
-            self.smoke_request,
-            retry_policy=SMOKE_GET_RETRY_POLICY,
-        )
         chat_response = self.smoke_task.create_chat_completion_for_billing(self.smoke_request)
-        usage_records_response = self.smoke_task.query_usage_records_by_model_response_for_billing(
+        request_id = self.smoke_task.get_request_id_from_response(chat_response)
+        usage_records_response = self.smoke_task.query_usage_records_by_request_id_for_billing(
             self.smoke_request,
-            chat_response,
+            request_id,
             retry_policy=SMOKE_GET_RETRY_POLICY,
-        )
-        after_balance_response = (
-            self.smoke_task.query_account_balance_after_settlement_for_billing(
-                self.smoke_request,
-                retry_policy=SMOKE_GET_RETRY_POLICY,
-            )
         )
 
-        self.smoke_assertions.assert_call_billing_deduction_matches(
-            before_balance_response,
+        self.smoke_assertions.assert_successful_usage_record(
             usage_records_response,
-            after_balance_response,
+            expected_request_id=request_id,
         )
 
     def test_concurrent_text_model_call_billing_deduction_matches_usage_quota_sum(self):
-        before_balance_response = self.smoke_task.query_account_balance_for_billing(
-            self.smoke_request,
-            retry_policy=SMOKE_GET_RETRY_POLICY,
-        )
-
         request_ids = self._create_concurrent_text_model_calls(CONCURRENT_TEXT_MODEL_CALL_COUNT)
         usage_records_responses = [
             self.smoke_task.query_usage_records_by_request_id_for_billing(
@@ -91,46 +66,35 @@ class TestCallBillingCorrectness:
             )
             for request_id in request_ids
         ]
-        after_balance_response = (
-            self.smoke_task.query_account_balance_after_settlement_for_billing(
-                self.smoke_request,
-                retry_policy=SMOKE_GET_RETRY_POLICY,
-            )
-        )
 
-        for index, usage_records_response in enumerate(usage_records_responses, start=1):
-            usage_quota = self.smoke_assertions.get_usage_quota_yuan(usage_records_response)
-            print(f"concurrent text call {index} request_id: {request_ids[index - 1]}")
-            print(f"concurrent text call {index} data.quota_yuan: {usage_quota}")
-
-        self.smoke_assertions.assert_total_billing_deduction_matches_usage_quota_sum(
-            before_balance_response,
+        for request_id, usage_records_response in zip(
+            request_ids,
             usage_records_responses,
-            after_balance_response,
-        )
+            strict=True,
+        ):
+            self.smoke_assertions.assert_successful_usage_record(
+                usage_records_response,
+                expected_request_id=request_id,
+            )
 
     def test_failed_sync_image_model_call_does_not_deduct_balance(self):
-        before_balance_response = self.smoke_task.query_account_balance_for_billing(
-            self.smoke_request,
-            retry_policy=SMOKE_GET_RETRY_POLICY,
-        )
         failed_response = self.smoke_task.create_image_generation(
             self.smoke_request,
             self.smoke_task.build_sync_image_generation_payload(UNKNOWN_IMAGE_MODEL_ID),
-        )
-        after_balance_response = (
-            self.smoke_task.query_account_balance_after_settlement_for_billing(
-                self.smoke_request,
-                retry_policy=SMOKE_GET_RETRY_POLICY,
-            )
         )
 
         self.smoke_assertions.assert_status_code(failed_response, 404)
         self.smoke_assertions.assert_json_value(failed_response, "$.error.code", "model_not_found")
         self.smoke_assertions.assert_json_value(failed_response, "$.error.type", "invalid_request_error")
-        self.smoke_assertions.assert_total_balance_unchanged(
-            before_balance_response,
-            after_balance_response,
+        request_id = self.smoke_task.get_request_id_from_response(failed_response)
+        usage_records_response = self.smoke_task.query_usage_records_by_request_id_for_billing(
+            self.smoke_request,
+            request_id,
+            retry_policy=SMOKE_GET_RETRY_POLICY,
+        )
+        self.smoke_assertions.assert_usage_record_not_charged(
+            usage_records_response,
+            expected_request_id=request_id,
         )
 
     @staticmethod

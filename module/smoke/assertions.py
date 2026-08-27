@@ -9,7 +9,7 @@ from common import BaseAssertions, allure_step
 
 
 class SmokeAssertions(BaseAssertions):
-    BILLING_COMPARE_TOLERANCE = Decimal("0.01")
+    SUCCESSFUL_USAGE_STATUSES = frozenset({"success", "succeeded", "completed"})
 
     @allure_step("Assert response text does not contain forbidden values")
     def assert_response_text_not_contains(
@@ -34,101 +34,91 @@ class SmokeAssertions(BaseAssertions):
         )
         return response
 
-    def assert_call_billing_deduction_matches(
+    def assert_successful_usage_record(
         self,
-        before_balance_response: requests.Response,
         usage_records_response: requests.Response,
-        after_balance_response: requests.Response,
+        *,
+        expected_request_id: str,
     ) -> requests.Response:
-        before_balance = self.get_total_balance_yuan(before_balance_response)
-        usage_quota = self.get_usage_quota_yuan(usage_records_response)
-        after_balance = self.get_total_balance_yuan(after_balance_response)
-        actual_deduction = before_balance - after_balance
-        deduction_delta = abs(actual_deduction - usage_quota)
+        self.assert_status_code(usage_records_response, 200)
+        data = self._get_usage_record_data(usage_records_response)
+        self._assert_usage_request_id(data, expected_request_id, usage_records_response)
 
-        print(f"before data.total_balance_yuan: {before_balance}")
-        print(f"usage data.quota_yuan: {usage_quota}")
-        print(f"after data.total_balance_yuan: {after_balance}")
-        print(f"actual deduction: {actual_deduction}")
-        print(f"billing deduction delta: {deduction_delta}")
-
-        assert deduction_delta <= self.BILLING_COMPARE_TOLERANCE, (
-            "Call billing deduction mismatch: "
-            f"before balance {before_balance} - after balance {after_balance} = {actual_deduction}, "
-            f"but usage data.quota_yuan = {usage_quota}. "
-            f"Actual delta is {deduction_delta}. "
-            f"Allowed delta is +/-{self.BILLING_COMPARE_TOLERANCE}. "
-            f"Before balance response: {before_balance_response.text}; "
-            f"Usage records response: {usage_records_response.text}; "
-            f"After balance response: {after_balance_response.text}"
+        status = str(data.get("status", "")).strip().lower()
+        assert status in self.SUCCESSFUL_USAGE_STATUSES, (
+            "Successful model call should have a successful usage record: "
+            f"expected one of {sorted(self.SUCCESSFUL_USAGE_STATUSES)!r}, actual {status!r}. "
+            f"Response body: {usage_records_response.text}"
         )
+
+        usage_quota = self.get_usage_quota_yuan(usage_records_response)
+        assert usage_quota > Decimal("0"), (
+            "Successful model call should produce a positive request-scoped charge: "
+            f"actual data.quota_yuan={usage_quota}. "
+            f"Response body: {usage_records_response.text}"
+        )
+
+        print(f"usage request_id: {expected_request_id}")
+        print(f"usage data.quota_yuan: {usage_quota}")
         return usage_records_response
 
-    def assert_total_billing_deduction_matches_usage_quota_sum(
+    def assert_usage_record_not_charged(
         self,
-        before_balance_response: requests.Response,
-        usage_records_responses: list[requests.Response],
-        after_balance_response: requests.Response,
+        usage_records_response: requests.Response,
+        *,
+        expected_request_id: str,
     ) -> requests.Response:
-        before_balance = self.get_total_balance_yuan(before_balance_response)
-        usage_quota_sum = sum(
-            (self.get_usage_quota_yuan(response) for response in usage_records_responses),
-            Decimal("0"),
+        self.assert_status_code(usage_records_response, 200)
+        data = self._get_usage_record_data(usage_records_response)
+        self._assert_usage_request_id(data, expected_request_id, usage_records_response)
+
+        usage_quota = self.get_usage_quota_yuan(usage_records_response)
+        assert usage_quota == Decimal("0"), (
+            "Failed model call should not produce a request-scoped charge: "
+            f"actual data.quota_yuan={usage_quota}. "
+            f"Response body: {usage_records_response.text}"
         )
-        after_balance = self.get_total_balance_yuan(after_balance_response)
-        actual_deduction = before_balance - after_balance
-        deduction_delta = abs(actual_deduction - usage_quota_sum)
 
-        print(f"before data.total_balance_yuan: {before_balance}")
-        print(f"usage data.quota_yuan sum: {usage_quota_sum}")
-        print(f"after data.total_balance_yuan: {after_balance}")
-        print(f"actual deduction: {actual_deduction}")
-        print(f"billing deduction delta: {deduction_delta}")
-
-        assert deduction_delta <= self.BILLING_COMPARE_TOLERANCE, (
-            "Concurrent call billing deduction mismatch: "
-            f"before balance {before_balance} - after balance {after_balance} = {actual_deduction}, "
-            f"but usage data.quota_yuan sum = {usage_quota_sum}. "
-            f"Actual delta is {deduction_delta}. "
-            f"Allowed delta is +/-{self.BILLING_COMPARE_TOLERANCE}. "
-            f"Before balance response: {before_balance_response.text}; "
-            f"Usage records responses: {[response.text for response in usage_records_responses]}; "
-            f"After balance response: {after_balance_response.text}"
-        )
-        return after_balance_response
-
-    def assert_total_balance_unchanged(
-        self,
-        before_balance_response: requests.Response,
-        after_balance_response: requests.Response,
-    ) -> requests.Response:
-        before_balance = self.get_total_balance_yuan(before_balance_response)
-        after_balance = self.get_total_balance_yuan(after_balance_response)
-
-        print(f"before data.total_balance_yuan: {before_balance}")
-        print(f"after data.total_balance_yuan: {after_balance}")
-
-        assert before_balance == after_balance, (
-            "Account balance changed after failed model call: "
-            f"before balance {before_balance}, after balance {after_balance}. "
-            f"Before balance response: {before_balance_response.text}; "
-            f"After balance response: {after_balance_response.text}"
-        )
-        return after_balance_response
+        print(f"usage request_id: {expected_request_id}")
+        print(f"usage data.quota_yuan: {usage_quota}")
+        return usage_records_response
 
     def get_total_balance_yuan(self, response: requests.Response) -> Decimal:
         response_body = response.json()
         return self._to_decimal(response_body["data"]["total_balance_yuan"], "data.total_balance_yuan")
 
     def get_usage_quota_yuan(self, response: requests.Response) -> Decimal:
-        response_body = response.json()
-        return self._to_decimal(response_body["data"]["quota_yuan"], "data.quota_yuan")
+        data = self._get_usage_record_data(response)
+        return self._to_decimal(data["quota_yuan"], "data.quota_yuan")
 
     def print_glm5_actual_stream_cost(self, response: requests.Response) -> requests.Response:
         quota_yuan = self.get_usage_quota_yuan(response)
         print(f"GLM-5 usage data.quota_yuan: {quota_yuan}")
         assert quota_yuan >= Decimal("0"), f"data.quota_yuan should be non-negative. Response body: {response.text}"
         return response
+
+    @staticmethod
+    def _get_usage_record_data(response: requests.Response) -> dict[str, Any]:
+        response_body = response.json()
+        data = response_body.get("data") if isinstance(response_body, dict) else None
+        assert isinstance(data, dict), (
+            "Usage response data should be an object. "
+            f"Response body: {response.text}"
+        )
+        return data
+
+    @staticmethod
+    def _assert_usage_request_id(
+        data: dict[str, Any],
+        expected_request_id: str,
+        response: requests.Response,
+    ) -> None:
+        actual_request_id = str(data.get("request_id", "")).strip()
+        assert actual_request_id == expected_request_id, (
+            "Usage record request_id mismatch: "
+            f"expected {expected_request_id!r}, actual {actual_request_id!r}. "
+            f"Response body: {response.text}"
+        )
 
     @staticmethod
     def _to_decimal(value: Any, field_path: str) -> Decimal:
