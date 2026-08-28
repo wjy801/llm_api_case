@@ -5,12 +5,12 @@ from dataclasses import dataclass
 
 import pytest
 
-from module.material_library import (
+from module.smoke.material_library import (
     MaterialLibraryAssertions,
     MaterialLibraryRequest,
     MaterialLibraryTask,
 )
-from module.material_library.task import (
+from module.smoke.material_library.task import (
     ARK_ASSET_ID_PREFIX,
     ARK_GROUP_ID_PREFIX,
 )

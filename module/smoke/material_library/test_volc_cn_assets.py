@@ -5,12 +5,12 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from module.material_library import (
+from module.smoke.material_library import (
     MaterialLibraryAssertions,
     MaterialLibraryRequest,
     MaterialLibraryTask,
 )
-from module.material_library.task import (
+from module.smoke.material_library.task import (
     VOLC_AIGC_GROUP_TYPE,
     VOLC_ASSET_ID_PREFIX,
     VOLC_GROUP_ID_PREFIX,

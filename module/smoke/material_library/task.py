@@ -8,7 +8,7 @@ from typing import Any
 import requests
 
 from common import BaseTask, PollingPolicy, allure_step
-from module.material_library.request import MaterialLibraryRequest
+from module.smoke.material_library.request import MaterialLibraryRequest
 
 
 ARK_GROUP_ID_PREFIX = "group-"
