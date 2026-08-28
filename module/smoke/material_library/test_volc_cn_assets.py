@@ -35,6 +35,9 @@ VOLC_VIRTUAL_VIDEO_GENERATE_AUDIO = True
 VOLC_VIRTUAL_VIDEO_WATERMARK = False
 
 
+pytestmark = pytest.mark.serial
+
+
 @dataclass
 class VolcCnVirtualAssetFlowState:
     group_id: str | None = None
@@ -90,7 +93,6 @@ def volc_cn_virtual_asset_runtime() -> Iterator[VolcCnVirtualAssetRuntime]:
         runtime.request.close()
 
 
-@pytest.mark.serial
 class TestVolcCnVirtualAssetsFlow:
     def test_vc_aigc_001_create_virtual_asset_group(
         self,
