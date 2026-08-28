@@ -355,14 +355,12 @@ class MaterialLibraryTask(BaseTask):
         name: str,
         description: str,
         group_type: str = VOLC_AIGC_GROUP_TYPE,
-        project_name: str = PROJECT_NAME,
     ) -> requests.Response:
         return request_client.create_volc_asset_group(
             self.build_create_asset_group_payload(
                 name=name,
                 description=description,
                 group_type=group_type,
-                project_name=project_name,
             ),
             headers={"Idempotency-Key": f"api-case-volc-group-{uuid.uuid4().hex}"},
         )
@@ -374,14 +372,12 @@ class MaterialLibraryTask(BaseTask):
         *,
         name: str | None = None,
         description: str = "api-case positive flow AIGC group",
-        project_name: str = PROJECT_NAME,
     ) -> requests.Response:
         return self.create_asset_group(
             request_client,
             name=name or self.unique_group_name(),
             description=description,
             group_type=VOLC_AIGC_GROUP_TYPE,
-            project_name=project_name,
         )
 
     @allure_step("上传国内官key图片素材到素材组: {group_id}")
@@ -393,7 +389,6 @@ class MaterialLibraryTask(BaseTask):
         image_url: str,
         name: str | None = None,
         asset_type: str = VOLC_IMAGE_ASSET_TYPE,
-        project_name: str = PROJECT_NAME,
     ) -> requests.Response:
         return request_client.create_volc_asset(
             self.build_create_asset_payload(
@@ -401,7 +396,6 @@ class MaterialLibraryTask(BaseTask):
                 image_url=image_url,
                 name=name or self.unique_asset_name(),
                 asset_type=asset_type,
-                project_name=project_name,
             ),
             headers={"Idempotency-Key": f"api-case-volc-asset-{uuid.uuid4().hex}"},
         )
@@ -411,10 +405,8 @@ class MaterialLibraryTask(BaseTask):
         self,
         request_client: MaterialLibraryRequest,
         asset_id: str,
-        *,
-        project_name: str = PROJECT_NAME,
     ) -> requests.Response:
-        return request_client.get_volc_asset(asset_id, project_name=project_name)
+        return request_client.get_volc_asset(asset_id)
 
     @allure_step("查询国内官key素材列表")
     def list_assets(
@@ -422,28 +414,22 @@ class MaterialLibraryTask(BaseTask):
         request_client: MaterialLibraryRequest,
         *,
         group_ids: list[str] | None = None,
-        asset_ids: list[str] | None = None,
         name: str | None = None,
-        group_type: str | None = None,
         statuses: list[str] | None = None,
         page_number: int = 1,
         page_size: int = 20,
         sort_by: str = "CreateTime",
         sort_order: str = "Desc",
-        project_name: str = PROJECT_NAME,
     ) -> requests.Response:
         return request_client.list_volc_assets(
             self.build_list_assets_payload(
                 group_ids=group_ids,
-                asset_ids=asset_ids,
                 name=name,
-                group_type=group_type,
                 statuses=statuses,
                 page_number=page_number,
                 page_size=page_size,
                 sort_by=sort_by,
                 sort_order=sort_order,
-                project_name=project_name,
             )
         )
 
@@ -454,15 +440,11 @@ class MaterialLibraryTask(BaseTask):
         asset_id: str,
         *,
         name: str,
-        description: str = "",
-        project_name: str = PROJECT_NAME,
     ) -> requests.Response:
         return request_client.update_volc_asset(
             asset_id,
             self.build_update_asset_payload(
                 name=name,
-                description=description,
-                project_name=project_name,
             ),
         )
 
@@ -471,14 +453,13 @@ class MaterialLibraryTask(BaseTask):
         self,
         request_client: MaterialLibraryRequest,
         *,
-        group_type: str = VOLC_AIGC_GROUP_TYPE,
+        group_type: str | None = None,
         group_ids: list[str] | None = None,
         name: str | None = None,
         page_number: int = 1,
         page_size: int = 20,
         sort_by: str = "CreateTime",
         sort_order: str = "Desc",
-        project_name: str = PROJECT_NAME,
     ) -> requests.Response:
         return request_client.list_volc_asset_groups(
             self.build_list_asset_groups_payload(
@@ -489,7 +470,6 @@ class MaterialLibraryTask(BaseTask):
                 page_size=page_size,
                 sort_by=sort_by,
                 sort_order=sort_order,
-                project_name=project_name,
             )
         )
 
@@ -498,10 +478,8 @@ class MaterialLibraryTask(BaseTask):
         self,
         request_client: MaterialLibraryRequest,
         group_id: str,
-        *,
-        project_name: str = PROJECT_NAME,
     ) -> requests.Response:
-        return request_client.get_volc_asset_group(group_id, project_name=project_name)
+        return request_client.get_volc_asset_group(group_id)
 
     @allure_step("更新国内官key素材组: {group_id}")
     def update_asset_group(
@@ -511,14 +489,12 @@ class MaterialLibraryTask(BaseTask):
         *,
         name: str,
         description: str,
-        project_name: str = PROJECT_NAME,
     ) -> requests.Response:
         return request_client.update_volc_asset_group(
             group_id,
             self.build_update_asset_group_payload(
                 name=name,
                 description=description,
-                project_name=project_name,
             ),
         )
 
@@ -526,11 +502,9 @@ class MaterialLibraryTask(BaseTask):
     def create_visual_validate_session(
         self,
         request_client: MaterialLibraryRequest,
-        *,
-        project_name: str = PROJECT_NAME,
     ) -> requests.Response:
         return request_client.create_volc_visual_validate_session(
-            self.build_create_visual_validate_session_payload(project_name=project_name),
+            self.build_create_visual_validate_session_payload(),
             headers={"Idempotency-Key": f"api-case-volc-visual-{uuid.uuid4().hex}"},
         )
 
@@ -626,7 +600,6 @@ class MaterialLibraryTask(BaseTask):
         request_client: MaterialLibraryRequest,
         asset_id: str,
         *,
-        project_name: str = PROJECT_NAME,
         poll_interval: float = VOLC_ASSET_POLL_INTERVAL_SECONDS,
         poll_timeout: float | None = VOLC_ASSET_POLL_TIMEOUT_SECONDS,
     ) -> requests.Response:
@@ -634,7 +607,7 @@ class MaterialLibraryTask(BaseTask):
         last_response: requests.Response | None = None
 
         while True:
-            last_response = self.get_asset(request_client, asset_id, project_name=project_name)
+            last_response = self.get_asset(request_client, asset_id)
             if last_response.status_code == 200:
                 status = str(self.extract_json_path(last_response, ["Result", "Status"]) or "")
                 print(f"volc asset {asset_id} status: {status}")
@@ -657,14 +630,13 @@ class MaterialLibraryTask(BaseTask):
         request_client: MaterialLibraryRequest,
         asset_id: str,
         *,
-        project_name: str = PROJECT_NAME,
         poll_interval: float = VOLC_ASSET_POLL_INTERVAL_SECONDS,
         poll_timeout: float = VOLC_ASSET_POLL_TIMEOUT_SECONDS,
     ) -> requests.Response:
         deadline = time.monotonic() + poll_timeout
         last_response: requests.Response | None = None
         while True:
-            last_response = self.get_asset(request_client, asset_id, project_name=project_name)
+            last_response = self.get_asset(request_client, asset_id)
             if last_response.status_code == 200:
                 status = str(self.extract_json_path(last_response, ["Result", "Status"]) or "")
                 if status in {"Active", "Failed"}:
@@ -747,20 +719,16 @@ class MaterialLibraryTask(BaseTask):
         self,
         request_client: MaterialLibraryRequest,
         asset_id: str,
-        *,
-        project_name: str = PROJECT_NAME,
     ) -> requests.Response:
-        return request_client.delete_volc_asset(asset_id, {"ProjectName": project_name})
+        return request_client.delete_volc_asset(asset_id)
 
     @allure_step("删除国内官key素材组: {group_id}")
     def delete_asset_group_if_exists(
         self,
         request_client: MaterialLibraryRequest,
         group_id: str,
-        *,
-        project_name: str = PROJECT_NAME,
     ) -> requests.Response:
-        return request_client.delete_volc_asset_group(group_id, {"ProjectName": project_name})
+        return request_client.delete_volc_asset_group(group_id)
 
     @staticmethod
     def build_create_ark_asset_group_payload(
@@ -837,13 +805,11 @@ class MaterialLibraryTask(BaseTask):
         name: str,
         description: str,
         group_type: str = VOLC_AIGC_GROUP_TYPE,
-        project_name: str = PROJECT_NAME,
     ) -> dict[str, Any]:
         return {
             "Name": name,
             "Description": description,
             "GroupType": group_type,
-            "ProjectName": project_name,
         }
 
     @staticmethod
@@ -853,29 +819,28 @@ class MaterialLibraryTask(BaseTask):
         image_url: str,
         name: str,
         asset_type: str = VOLC_IMAGE_ASSET_TYPE,
-        project_name: str = PROJECT_NAME,
     ) -> dict[str, Any]:
         return {
             "GroupId": group_id,
             "URL": image_url,
             "Name": name,
             "AssetType": asset_type,
-            "ProjectName": project_name,
         }
 
     @staticmethod
     def build_list_asset_groups_payload(
         *,
-        group_type: str = VOLC_AIGC_GROUP_TYPE,
+        group_type: str | None = None,
         group_ids: list[str] | None = None,
         name: str | None = None,
         page_number: int = 1,
         page_size: int = 20,
         sort_by: str = "CreateTime",
         sort_order: str = "Desc",
-        project_name: str = PROJECT_NAME,
     ) -> dict[str, Any]:
-        filter_value: dict[str, Any] = {"GroupType": group_type}
+        filter_value: dict[str, Any] = {}
+        if group_type is not None:
+            filter_value["GroupType"] = group_type
         if group_ids is not None:
             filter_value["GroupIds"] = group_ids
         if name is not None:
@@ -887,32 +852,24 @@ class MaterialLibraryTask(BaseTask):
             "PageSize": page_size,
             "SortBy": sort_by,
             "SortOrder": sort_order,
-            "ProjectName": project_name,
         }
 
     @staticmethod
     def build_list_assets_payload(
         *,
         group_ids: list[str] | None = None,
-        asset_ids: list[str] | None = None,
         name: str | None = None,
-        group_type: str | None = None,
         statuses: list[str] | None = None,
         page_number: int = 1,
         page_size: int = 20,
         sort_by: str = "CreateTime",
         sort_order: str = "Desc",
-        project_name: str = PROJECT_NAME,
     ) -> dict[str, Any]:
         filter_value: dict[str, Any] = {}
         if group_ids is not None:
             filter_value["GroupIds"] = group_ids
-        if asset_ids is not None:
-            filter_value["AssetIds"] = asset_ids
         if name is not None:
             filter_value["Name"] = name
-        if group_type is not None:
-            filter_value["GroupType"] = group_type
         if statuses is not None:
             filter_value["Statuses"] = statuses
         return {
@@ -921,41 +878,30 @@ class MaterialLibraryTask(BaseTask):
             "PageSize": page_size,
             "SortBy": sort_by,
             "SortOrder": sort_order,
-            "ProjectName": project_name,
         }
 
     @staticmethod
     def build_update_asset_payload(
         *,
         name: str,
-        description: str = "",
-        project_name: str = PROJECT_NAME,
     ) -> dict[str, Any]:
-        return {
-            "Name": name,
-            "Description": description,
-            "ProjectName": project_name,
-        }
+        return {"Name": name}
 
     @staticmethod
     def build_update_asset_group_payload(
         *,
         name: str,
         description: str,
-        project_name: str = PROJECT_NAME,
     ) -> dict[str, Any]:
         return {
             "Name": name,
             "Description": description,
-            "ProjectName": project_name,
         }
 
     @staticmethod
     def build_create_visual_validate_session_payload(
-        *,
-        project_name: str = PROJECT_NAME,
     ) -> dict[str, Any]:
-        return {"ProjectName": project_name}
+        return {}
 
     @staticmethod
     def build_asset_video_generation_payload(

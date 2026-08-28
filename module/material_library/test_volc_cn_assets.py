@@ -17,11 +17,11 @@ from module.material_library.task import (
 )
 
 
-VOLC_PROJECT_NAME = "default"
 VOLC_VIRTUAL_IMAGE_URL = (
     "https://ark-project.tos-cn-beijing.volces.com/doc_image/r2v_tea_pic1.jpg"
 )
 VOLC_VIRTUAL_VIDEO_MODELS = (
+    "doubao-seedance-2-0-260128-0818",
     "doubao-seedance-2-5-260628",
 )
 VOLC_VIRTUAL_VIDEO_PROMPT = (
@@ -100,14 +100,12 @@ class TestVolcCnVirtualAssetsFlow:
 
         response = runtime.task.create_aigc_asset_group(
             runtime.request,
-            project_name=VOLC_PROJECT_NAME,
         )
-        group_id = runtime.task.extract_group_id(response)
-        runtime.state.group_id = group_id
-
         runtime.assertions.assert_status_code(response, 200)
         runtime.assertions.assert_result_id_prefix(response, VOLC_GROUP_ID_PREFIX)
         runtime.assertions.assert_no_upstream_secret_leaked(response)
+        group_id = runtime.task.extract_group_id(response)
+        runtime.state.group_id = group_id
 
     def test_vc_aigc_002_upload_virtual_image_asset(
         self,
@@ -120,14 +118,12 @@ class TestVolcCnVirtualAssetsFlow:
             runtime.request,
             group_id,
             image_url=VOLC_VIRTUAL_IMAGE_URL,
-            project_name=VOLC_PROJECT_NAME,
         )
-        asset_id = runtime.task.extract_asset_id(response)
-        runtime.state.asset_id = asset_id
-
         runtime.assertions.assert_status_code(response, 200)
         runtime.assertions.assert_result_id_prefix(response, VOLC_ASSET_ID_PREFIX)
         runtime.assertions.assert_no_upstream_secret_leaked(response)
+        asset_id = runtime.task.extract_asset_id(response)
+        runtime.state.asset_id = asset_id
 
     def test_vc_aigc_003_wait_for_virtual_asset_active(
         self,
@@ -171,10 +167,9 @@ class TestVolcCnVirtualAssetsFlow:
             generate_audio=VOLC_VIRTUAL_VIDEO_GENERATE_AUDIO,
             watermark=VOLC_VIRTUAL_VIDEO_WATERMARK,
         )
+        runtime.assertions.assert_media_generation_submit_succeeded(response)
         task_id = runtime.task.extract_media_task_id(response)
         runtime.state.task_ids[model_id] = task_id
-
-        runtime.assertions.assert_media_generation_submit_succeeded(response)
 
     @pytest.mark.parametrize("model_id", VOLC_VIRTUAL_VIDEO_MODELS)
     def test_vc_aigc_005_wait_for_asset_video_succeeded(
@@ -328,7 +323,7 @@ class TestVolcCnAssetGroupsManagement:
         self.material_library_assertions.assert_delete_result_empty(delete_response)
         self.material_library_assertions.assert_status_code(get_response, 404)
 
-    def test_vc_grp_007_delete_asset_group_is_idempotent(self):
+    def test_vc_grp_007_delete_missing_asset_group_returns_not_found(self):
         group_id, _ = self._create_group()
 
         first_delete_response = self.material_library_task.delete_asset_group_if_exists(
@@ -343,8 +338,8 @@ class TestVolcCnAssetGroupsManagement:
 
         self.material_library_assertions.assert_status_code(first_delete_response, 200)
         self.material_library_assertions.assert_delete_result_empty(first_delete_response)
-        self.material_library_assertions.assert_status_code(second_delete_response, 200)
-        self.material_library_assertions.assert_delete_result_empty(second_delete_response)
+        self.material_library_assertions.assert_status_code(second_delete_response, 404)
+        self.material_library_assertions.assert_error_code_present(second_delete_response)
 
     def _create_group(self) -> tuple[str, str]:
         group_name = self.material_library_task.unique_group_name()
@@ -352,7 +347,6 @@ class TestVolcCnAssetGroupsManagement:
             self.material_library_request,
             name=group_name,
             description="api-case group management test",
-            project_name=VOLC_PROJECT_NAME,
         )
         self.material_library_assertions.assert_status_code(response, 200)
         self.material_library_assertions.assert_result_id_prefix(response, VOLC_GROUP_ID_PREFIX)
@@ -506,7 +500,7 @@ class TestVolcCnAssetsManagement:
         self.material_library_assertions.assert_status_code(get_response, 404)
         self.material_library_assertions.assert_error_code_present(get_response)
 
-    def test_vc_ast_007_delete_asset_is_idempotent(self):
+    def test_vc_ast_007_delete_missing_asset_returns_not_found(self):
         _, asset_id, _ = self._create_asset()
 
         first_delete_response = self.material_library_task.delete_asset_if_exists(
@@ -521,14 +515,13 @@ class TestVolcCnAssetsManagement:
 
         self.material_library_assertions.assert_status_code(first_delete_response, 200)
         self.material_library_assertions.assert_delete_result_empty(first_delete_response)
-        self.material_library_assertions.assert_status_code(second_delete_response, 200)
-        self.material_library_assertions.assert_delete_result_empty(second_delete_response)
+        self.material_library_assertions.assert_status_code(second_delete_response, 404)
+        self.material_library_assertions.assert_error_code_present(second_delete_response)
 
     def _create_asset(self) -> tuple[str, str, str]:
         group_response = self.material_library_task.create_aigc_asset_group(
             self.material_library_request,
             description="api-case asset management test",
-            project_name=VOLC_PROJECT_NAME,
         )
         self.material_library_assertions.assert_status_code(group_response, 200)
         self.material_library_assertions.assert_result_id_prefix(
@@ -544,7 +537,6 @@ class TestVolcCnAssetsManagement:
             group_id,
             image_url=VOLC_VIRTUAL_IMAGE_URL,
             name=asset_name,
-            project_name=VOLC_PROJECT_NAME,
         )
         self.material_library_assertions.assert_status_code(asset_response, 200)
         self.material_library_assertions.assert_result_id_prefix(

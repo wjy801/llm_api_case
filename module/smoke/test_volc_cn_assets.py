@@ -17,11 +17,11 @@ from module.material_library.task import (
 )
 
 
-VOLC_PROJECT_NAME = "default"
 VOLC_VIRTUAL_IMAGE_URL = (
     "https://ark-project.tos-cn-beijing.volces.com/doc_image/r2v_tea_pic1.jpg"
 )
 VOLC_VIRTUAL_VIDEO_MODELS = (
+    "doubao-seedance-2-0-260128-0818",
     "doubao-seedance-2-5-260628",
 )
 VOLC_VIRTUAL_VIDEO_PROMPT = (
@@ -100,14 +100,12 @@ class TestVolcCnVirtualAssetsFlow:
 
         response = runtime.task.create_aigc_asset_group(
             runtime.request,
-            project_name=VOLC_PROJECT_NAME,
         )
-        group_id = runtime.task.extract_group_id(response)
-        runtime.state.group_id = group_id
-
         runtime.assertions.assert_status_code(response, 200)
         runtime.assertions.assert_result_id_prefix(response, VOLC_GROUP_ID_PREFIX)
         runtime.assertions.assert_no_upstream_secret_leaked(response)
+        group_id = runtime.task.extract_group_id(response)
+        runtime.state.group_id = group_id
 
     def test_vc_aigc_002_upload_virtual_image_asset(
         self,
@@ -120,14 +118,12 @@ class TestVolcCnVirtualAssetsFlow:
             runtime.request,
             group_id,
             image_url=VOLC_VIRTUAL_IMAGE_URL,
-            project_name=VOLC_PROJECT_NAME,
         )
-        asset_id = runtime.task.extract_asset_id(response)
-        runtime.state.asset_id = asset_id
-
         runtime.assertions.assert_status_code(response, 200)
         runtime.assertions.assert_result_id_prefix(response, VOLC_ASSET_ID_PREFIX)
         runtime.assertions.assert_no_upstream_secret_leaked(response)
+        asset_id = runtime.task.extract_asset_id(response)
+        runtime.state.asset_id = asset_id
 
     def test_vc_aigc_003_wait_for_virtual_asset_active(
         self,
@@ -171,10 +167,9 @@ class TestVolcCnVirtualAssetsFlow:
             generate_audio=VOLC_VIRTUAL_VIDEO_GENERATE_AUDIO,
             watermark=VOLC_VIRTUAL_VIDEO_WATERMARK,
         )
+        runtime.assertions.assert_media_generation_submit_succeeded(response)
         task_id = runtime.task.extract_media_task_id(response)
         runtime.state.task_ids[model_id] = task_id
-
-        runtime.assertions.assert_media_generation_submit_succeeded(response)
 
     @pytest.mark.parametrize("model_id", VOLC_VIRTUAL_VIDEO_MODELS)
     def test_vc_aigc_005_wait_for_asset_video_succeeded(

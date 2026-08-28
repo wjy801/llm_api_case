@@ -144,13 +144,10 @@ class MaterialLibraryRequest(BaseRequest):
     def get_volc_asset_group(
         self,
         group_id: str,
-        *,
-        project_name: str = "default",
         **kwargs: Any,
     ) -> requests.Response:
         return self.get(
             self.volc_asset_group_path_template.format(group_id=group_id),
-            params={"ProjectName": project_name},
             **kwargs,
         )
 
@@ -169,12 +166,11 @@ class MaterialLibraryRequest(BaseRequest):
     def delete_volc_asset_group(
         self,
         group_id: str,
-        payload: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> requests.Response:
         return self.post(
             self.volc_asset_group_delete_path_template.format(group_id=group_id),
-            json=payload or {"ProjectName": "default"},
+            json={},
             **kwargs,
         )
 
@@ -187,13 +183,10 @@ class MaterialLibraryRequest(BaseRequest):
     def get_volc_asset(
         self,
         asset_id: str,
-        *,
-        project_name: str = "default",
         **kwargs: Any,
     ) -> requests.Response:
         return self.get(
             self.volc_asset_path_template.format(asset_id=asset_id),
-            params={"ProjectName": project_name},
             **kwargs,
         )
 
@@ -212,12 +205,11 @@ class MaterialLibraryRequest(BaseRequest):
     def delete_volc_asset(
         self,
         asset_id: str,
-        payload: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> requests.Response:
         return self.post(
             self.volc_asset_delete_path_template.format(asset_id=asset_id),
-            json=payload or {"ProjectName": "default"},
+            json={},
             **kwargs,
         )
 
