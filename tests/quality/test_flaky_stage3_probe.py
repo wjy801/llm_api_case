@@ -718,6 +718,8 @@ def test_probe_jenkinsfile_has_fixed_parameters_and_claims_before_checkout():
     assert text.count("'DISPATCH_TOKEN='") == 2
     assert "PROBE_CONTROLLER_NODE_NAME" in text
     assert "PROBE_CONTROLLER_OS_IDENTITY" in text
+    assert text.count("isUnix()") == 4
+    assert "variable: targetApiKeyVariable" in text
     assert text.count("Probe target must use a different Jenkins node and OS identity") == 2
 
     checklist = (

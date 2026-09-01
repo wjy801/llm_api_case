@@ -52,10 +52,9 @@ pipeline {
                         }
                         node('probe-target-restricted') {
                             def actualTargetSha
-                            def targetIdentity = bat(
-                                returnStdout: true,
-                                script: '@whoami'
-                            ).trim()
+                            def targetIdentity = isUnix()
+                                ? sh(returnStdout: true, script: 'id -un').trim()
+                                : bat(returnStdout: true, script: '@whoami').trim()
                             if (env.NODE_NAME == env.PROBE_CONTROLLER_NODE_NAME ||
                                     targetIdentity.equalsIgnoreCase(env.PROBE_CONTROLLER_OS_IDENTITY)) {
                                 error('Probe target must use a different Jenkins node and OS identity')
@@ -73,7 +72,9 @@ pipeline {
                                 checkout([$class: 'GitSCM', branches: [[name: plan.target_commit_sha]],
                                           extensions: [[$class: 'CleanBeforeCheckout']],
                                           userRemoteConfigs: scm.userRemoteConfigs])
-                                actualTargetSha = bat(returnStdout: true, script: '@git rev-parse HEAD').trim()
+                                actualTargetSha = isUnix()
+                                    ? sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                                    : bat(returnStdout: true, script: '@git rev-parse HEAD').trim()
                                 stash name: "probe-source-${roundIndex}", includes: '**/*', excludes: 'reports/**'
                             }
                             env.PROBE_ACTUAL_TARGET_SHA = actualTargetSha
@@ -84,10 +85,9 @@ pipeline {
                             }
                         }
                         node('probe-target-restricted') {
-                            def targetIdentity = bat(
-                                returnStdout: true,
-                                script: '@whoami'
-                            ).trim()
+                            def targetIdentity = isUnix()
+                                ? sh(returnStdout: true, script: 'id -un').trim()
+                                : bat(returnStdout: true, script: '@whoami').trim()
                             if (env.NODE_NAME == env.PROBE_CONTROLLER_NODE_NAME ||
                                     targetIdentity.equalsIgnoreCase(env.PROBE_CONTROLLER_OS_IDENTITY)) {
                                 error('Probe target must use a different Jenkins node and OS identity')
@@ -117,9 +117,14 @@ pipeline {
                                 env.QUALITY_ENABLE = '1'
                                 env.QUALITY_FLAKY_MODE = 'off'
                                 env.QUALITY_OUTPUT_DIR = 'reports/quality'
-                                withCredentials([string(credentialsId: 'probe-target-api-key', variable: 'PROBE_TARGET_API_KEY')]) {
-                                    def targetCommand = "@\"${env.QUALITY_FLAKY_TARGET_PYTHON}\" -m quality.probe_target probe-plan.json"
-                                    env.PROBE_TARGET_EXIT_CODE = "${bat(returnStatus: true, script: targetCommand)}"
+                                def targetApiKeyVariable = plan.environment == 'china'
+                                    ? 'CHINA_API_KEY'
+                                    : 'OVERSEAS_API_KEY'
+                                withCredentials([string(credentialsId: 'probe-target-api-key', variable: targetApiKeyVariable)]) {
+                                    def targetCommand = "\"${env.QUALITY_FLAKY_TARGET_PYTHON}\" -m quality.probe_target probe-plan.json"
+                                    env.PROBE_TARGET_EXIT_CODE = "${isUnix()
+                                        ? sh(returnStatus: true, script: targetCommand)
+                                        : bat(returnStatus: true, script: "@${targetCommand}")}"
                                 }
                                 stash name: "probe-round-${roundIndex}", includes: 'reports/quality/**', allowEmpty: true
                             }
