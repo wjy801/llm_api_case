@@ -122,9 +122,10 @@ pipeline {
                                     : 'OVERSEAS_API_KEY'
                                 withCredentials([string(credentialsId: 'probe-target-api-key', variable: targetApiKeyVariable)]) {
                                     def targetCommand = "\"${env.QUALITY_FLAKY_TARGET_PYTHON}\" -m quality.probe_target probe-plan.json"
-                                    env.PROBE_TARGET_EXIT_CODE = "${isUnix()
+                                    def targetExitCode = isUnix()
                                         ? sh(returnStatus: true, script: targetCommand)
-                                        : bat(returnStatus: true, script: "@${targetCommand}")}"
+                                        : bat(returnStatus: true, script: "@${targetCommand}")
+                                    env.PROBE_TARGET_EXIT_CODE = "${targetExitCode}"
                                 }
                                 stash name: "probe-round-${roundIndex}", includes: 'reports/quality/**', allowEmpty: true
                             }
