@@ -29,11 +29,12 @@ from quality.models import (
     IntegrityStatus,
     IssueSeverity,
     RequestMetric,
+    RunKind,
 )
 from quality.storage import ensure_quality_dirs, write_json_atomic, write_jsonl_atomic
 
 
-MANIFEST_VERSION = "quality.merge.v1"
+MANIFEST_VERSION = "quality.merge.v2"
 MERGE_VERSION = "p0-merge.v1"
 
 
@@ -45,6 +46,18 @@ class QualityMergeRequest:
     expected_case_count: int | None = None
     junit_files: tuple[Path, ...] = ()
     run_start_time: datetime | None = None
+    run_kind: RunKind = RunKind.NORMAL
+    policy_revision: str | None = None
+    controller_commit_sha: str | None = None
+    attempt_id: str | None = None
+    trigger_id: str | None = None
+    plan_digest: str | None = None
+    round_no: int | None = None
+    target_commit_sha: str | None = None
+    jenkins_job_name: str | None = None
+    jenkins_build_number: str | None = None
+    fact_schema_version: str | None = None
+    plugin_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -500,6 +513,18 @@ def _write_manifest(
     manifest = {
         "manifest_version": MANIFEST_VERSION,
         "schema_version": SCHEMA_VERSION,
+        "run_kind": state.request.run_kind.value,
+        "policy_revision": state.request.policy_revision,
+        "controller_commit_sha": state.request.controller_commit_sha,
+        "attempt_id": state.request.attempt_id,
+        "trigger_id": state.request.trigger_id,
+        "plan_digest": state.request.plan_digest,
+        "round_no": state.request.round_no,
+        "target_commit_sha": state.request.target_commit_sha,
+        "jenkins_job_name": state.request.jenkins_job_name,
+        "jenkins_build_number": state.request.jenkins_build_number,
+        "fact_schema_version": state.request.fact_schema_version,
+        "plugin_version": state.request.plugin_version,
         "run_id": state.request.run_id,
         "status": status,
         "merge_version": MERGE_VERSION,

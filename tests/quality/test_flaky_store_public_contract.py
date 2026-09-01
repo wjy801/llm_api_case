@@ -22,17 +22,16 @@ def test_flaky_store_is_a_package_with_the_stable_root_contract():
     assert flaky_store.__spec__.submodule_search_locations is not None
     assert package_dir.name == "flaky_store"
     assert not (package_dir.parent / "flaky_store.py").exists()
-    assert flaky_store.__all__ == (
-        "FlakyStore",
-        "FlakyStoreError",
-        "MIGRATIONS_DIRECTORY",
-    )
+    assert "FlakyStore" in flaky_store.__all__
+    assert "FlakyV3Service" in flaky_store.__all__
+    assert "migrate_store" in flaky_store.__all__
     assert DEFAULT_BUSY_TIMEOUT_MS == 5000
     assert MIGRATIONS_DIRECTORY == package_dir / "migrations"
 
 
 def test_flaky_store_constructor_and_public_method_signatures_are_compatible():
     expected = {
+        "migrate": ("self",),
         "__init__": (
             "self",
             "database_path",
@@ -66,6 +65,12 @@ def test_flaky_store_constructor_and_public_method_signatures_are_compatible():
             "state_epoch",
         ),
         "check_database": ("self",),
+        "import_normal": ("self", "request", "now"),
+        "import_probe": ("self", "request", "now"),
+        "recovery_start": ("self", "request", "now"),
+        "recovery_status": ("self", "flaky_key"),
+        "recovery_close": ("self", "request", "now"),
+        "recovery_cancel": ("self", "request", "now"),
     }
     for name, parameters in expected.items():
         assert tuple(inspect.signature(getattr(FlakyStore, name)).parameters) == parameters

@@ -35,6 +35,13 @@ from quality.flaky_models import (
     GovernanceStatus,
 )
 from quality.semantic_aggregator import SemanticMergeRequest, merge_semantic_run
+from quality.flaky_store import FlakyStoreError, migrate_store
+from quality.flaky_store.v3_service import (
+    FlakyV3Service,
+    RecoveryCancelRequest,
+    RecoveryCloseRequest,
+    RecoveryStartRequest,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -92,6 +99,11 @@ def main(argv: list[str] | None = None) -> int:
         help="check Flaky history schema and SQLite integrity",
     )
     flaky_db_check_parser.add_argument("--db", required=True)
+    flaky_db_migrate_parser = subparsers.add_parser(
+        "flaky-db-migrate",
+        help="explicitly apply pending Flaky database migrations",
+    )
+    flaky_db_migrate_parser.add_argument("--db", required=True)
     flaky_state_evaluate_parser = subparsers.add_parser(
         "flaky-state-evaluate",
         help="evaluate Flaky state for one imported run",
@@ -124,7 +136,6 @@ def main(argv: list[str] | None = None) -> int:
     for command, help_text in (
         ("flaky-confirm", "manually confirm a SUSPECTED Flaky state"),
         ("flaky-mark-not-flaky", "manually correct a state to STABLE"),
-        ("flaky-start-recovery", "start recovery for a quarantined state"),
         ("flaky-cancel-quarantine", "cancel a mistaken quarantine"),
     ):
         action_parser = subparsers.add_parser(command, help=help_text)
@@ -132,6 +143,42 @@ def main(argv: list[str] | None = None) -> int:
         action_parser.add_argument("--flaky-key", required=True)
         action_parser.add_argument("--actor", required=True)
         action_parser.add_argument("--reason", required=True)
+        if command in {"flaky-confirm", "flaky-mark-not-flaky"}:
+            action_parser.add_argument("--detection-generation", required=True, type=int)
+            action_parser.add_argument("--comparability-fingerprint", required=True)
+    recovery_start_parser = subparsers.add_parser(
+        "flaky-recovery-start",
+        help="create a local Probe verification attempt (does not call Jenkins)",
+    )
+    recovery_start_parser.add_argument("--db", required=True)
+    recovery_start_parser.add_argument("--flaky-key", required=True)
+    recovery_start_parser.add_argument("--target-commit-sha", required=True)
+    recovery_start_parser.add_argument("--actor", required=True)
+    recovery_start_parser.add_argument("--reason", required=True)
+    recovery_start_parser.add_argument("--request-id", required=True)
+    recovery_start_parser.add_argument("--expected-row-version", required=True, type=int)
+    recovery_status_parser = subparsers.add_parser(
+        "flaky-recovery-status", help="show detection, governance, and attempt axes"
+    )
+    recovery_status_parser.add_argument("--db", required=True)
+    recovery_status_parser.add_argument("--flaky-key", required=True)
+    recovery_close_parser = subparsers.add_parser(
+        "flaky-recovery-close", help="manually close a READY_TO_CLOSE attempt"
+    )
+    recovery_close_parser.add_argument("--db", required=True)
+    recovery_close_parser.add_argument("--attempt-id", required=True)
+    recovery_close_parser.add_argument("--actor", required=True)
+    recovery_close_parser.add_argument("--reason", required=True)
+    recovery_close_parser.add_argument("--expected-row-version", required=True, type=int)
+    recovery_close_parser.add_argument("--verified-branch-head", required=True)
+    recovery_cancel_parser = subparsers.add_parser(
+        "flaky-recovery-cancel", help="cancel a live Probe verification attempt"
+    )
+    recovery_cancel_parser.add_argument("--db", required=True)
+    recovery_cancel_parser.add_argument("--attempt-id", required=True)
+    recovery_cancel_parser.add_argument("--actor", required=True)
+    recovery_cancel_parser.add_argument("--reason", required=True)
+    recovery_cancel_parser.add_argument("--expected-row-version", required=True, type=int)
     flaky_quarantine_parser = subparsers.add_parser(
         "flaky-quarantine",
         help="create an audited quarantine governance lifecycle",
@@ -169,6 +216,15 @@ def main(argv: list[str] | None = None) -> int:
         return _flaky_reset_epoch(parsed)
     if parsed.command == "flaky-db-check":
         return _flaky_db_check(parsed)
+    if parsed.command == "flaky-db-migrate":
+        return _flaky_db_migrate(parsed)
+    if parsed.command in {
+        "flaky-recovery-start",
+        "flaky-recovery-status",
+        "flaky-recovery-close",
+        "flaky-recovery-cancel",
+    }:
+        return _flaky_recovery(parsed)
     if parsed.command == "flaky-state-evaluate":
         return _flaky_state_evaluate(parsed)
     if parsed.command == "flaky-state":
@@ -178,7 +234,6 @@ def main(argv: list[str] | None = None) -> int:
     if parsed.command in {
         "flaky-confirm",
         "flaky-mark-not-flaky",
-        "flaky-start-recovery",
         "flaky-cancel-quarantine",
     }:
         return _flaky_manual_action(parsed)
@@ -333,11 +388,83 @@ def _flaky_reset_epoch(parsed: argparse.Namespace) -> int:
 
 def _flaky_db_check(parsed: argparse.Namespace) -> int:
     try:
-        result = check_flaky_database(Path(parsed.db))
+        result = FlakyV3Service(Path(parsed.db)).check_invariants()
     except Exception as error:
-        print(f"quality Flaky database check failed: {type(error).__name__}: {error}", file=sys.stderr)
+        _print_cli_error(error)
         return 2
-    print(_model_json(result))
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if result["status"] == "OK" else 2
+
+
+def _flaky_db_migrate(parsed: argparse.Namespace) -> int:
+    try:
+        result = migrate_store(Path(parsed.db))
+    except Exception as error:
+        _print_cli_error(error)
+        return 2
+    print(
+        json.dumps(
+            {
+                "schema_version": "quality.flaky-db-migrate.v1",
+                "status": "OK",
+                "previous_database_schema_version": result.previous_schema_version,
+                "database_schema_version": result.schema_version,
+                "migration_applied": result.migration_applied,
+                "backup_path": str(result.backup_path) if result.backup_path else None,
+                "checksums": result.checksums,
+                "check_result": result.quick_check,
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _flaky_recovery(parsed: argparse.Namespace) -> int:
+    service = FlakyV3Service(Path(parsed.db))
+    now = datetime.now(UTC)
+    try:
+        if parsed.command == "flaky-recovery-start":
+            result = service.recovery_start(
+                RecoveryStartRequest(
+                    flaky_key=parsed.flaky_key,
+                    target_commit_sha=parsed.target_commit_sha,
+                    actor=parsed.actor,
+                    reason=parsed.reason,
+                    request_id=parsed.request_id,
+                    expected_row_version=parsed.expected_row_version,
+                ),
+                now=now,
+            )
+        elif parsed.command == "flaky-recovery-status":
+            result = service.recovery_status(parsed.flaky_key)
+        elif parsed.command == "flaky-recovery-close":
+            result = service.recovery_close(
+                RecoveryCloseRequest(
+                    attempt_id=parsed.attempt_id,
+                    actor=parsed.actor,
+                    reason=parsed.reason,
+                    expected_row_version=parsed.expected_row_version,
+                    verified_branch_head=parsed.verified_branch_head,
+                ),
+                now=now,
+            )
+        else:
+            result = service.recovery_cancel(
+                RecoveryCancelRequest(
+                    attempt_id=parsed.attempt_id,
+                    actor=parsed.actor,
+                    reason=parsed.reason,
+                    expected_row_version=parsed.expected_row_version,
+                ),
+                now=now,
+            )
+    except Exception as error:
+        _print_cli_error(error)
+        return 2
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
 
@@ -424,15 +551,33 @@ def _flaky_state_rebuild(parsed: argparse.Namespace) -> int:
 
 
 def _flaky_manual_action(parsed: argparse.Namespace) -> int:
+    if parsed.command in {"flaky-confirm", "flaky-mark-not-flaky"}:
+        try:
+            result = FlakyV3Service(Path(parsed.db)).override_detection(
+                flaky_key=parsed.flaky_key,
+                detection_generation=parsed.detection_generation,
+                fingerprint=parsed.comparability_fingerprint,
+                action=(
+                    "confirm_flaky"
+                    if parsed.command == "flaky-confirm"
+                    else "mark_not_flaky"
+                ),
+                actor=parsed.actor,
+                reason=parsed.reason,
+                idempotency_key=_manual_idempotency_key(parsed),
+                now=datetime.now(UTC),
+            )
+        except Exception as error:
+            _print_cli_error(error)
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
     request = FlakyManualActionRequest(
         flaky_key=parsed.flaky_key,
         actor=parsed.actor,
         reason=parsed.reason,
     )
     handlers = {
-        "flaky-confirm": confirm_flaky_state,
-        "flaky-mark-not-flaky": mark_flaky_not_flaky,
-        "flaky-start-recovery": start_flaky_recovery,
         "flaky-cancel-quarantine": cancel_flaky_quarantine,
     }
     try:
@@ -507,6 +652,39 @@ def _model_json(model) -> str:
         indent=2,
         sort_keys=True,
     )
+
+
+def _print_cli_error(error: Exception) -> None:
+    code = error.code if isinstance(error, FlakyStoreError) else "unexpected_error"
+    print(
+        json.dumps(
+            {
+                "schema_version": "quality.flaky-cli-error.v1",
+                "status": "ERROR",
+                "error_code": code,
+                "message": str(error),
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
+def _manual_idempotency_key(parsed: argparse.Namespace) -> str:
+    import hashlib
+
+    value = "\0".join(
+        (
+            parsed.command,
+            parsed.flaky_key,
+            str(parsed.detection_generation),
+            parsed.comparability_fingerprint,
+            parsed.actor,
+            parsed.reason,
+        )
+    )
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 if __name__ == "__main__":

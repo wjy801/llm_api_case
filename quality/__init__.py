@@ -158,6 +158,7 @@ _EXPORT_GROUPS = {
         "RequestMetric",
         "RequestUsage",
         "RunRecord",
+        "RunKind",
         "RunStatus",
     ),
     "quality.redaction": (
@@ -326,6 +327,7 @@ __all__ = [
     "RequestGroupRecord",
     "RequestUsage",
     "RunRecord",
+    "RunKind",
     "RunStatus",
     "SemanticCollector",
     "SemanticIntegrityIssue",

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from quality.models import IntegrityStatus, RunRecord, RunStatus
+from quality.models import IntegrityStatus, RunKind, RunRecord, RunStatus
 from quality.storage import (
     append_jsonl,
     ensure_quality_dirs,
@@ -23,6 +23,7 @@ def _run_record() -> RunRecord:
         start_time=datetime(2026, 7, 30, 8, 0, tzinfo=UTC),
         status=RunStatus.FINISHED,
         integrity_status=IntegrityStatus.COMPLETE,
+        run_kind=RunKind.NORMAL,
     )
 
 
@@ -33,7 +34,7 @@ def test_write_json_atomic_creates_parent_and_writes_utf8_model(tmp_path):
     loaded = json.loads(target.read_text(encoding="utf-8"))
 
     assert result == target
-    assert loaded["schema_version"] == "quality.v1"
+    assert loaded["schema_version"] == "quality.v2"
     assert loaded["run_id"] == "run-1"
     assert target.read_bytes().endswith(b"\n")
 

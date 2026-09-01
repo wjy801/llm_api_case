@@ -40,19 +40,33 @@ class FlakyRepository:
         self.busy_timeout_ms = busy_timeout_ms
 
     @contextmanager
-    def connection(self, *, require_existing: bool) -> Iterator[sqlite3.Connection]:
-        self.validate_path(require_existing=require_existing)
+    def connection(
+        self,
+        *,
+        require_existing: bool,
+        read_only: bool = False,
+    ) -> Iterator[sqlite3.Connection]:
+        self.validate_path(require_existing=require_existing, read_only=read_only)
         try:
+            target: str | Path
+            if read_only:
+                target = f"{self.database_path.as_uri()}?mode=ro"
+            else:
+                target = self.database_path
             connection = sqlite3.connect(
-                self.database_path,
+                target,
                 timeout=self.busy_timeout_ms / 1000,
                 isolation_level=None,
+                uri=read_only,
             )
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
-            connection.execute("PRAGMA journal_mode = WAL")
-            connection.execute("PRAGMA synchronous = FULL")
+            if read_only:
+                connection.execute("PRAGMA query_only = ON")
+            else:
+                connection.execute("PRAGMA journal_mode = WAL")
+                connection.execute("PRAGMA synchronous = FULL")
         except sqlite3.Error as error:
             raise translate_sqlite_error(error) from error
         try:
@@ -62,7 +76,28 @@ class FlakyRepository:
         finally:
             connection.close()
 
-    def validate_path(self, *, require_existing: bool) -> None:
+    @contextmanager
+    def in_memory_copy(
+        self, source: sqlite3.Connection
+    ) -> Iterator[sqlite3.Connection]:
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = sqlite3.connect(":memory:", isolation_level=None)
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            source.backup(connection)
+        except sqlite3.Error as error:
+            if connection is not None:
+                connection.close()
+            raise translate_sqlite_error(error) from error
+        try:
+            yield connection
+        except sqlite3.Error as error:
+            raise translate_sqlite_error(error) from error
+        finally:
+            connection.close()
+
+    def validate_path(self, *, require_existing: bool, read_only: bool = False) -> None:
         if str(self.database_path).startswith(("\\\\", "//")):
             raise FlakyStoreError(
                 "unverified_network_database_path",
@@ -84,7 +119,7 @@ class FlakyRepository:
                 "invalid_database_path",
                 "Flaky history database path is not a regular file",
             )
-        if not os.access(parent, os.W_OK):
+        if not read_only and not os.access(parent, os.W_OK):
             raise FlakyStoreError(
                 "database_parent_not_writable",
                 "Flaky history database parent directory is not writable",

@@ -2,6 +2,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("legacy_flaky_runtime")
+
 from quality.flaky_importer import import_flaky_history
 from quality.flaky_models import (
     FlakyImportRequest,
@@ -106,7 +108,7 @@ def test_quarantine_cancel_closes_governance_without_declaring_stable(
     assert closed.resolution is GovernanceResolution.CANCELLED
 
 
-def test_recovery_signature_change_regresses_and_requires_new_quarantine(
+def test_normal_signature_change_does_not_close_or_regress_governance(
     p0_artifact_factory,
     tmp_path,
 ):
@@ -133,15 +135,7 @@ def test_recovery_signature_change_regresses_and_requires_new_quarantine(
     _evaluate(p0_artifact_factory, store, database, "run-4", "fail")
 
     state = store.states(case_id=confirmed.case_id)[0]
-    closed = store.governance(status=GovernanceStatus.CLOSED)[0]
-    assert state.current_state is FlakyState.CONFIRMED
-    assert closed.resolution is GovernanceResolution.REGRESSED
-    with pytest.raises(FlakyStoreError) as captured:
-        store.start_recovery(
-            FlakyManualActionRequest(
-                flaky_key=confirmed.flaky_key,
-                actor="owner",
-                reason="invalid second recovery",
-            )
-        )
-    assert captured.value.code == "invalid_state_transition"
+    recovering = store.governance(status=GovernanceStatus.RECOVERING)[0]
+    assert state.detected_state is FlakyState.CONFIRMED
+    assert recovering.governance_id
+    assert store.governance(status=GovernanceStatus.CLOSED) == ()

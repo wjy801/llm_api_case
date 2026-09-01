@@ -4,6 +4,8 @@ import sqlite3
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("legacy_flaky_runtime")
+
 from quality.flaky_importer import prepare_flaky_import
 from quality.flaky_models import FlakyImportRequest, FlakyManualActionRequest
 from quality.flaky_store import FlakyStore
@@ -127,6 +129,7 @@ def test_one_public_write_uses_one_main_connection(
 ):
     database = tmp_path / "history.sqlite3"
     prepared = _prepare(p0_artifact_factory, database)
+    store = FlakyStore(database)
     original_connect = sqlite3.connect
     main_connections = 0
 
@@ -138,6 +141,6 @@ def test_one_public_write_uses_one_main_connection(
 
     monkeypatch.setattr(repository_module.sqlite3, "connect", counting_connect)
 
-    FlakyStore(database).import_run(prepared.metadata, prepared.candidates)
+    store.import_run(prepared.metadata, prepared.candidates)
 
     assert main_connections == 1

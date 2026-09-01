@@ -7,6 +7,8 @@ import sqlite3
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("legacy_flaky_runtime")
+
 from quality.flaky_importer import FlakyImportRequest, import_flaky_history
 from quality.flaky_store import FlakyStore
 from quality.flaky_v2_audit import (

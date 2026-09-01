@@ -84,6 +84,7 @@ def _build_sources(semantic_runtime):
             status=RunStatus.FINISHED,
             integrity_status=p0.integrity_status,
             integrity_issues=p0.integrity_issues,
+            run_kind="NORMAL",
         ),
     )
     merge_semantic_run(

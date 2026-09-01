@@ -248,7 +248,7 @@ def test_identity_normalization_and_key_are_stable():
     )
 
 
-def test_stage0_does_not_add_v3_or_probe_migrations():
+def test_stage1_adds_exactly_one_v3_migration_after_frozen_stage0_assets():
     migration_names = sorted(
         path.name
         for path in (
@@ -259,6 +259,7 @@ def test_stage0_does_not_add_v3_or_probe_migrations():
     assert migration_names == [
         "0001_observation_store.sql",
         "0002_flaky_state_machine.sql",
+        "0003_v3_state_machine.sql",
     ]
 
 

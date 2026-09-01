@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 import hashlib
+from pathlib import Path
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +12,7 @@ from common.runtime_hooks import bind_runtime_hooks, reset_runtime_hooks
 from quality.collector import configure_collector, reset_collector
 from quality.aggregator import MANIFEST_VERSION, MERGE_VERSION
 from quality.classifier import FINGERPRINT_VERSION
+from quality.flaky_v3 import DEFAULT_GOVERNANCE_POLICY
 from quality.models import (
     SCHEMA_VERSION,
     CasePhase,
@@ -23,6 +26,7 @@ from quality.models import (
     IssueSeverity,
     OwnerDomain,
     RunRecord,
+    RunKind,
     RunStatus,
 )
 from quality.runtime_context import (
@@ -41,6 +45,8 @@ from quality.semantic_collector import (
 )
 from quality.runtime_adapter import QualityRuntimeHooks
 from quality.storage import write_json_atomic, write_jsonl_atomic
+from quality.flaky_store import MIGRATIONS_DIRECTORY, FlakyStore, migrate_store
+from quality.flaky_store import governance as legacy_governance
 
 
 @pytest.fixture
@@ -185,12 +191,26 @@ def p0_artifact_factory(tmp_path):
             },
             "output_hashes": output_hashes,
             "integrity_status": integrity_status.value,
+            "run_kind": RunKind.NORMAL.value,
+            "policy_revision": DEFAULT_GOVERNANCE_POLICY.revision,
+            "controller_commit_sha": "c" * 40,
+            "attempt_id": None,
+            "trigger_id": None,
+            "plan_digest": None,
+            "round_no": None,
+            "target_commit_sha": None,
+            "jenkins_job_name": None,
+            "jenkins_build_number": None,
+            "fact_schema_version": "quality.fact.v1",
+            "plugin_version": "quality-plugin.v1",
         }
         write_json_atomic(merged / "manifest.json", manifest)
         run = RunRecord(
             run_id=run_id,
             job_name=job_name,
             build_number=build_number,
+            branch="dev3",
+            commit_sha="a" * 40,
             trigger="jenkins" if job_name and build_number else "local",
             environment=environment,
             start_time=start,
@@ -198,6 +218,11 @@ def p0_artifact_factory(tmp_path):
             status=run_status,
             integrity_status=integrity_status,
             integrity_issues=issues,
+            run_kind=RunKind.NORMAL,
+            policy_revision=DEFAULT_GOVERNANCE_POLICY.revision,
+            controller_commit_sha="c" * 40,
+            fact_schema_version="quality.fact.v1",
+            plugin_version="quality-plugin.v1",
         )
         write_json_atomic(output_dir / "run.json", run)
         return SimpleNamespace(
@@ -211,6 +236,39 @@ def p0_artifact_factory(tmp_path):
         )
 
     return build
+
+
+@pytest.fixture
+def legacy_flaky_runtime(tmp_path, monkeypatch, request):
+    """Run frozen v2 regression tests against an explicitly migrated v2 fixture."""
+    migrations = tmp_path / "legacy-v2-migrations"
+    migrations.mkdir(exist_ok=True)
+    for name in ("0001_observation_store.sql", "0002_flaky_state_machine.sql"):
+        destination = migrations / name
+        if not destination.exists():
+            shutil.copy2(MIGRATIONS_DIRECTORY / name, destination)
+
+    def store_factory(database_path, **kwargs):
+        path = Path(database_path)
+        selected_migrations = Path(kwargs.get("migrations_directory", migrations))
+        migrate_store(path, migrations_directory=selected_migrations)
+        kwargs.setdefault("migrations_directory", selected_migrations)
+        store = FlakyStore(path, **kwargs)
+        store.confirm_flaky = lambda action: store._legacy_governance_write(  # type: ignore[method-assign]
+            legacy_governance.confirm_flaky, action
+        )
+        store.mark_not_flaky = lambda action: store._legacy_governance_write(  # type: ignore[method-assign]
+            legacy_governance.mark_not_flaky, action
+        )
+        store.start_recovery = lambda action: store._legacy_governance_write(  # type: ignore[method-assign]
+            legacy_governance.start_recovery, action
+        )
+        return store
+
+    monkeypatch.setattr("quality.flaky_importer.FlakyStore", store_factory)
+    if hasattr(request.module, "FlakyStore"):
+        monkeypatch.setattr(request.module, "FlakyStore", store_factory)
+    return SimpleNamespace(store=store_factory, migrations=migrations)
 
 
 def _sha256(path):

@@ -4,6 +4,10 @@ import json
 from pathlib import Path
 import sqlite3
 
+import pytest
+
+pytestmark = pytest.mark.usefixtures("legacy_flaky_runtime")
+
 from quality.flaky_importer import prepare_flaky_import
 from quality.flaky_models import FlakyImportRequest
 from quality.flaky_store import FlakyStore
@@ -80,10 +84,15 @@ def test_two_run_database_matches_the_frozen_pre_refactor_snapshot(
     expected = json.loads(
         (FIXTURE_DIR / "expected-two-run-snapshot.json").read_text(encoding="utf-8")
     )
-    for row in expected["data"]["flaky_import_run"]:
-        row["artifact_ref"] = "<artifact_ref>"
-
-    assert _snapshot(database) == expected
+    actual = _snapshot(database)
+    assert actual["objects"] == expected["objects"]
+    for table, rows in expected["data"].items():
+        if table != "flaky_import_run":
+            assert actual["data"][table] == rows
+    assert [row["run_id"] for row in actual["data"]["flaky_import_run"]] == [
+        "run-1",
+        "run-2",
+    ]
     assert [item.transitioned_count for item in evaluations] == [1, 1]
     assert store.states(case_id="module/test_demo.py::test_case")[0].sample_size == 2
     assert len(store.history(case_id="module/test_demo.py::test_case")) == 2

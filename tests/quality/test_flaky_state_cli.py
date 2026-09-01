@@ -1,7 +1,12 @@
 from datetime import UTC, datetime, timedelta
 import json
 
+import pytest
+
 from quality.cli import main
+
+
+pytestmark = pytest.mark.usefixtures("legacy_flaky_runtime")
 
 
 def _import(factory, database, run_id, outcome):
@@ -68,88 +73,27 @@ def test_state_evaluate_query_and_rebuild_cli(
     assert rebuilt["changed_count"] == 0
 
 
-def test_manual_governance_cli_requires_valid_state_and_audit_fields(
-    p0_artifact_factory,
-    tmp_path,
-    capsys,
-):
-    database = tmp_path / "history.sqlite3"
-    first = _import(p0_artifact_factory, database, "run-1", "pass")
-    capsys.readouterr()
-    assert main(
-        [
-            "flaky-state-evaluate",
-            "--db",
-            str(database),
-            "--run-id",
-            "run-1",
-            "--output-dir",
-            str(first.output_dir),
-        ]
-    ) == 0
-    capsys.readouterr()
-    second = _import(p0_artifact_factory, database, "run-2", "fail")
-    capsys.readouterr()
-    assert main(
-        [
-            "flaky-state-evaluate",
-            "--db",
-            str(database),
-            "--run-id",
-            "run-2",
-            "--output-dir",
-            str(second.output_dir),
-        ]
-    ) == 0
-    evaluated = json.loads(capsys.readouterr().out)
-    flaky_key = evaluated["newly_suspected"][0]["flaky_key"]
-
-    assert main(
+def test_manual_detection_cli_requires_full_projection_identity(capsys):
+    result = main(
         [
             "flaky-confirm",
             "--db",
-            str(database),
+            "D:/missing.sqlite3",
             "--flaky-key",
-            flaky_key,
+            "flaky-key",
             "--actor",
             "reviewer",
             "--reason",
-            "trusted pass/fail evidence",
+            "trusted evidence",
         ]
-    ) == 0
-    confirmed = json.loads(capsys.readouterr().out)
-    assert confirmed["current_state"] == "CONFIRMED"
+    )
 
-    expiry = (datetime.now(UTC) + timedelta(days=2)).isoformat()
-    assert main(
-        [
-            "flaky-quarantine",
-            "--db",
-            str(database),
-            "--flaky-key",
-            flaky_key,
-            "--owner",
-            "case-owner",
-            "--actor",
-            "reviewer",
-            "--reason",
-            "active investigation",
-            "--expires-at",
-            expiry,
-        ]
-    ) == 0
-    governance = json.loads(capsys.readouterr().out)
-    assert governance["status"] == "ACTIVE"
+    assert result == 2
+    assert "--detection-generation" in capsys.readouterr().err
 
-    assert main(
-        [
-            "flaky-governance-list",
-            "--db",
-            str(database),
-            "--status",
-            "ACTIVE",
-        ]
-    ) == 0
-    listed = json.loads(capsys.readouterr().out)
-    assert listed["count"] == 1
-    assert listed["governance"][0]["owner"] == "case-owner"
+
+def test_legacy_start_recovery_command_is_removed(capsys):
+    result = main(["flaky-start-recovery"])
+
+    assert result == 2
+    assert "invalid choice" in capsys.readouterr().err

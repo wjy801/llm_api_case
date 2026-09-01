@@ -25,6 +25,7 @@ from quality.models import (
     RequestMetric,
     RequestUsage,
     RunRecord,
+    RunKind,
     RunStatus,
 )
 
@@ -47,7 +48,7 @@ def test_top_level_models_dump_stable_json_values():
         job_name="API_CASE",
         build_number="123",
         branch="main",
-        commit_sha="abcdef",
+        commit_sha="a" * 40,
         trigger="jenkins",
         environment="china-test",
         start_time=START_TIME,
@@ -55,6 +56,7 @@ def test_top_level_models_dump_stable_json_values():
         status=RunStatus.FINISHED,
         integrity_status=IntegrityStatus.DEGRADED,
         integrity_issues=(issue,),
+        run_kind=RunKind.NORMAL,
     )
     case = CaseResult(
         run_id="run-1",
@@ -131,10 +133,11 @@ def test_version_is_fixed_and_extra_fields_are_rejected():
         "start_time": START_TIME,
         "status": RunStatus.FINISHED,
         "integrity_status": IntegrityStatus.COMPLETE,
+        "run_kind": RunKind.NORMAL,
     }
 
     with pytest.raises(ValidationError, match="schema_version"):
-        RunRecord(schema_version="quality.v2", **base_values)
+        RunRecord(schema_version="quality.v3", **base_values)
 
     with pytest.raises(ValidationError, match="extra_forbidden"):
         RunRecord(unexpected=True, **base_values)
@@ -198,6 +201,7 @@ def test_models_reject_naive_datetime_and_reversed_time_range():
             end_time=START_TIME,
             status=RunStatus.FINISHED,
             integrity_status=IntegrityStatus.COMPLETE,
+            run_kind=RunKind.NORMAL,
         )
 
 

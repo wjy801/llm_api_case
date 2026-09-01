@@ -112,12 +112,9 @@ def _load_quality_facts(
         return None, manifest_payload, False
 
     run_id = _text(run_payload.get("run_id"))
-    if _append_exact_field_warning(
-        {"schema_version": run_payload.get("schema_version")},
-        {"schema_version": SCHEMA_VERSION},
-        {"schema_version": "质量运行记录 Schema 不受支持"},
-        warnings,
-    ):
+    run_schema = run_payload.get("schema_version")
+    if run_schema not in {"quality.v1", SCHEMA_VERSION}:
+        warnings.append("质量运行记录 Schema 不受支持")
         return run_id, manifest_payload, False
     if not run_id:
         warnings.append("质量运行记录与事实清单 run_id 不一致")
@@ -131,8 +128,12 @@ def _load_quality_facts(
         },
         {
             "run_id": run_id,
-            "manifest_version": QUALITY_MANIFEST_VERSION,
-            "schema_version": SCHEMA_VERSION,
+            "manifest_version": (
+                "quality.merge.v1"
+                if run_schema == "quality.v1"
+                else QUALITY_MANIFEST_VERSION
+            ),
+            "schema_version": run_schema,
             "status": "complete",
         },
         {
