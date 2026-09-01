@@ -81,7 +81,7 @@ def _database(tmp_path):
     return database
 
 
-def test_dashboard_is_loopback_only_and_has_no_write_routes(tmp_path):
+def test_dashboard_is_loopback_only_and_has_only_the_probe_write_route(tmp_path):
     assert validate_loopback_host("127.0.0.1") == "127.0.0.1"
     assert validate_loopback_host("::1") == "::1"
     for host in ("localhost", "0.0.0.0", "192.168.1.10"):
@@ -89,12 +89,12 @@ def test_dashboard_is_loopback_only_and_has_no_write_routes(tmp_path):
             validate_loopback_host(host)
 
     app = create_app(_database(tmp_path))
-    methods = {
-        method
+    write_routes = {
+        route.path
         for route in app.routes
-        for method in (getattr(route, "methods", None) or set())
+        if "POST" in (getattr(route, "methods", None) or set())
     }
-    assert methods <= {"GET", "HEAD"}
+    assert write_routes == {"/api/v1/governances/{governance_id}/probe-attempts"}
 
 
 def test_dashboard_api_html_escaping_head_and_stable_errors(tmp_path):
@@ -105,7 +105,7 @@ def test_dashboard_api_html_escaping_head_and_stable_errors(tmp_path):
     assert client.get("/health/ready").status_code == 200
     summary = client.get("/api/v1/summary")
     assert summary.status_code == 200
-    assert summary.json()["database_schema_version"] == 3
+    assert summary.json()["database_schema_version"] == 4
     assert client.head("/api/v1/summary").status_code == 200
 
     page = client.get("/governance")

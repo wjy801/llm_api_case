@@ -25,6 +25,7 @@ from quality.flaky_store.v3_service import (
     RecoveryStartRequest,
 )
 from quality.cli import main
+from quality.classifier import FINGERPRINT_VERSION
 from quality.flaky_v3 import (
     ComparabilityFacts,
     DEFAULT_GOVERNANCE_POLICY,
@@ -51,10 +52,10 @@ def test_runtime_requires_explicit_migration_and_migrate_is_idempotent(tmp_path)
     second = migrate_store(database)
 
     assert first.previous_schema_version == 0
-    assert first.schema_version == 3
+    assert first.schema_version == 4
     assert first.migration_applied is True
     assert first.backup_path is not None and first.backup_path.is_file()
-    assert second.previous_schema_version == 3
+    assert second.previous_schema_version == 4
     assert second.migration_applied is False
     assert second.backup_path is None
     assert service.check_invariants()["status"] == "OK"
@@ -914,7 +915,7 @@ def _manifest(run: RunRecord) -> dict[str, object]:
         "run_id": run.run_id,
         "status": "complete",
         "merge_version": "p0-merge.v1",
-        "fingerprint_version": "failure-fingerprint.v1",
+        "fingerprint_version": FINGERPRINT_VERSION,
         "integrity_status": run.integrity_status.value,
         "output_hashes": {
             "case-results": _digest(f"{run.run_id}:cases"),

@@ -248,7 +248,7 @@ def test_identity_normalization_and_key_are_stable():
     )
 
 
-def test_stage1_adds_exactly_one_v3_migration_after_frozen_stage0_assets():
+def test_stage3_adds_v3_and_v4_migrations_after_frozen_stage0_assets():
     migration_names = sorted(
         path.name
         for path in (
@@ -260,6 +260,7 @@ def test_stage1_adds_exactly_one_v3_migration_after_frozen_stage0_assets():
         "0001_observation_store.sql",
         "0002_flaky_state_machine.sql",
         "0003_v3_state_machine.sql",
+        "0004_probe_dispatch.sql",
     ]
 
 

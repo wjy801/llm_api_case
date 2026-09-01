@@ -7,9 +7,10 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
-from typing import Iterator, Sequence
+from typing import Iterator, Mapping, Sequence
 import uuid
 
+from quality.classifier import FINGERPRINT_VERSION
 from quality.flaky_identity import (
     build_epoch_scope_key,
     build_flaky_key,
@@ -71,6 +72,7 @@ class NormalImportRequest:
     source_digest: str
     admission_facts: NormalRunAdmissionFacts
     cases: tuple[NormalCaseEvidence, ...]
+    preexcluded_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,7 @@ class ProbeImportRequest:
     rerun_supported: bool = True
     trusted_failure: bool = False
     diagnostic_codes: tuple[str, ...] = ()
+    envelope: object | None = None
 
 
 @dataclass(frozen=True)
@@ -121,6 +124,7 @@ class FlakyV3Service:
         *,
         busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
         migrations_directory: str | Path = MIGRATIONS_DIRECTORY,
+        probe_evidence_keys: Mapping[str, bytes] | None = None,
     ) -> None:
         self.database_path = Path(database_path)
         if not self.database_path.is_absolute():
@@ -129,6 +133,9 @@ class FlakyV3Service:
             )
         self.busy_timeout_ms = busy_timeout_ms
         self.migrations_directory = Path(migrations_directory)
+        self.probe_evidence_keys = {
+            str(key): bytes(value) for key, value in (probe_evidence_keys or {}).items()
+        }
         self.repository = FlakyRepository(
             self.database_path, busy_timeout_ms=busy_timeout_ms
         )
@@ -143,6 +150,11 @@ class FlakyV3Service:
         _require_time(now, "now")
         _validate_run_manifest(request.run, request.manifest)
         source_digest = _require_digest(request.source_digest, "source_digest")
+        if request.preexcluded_count < 0:
+            raise FlakyStoreError(
+                "invalid_request", "preexcluded_count must not be negative"
+            )
+        total_case_count = len(request.cases) + request.preexcluded_count
         with self._write() as connection:
             duplicate = self._existing_run(connection, request.run.run_id, source_digest)
             if duplicate:
@@ -163,7 +175,7 @@ class FlakyV3Service:
                 source_digest,
                 now,
                 eligible_count=0,
-                excluded_count=len(request.cases),
+                excluded_count=total_case_count,
             )
             self._insert_admission(
                 connection,
@@ -258,7 +270,7 @@ class FlakyV3Service:
                 SET eligible_count = ?, excluded_count = ?
                 WHERE run_id = ?
                 """,
-                (inserted, len(request.cases) - inserted, request.run.run_id),
+                (inserted, total_case_count - inserted, request.run.run_id),
             )
             for cohort in sorted(affected):
                 self._reproject(connection, *cohort, now=now, config=detection_config)
@@ -268,7 +280,7 @@ class FlakyV3Service:
                 "run_id": request.run.run_id,
                 "run_admission": run_admission.model_dump(mode="json"),
                 "observation_count": inserted,
-                "excluded_count": len(request.cases) - inserted,
+                "excluded_count": total_case_count - inserted,
             }
 
     def quarantine(
@@ -429,6 +441,13 @@ class FlakyV3Service:
             if updated.rowcount != 1:
                 raise FlakyStoreError("row_version_conflict", "governance row changed")
             expires_at = now + timedelta(hours=request.policy.max_attempt_age_hours)
+            occupied = connection.execute(
+                "SELECT trigger_id FROM flaky_probe_capacity_slot WHERE slot_id = 1"
+            ).fetchone()
+            if occupied is not None:
+                raise FlakyStoreError(
+                    "probe_capacity_exhausted", "the global Probe slot is occupied"
+                )
             connection.execute(
                 """
                 INSERT INTO flaky_verification_attempt (
@@ -459,20 +478,63 @@ class FlakyV3Service:
             )
             connection.execute(
                 """
+                INSERT INTO flaky_probe_plan (
+                    attempt_id, governance_id, flaky_key, plan_version,
+                    canonical_json, plan_digest, case_id, param_hash,
+                    environment, execution_profile, state_epoch, target_branch,
+                    target_commit_sha, controller_commit_sha, policy_revision,
+                    probe_evidence_rule_version, fact_schema_version,
+                    required_consecutive_passes, min_interval_minutes,
+                    max_attempt_age_hours, max_non_counting_runs,
+                    max_dispatch_attempts, max_orchestration_rounds,
+                    allowed_job_full_name, created_at
+                )
+                SELECT ?, ?, ?, 'legacy-flaky-probe-plan.v0', '{"legacy":true}',
+                       ?, identity.case_id, identity.param_hash,
+                       identity.environment, identity.execution_profile,
+                       identity.state_epoch, 'dev3', ?, ?, ?,
+                       'flaky-probe-evidence.v1', 'quality.v2', ?, ?, ?, ?,
+                       1, 10, 'legacy-local-probe', ?
+                FROM flaky_identity AS identity WHERE identity.flaky_key = ?
+                """,
+                (
+                    attempt_id,
+                    governance["governance_id"],
+                    request.flaky_key,
+                    plan_digest,
+                    request.target_commit_sha,
+                    request.target_commit_sha,
+                    request.policy.revision,
+                    request.policy.required_consecutive_passes,
+                    request.policy.min_interval_minutes,
+                    request.policy.max_attempt_age_hours,
+                    request.policy.max_non_counting_runs,
+                    utc_text(now),
+                    request.flaky_key,
+                ),
+            )
+            connection.execute(
+                """
                 INSERT INTO flaky_probe_trigger (
-                    trigger_id, attempt_id, request_id, plan_digest,
-                    target_commit_sha, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)
+                    trigger_id, attempt_id, request_id, payload_hash, plan_digest,
+                    target_commit_sha, status, allowed_job_full_name,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', 'legacy-local-probe', ?, ?)
                 """,
                 (
                     trigger_id,
                     attempt_id,
                     request_id,
+                    f"sha256:{_hash_payload({'flaky_key': request.flaky_key, 'target_commit_sha': request.target_commit_sha, 'policy_revision': request.policy.revision, 'actor': actor, 'reason': reason})}",
                     plan_digest,
                     request.target_commit_sha,
                     utc_text(now),
                     utc_text(now),
                 ),
+            )
+            connection.execute(
+                "INSERT INTO flaky_probe_capacity_slot(slot_id, trigger_id, acquired_at) VALUES(1, ?, ?)",
+                (trigger_id, utc_text(now)),
             )
             self._insert_event(
                 connection,
@@ -537,6 +599,91 @@ class FlakyV3Service:
                 raise FlakyStoreError(
                     "probe_trigger_not_found", "attempt has no local Probe trigger"
                 )
+            plan = connection.execute(
+                "SELECT * FROM flaky_probe_plan WHERE attempt_id = ?",
+                (attempt["attempt_id"],),
+            ).fetchone()
+            if plan is None:
+                raise FlakyStoreError("probe_plan_not_found", "attempt has no Probe plan")
+            stage3_plan = plan["plan_version"] == "flaky-probe-plan.v1"
+            envelope = None
+            round_row = None
+            envelope_values: tuple[object, ...] = (
+                None, None, None, None, 0, None, None, None, None, None
+            )
+            if stage3_plan:
+                from quality.flaky_probe import (
+                    ProbeEvidenceEnvelope,
+                    canonical_json as canonical_probe_json,
+                    verify_probe_envelope,
+                )
+
+                if request.envelope is None:
+                    raise FlakyStoreError(
+                        "probe_envelope_required", "stage 3 Probe evidence requires an envelope"
+                    )
+                try:
+                    envelope = ProbeEvidenceEnvelope.model_validate(request.envelope)
+                except (TypeError, ValueError) as error:
+                    raise FlakyStoreError(
+                        "probe_envelope_invalid", "Probe envelope is invalid"
+                    ) from error
+                secret = self.probe_evidence_keys.get(envelope.key_id)
+                if secret is None:
+                    raise FlakyStoreError(
+                        "probe_envelope_key_unknown", "Probe envelope key is not configured"
+                    )
+                verify_probe_envelope(envelope, secret)
+                round_row = connection.execute(
+                    "SELECT * FROM flaky_probe_round WHERE attempt_id=? AND round_no=?",
+                    (attempt["attempt_id"], envelope.round_no),
+                ).fetchone()
+                binding_ok = bool(
+                    round_row is not None
+                    and round_row["status"] in {"STARTED", "IMPORTED", "ABANDONED"}
+                    and round_row["run_id"] == envelope.run_id
+                    and envelope.attempt_id == attempt["attempt_id"]
+                    and envelope.trigger_id == trigger["trigger_id"]
+                    and envelope.plan_digest == plan["plan_digest"]
+                    and envelope.round_no == request.run.round_no
+                    and envelope.run_id == request.run.run_id
+                    and envelope.target_commit_sha == plan["target_commit_sha"]
+                    and envelope.controller_commit_sha == plan["controller_commit_sha"]
+                    and envelope.job_full_name == trigger["claimed_job_full_name"]
+                    and envelope.build_number == trigger["claimed_build_number"]
+                    and envelope.outcome == request.outcome.value
+                    and envelope.trusted_failure == request.trusted_failure
+                    and envelope.rerun_supported == request.rerun_supported
+                    and tuple(envelope.diagnostic_codes) == tuple(request.diagnostic_codes)
+                    and envelope.trusted_started_at == request.trusted_started_at
+                    and request.run.controller_commit_sha == envelope.controller_commit_sha
+                    and request.run.target_commit_sha == envelope.target_commit_sha
+                    and request.run.commit_sha == envelope.target_commit_sha
+                    and request.run.jenkins_job_name == envelope.job_full_name
+                    and request.run.jenkins_build_number == str(envelope.build_number)
+                    and envelope.trusted_started_at == _parse_time(round_row["started_at"])
+                    and request.run.start_time >= envelope.trusted_started_at
+                    and request.run.end_time is not None
+                    and request.run.end_time <= envelope.trusted_finished_at
+                    and round_row["actual_target_commit_sha"] == envelope.target_commit_sha
+                )
+                if not binding_ok:
+                    raise FlakyStoreError(
+                        "probe_envelope_binding_mismatch",
+                        "Probe envelope does not match its plan, build, or round",
+                    )
+                envelope_values = (
+                    envelope.schema_version,
+                    envelope.key_id,
+                    canonical_probe_json(envelope.signing_payload),
+                    envelope.signature,
+                    1,
+                    envelope.p0_bundle_status,
+                    envelope.p0_manifest_sha256,
+                    _canonical_json(envelope.p0_file_hashes),
+                    envelope.job_full_name,
+                    envelope.build_number,
+                )
             active = attempt["status"] in {"ACTIVE", "READY_TO_CLOSE"}
             plan_matches = bool(
                 reported_trigger is not None
@@ -545,23 +692,29 @@ class FlakyV3Service:
                 and request.run.plan_digest == trigger["plan_digest"]
                 and request.run.target_commit_sha == attempt["target_commit_sha"]
                 and request.run.policy_revision == attempt["policy_revision"]
+                and (not stage3_plan or envelope is not None)
             )
+            evidence_outcome = envelope.outcome if envelope is not None else request.outcome.value
+            evidence_rerun_supported = envelope.rerun_supported if envelope is not None else request.rerun_supported
+            evidence_trusted_failure = envelope.trusted_failure if envelope is not None else request.trusted_failure
+            evidence_diagnostics = envelope.diagnostic_codes if envelope is not None else request.diagnostic_codes
             p0_trusted = bool(
                 request.p0_trusted
                 and request.run.status.value == "finished"
                 and request.run.end_time is not None
                 and request.run.integrity_status.value == "complete"
+                and (not stage3_plan or envelope.p0_bundle_status == "VALID")
             )
             classified = classify_probe_evidence(
                 ProbeAdmissionFacts(
                     attempt_active=active,
                     plan_matches=plan_matches,
                     evidence_trusted=p0_trusted,
-                    rerun_supported=request.rerun_supported,
-                    outcome=request.outcome,
-                    trusted_failure=request.trusted_failure and p0_trusted,
+                    rerun_supported=evidence_rerun_supported,
+                    outcome=ProbeOutcome(evidence_outcome),
+                    trusted_failure=evidence_trusted_failure and p0_trusted,
                     interval_satisfied=True,
-                    diagnostic_codes=request.diagnostic_codes,
+                    diagnostic_codes=evidence_diagnostics,
                 )
             )
             self._insert_import_run(
@@ -586,8 +739,13 @@ class FlakyV3Service:
                     arrived_after_terminal,
                     classification, primary_reason_code, diagnostic_codes_json,
                     consumes_non_counting_quota, effect_status,
-                    admission_rule_version, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    admission_rule_version, envelope_schema_version,
+                    envelope_key_id, envelope_json, envelope_signature,
+                    envelope_verified, p0_bundle_status, p0_manifest_sha256,
+                    p0_file_hashes_json, job_full_name, build_number,
+                    actual_target_commit_sha, trusted_finished_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     evidence_id,
@@ -597,10 +755,10 @@ class FlakyV3Service:
                     request.run.trigger_id,
                     request.run.round_no,
                     utc_text(request.trusted_started_at),
-                    request.outcome.value,
+                    evidence_outcome,
                     int(p0_trusted),
-                    int(request.rerun_supported),
-                    int(request.trusted_failure),
+                    int(evidence_rerun_supported),
+                    int(evidence_trusted_failure),
                     int(plan_matches),
                     int(not active),
                     classified.classification.value,
@@ -609,11 +767,56 @@ class FlakyV3Service:
                     int(classified.consumes_non_counting_quota),
                     ProbeEffectStatus.AUDIT_ONLY.value,
                     classified.rule_version,
+                    *envelope_values,
+                    (
+                        round_row["actual_target_commit_sha"]
+                        if round_row is not None else None
+                    ),
+                    utc_text(envelope.trusted_finished_at) if envelope is not None else None,
                     utc_text(now),
                 ),
             )
             if active:
                 self._reclassify_probe_evidence(connection, attempt)
+                applied = connection.execute(
+                    "SELECT effect_status FROM flaky_probe_evidence WHERE evidence_id=?",
+                    (evidence_id,),
+                ).fetchone()
+                if stage3_plan and applied["effect_status"] == "APPLIED":
+                    updated_round = connection.execute(
+                        """UPDATE flaky_probe_round
+                           SET status='IMPORTED', evidence_id=?, imported_at=?
+                           WHERE attempt_id=? AND round_no=? AND status='STARTED'
+                             AND run_id=?""",
+                        (
+                            evidence_id,
+                            utc_text(now),
+                            attempt["attempt_id"],
+                            request.run.round_no,
+                            request.run.run_id,
+                        ),
+                    )
+                    if updated_round.rowcount != 1:
+                        raise FlakyStoreError(
+                            "probe_round_import_conflict",
+                            "Probe round could not be atomically imported",
+                        )
+                elif not stage3_plan and applied["effect_status"] == "APPLIED":
+                    connection.execute(
+                        """INSERT OR IGNORE INTO flaky_probe_round(
+                               attempt_id, round_no, status, run_id, evidence_id,
+                               authorized_at, started_at, imported_at
+                           ) VALUES (?, ?, 'IMPORTED', ?, ?, ?, ?, ?)""",
+                        (
+                            attempt["attempt_id"],
+                            request.run.round_no,
+                            request.run.run_id,
+                            evidence_id,
+                            utc_text(request.trusted_started_at),
+                            utc_text(request.trusted_started_at),
+                            utc_text(now),
+                        ),
+                    )
                 self._recalculate_attempt(connection, attempt["attempt_id"], now)
             row = connection.execute(
                 "SELECT * FROM flaky_probe_evidence WHERE evidence_id = ?",
@@ -636,6 +839,47 @@ class FlakyV3Service:
             self._require_row_version(governance, request.expected_row_version)
             if attempt["status"] not in {"ACTIVE", "READY_TO_CLOSE"}:
                 raise FlakyStoreError("attempt_not_active", "attempt is not live")
+            trigger = connection.execute(
+                """SELECT trigger.*, plan.plan_version
+                   FROM flaky_probe_trigger AS trigger
+                   JOIN flaky_probe_plan AS plan USING (attempt_id)
+                   WHERE trigger.attempt_id=?""",
+                (request.attempt_id,),
+            ).fetchone()
+            if trigger is None:
+                raise FlakyStoreError("probe_trigger_not_found", "attempt has no Probe trigger")
+            if trigger["plan_version"] == "flaky-probe-plan.v1" and trigger["status"] in {
+                "DISPATCHING", "QUEUED", "DISPATCH_UNKNOWN", "RUNNING", "CANCEL_REQUESTED"
+            }:
+                connection.execute(
+                    """UPDATE flaky_probe_trigger
+                       SET status='CANCEL_REQUESTED', token_hash=NULL,
+                           failure_disposition=NULL,
+                           cancel_requested_at=COALESCE(cancel_requested_at, ?),
+                           row_version=row_version+1, updated_at=?
+                       WHERE trigger_id=?""",
+                    (utc_text(now), utc_text(now), trigger["trigger_id"]),
+                )
+                self._insert_event(
+                    connection,
+                    governance_id=governance["governance_id"],
+                    attempt_id=request.attempt_id,
+                    event_type="probe_cancel_requested",
+                    causal_id=request.attempt_id,
+                    from_status="RECOVERING",
+                    to_status="RECOVERING",
+                    actor=request.actor,
+                    reason=request.reason,
+                    now=now,
+                )
+                return self._attempt_status(connection, request.attempt_id)
+            if trigger["status"] not in {"PENDING", "FAILED"} or (
+                trigger["status"] == "FAILED"
+                and trigger["failure_disposition"] != "RETRYABLE"
+            ):
+                raise FlakyStoreError(
+                    "probe_cancel_not_allowed", "Probe cancellation requires reconciliation"
+                )
             connection.execute(
                 """UPDATE flaky_verification_attempt
                    SET status = 'CANCELLED', ended_at = ?, end_reason = ?, updated_at = ?
@@ -643,9 +887,16 @@ class FlakyV3Service:
                 (utc_text(now), request.reason, utc_text(now), request.attempt_id),
             )
             connection.execute(
-                """UPDATE flaky_probe_trigger SET status = 'CANCELLED', updated_at = ?
-                   WHERE attempt_id = ? AND status = 'PENDING'""",
-                (utc_text(now), request.attempt_id),
+                """UPDATE flaky_probe_trigger
+                   SET status='CANCELLED', failure_disposition=NULL, token_hash=NULL,
+                       terminal_at=?, row_version=row_version+1, updated_at=?
+                   WHERE attempt_id=? AND (status='PENDING' OR
+                         (status='FAILED' AND failure_disposition='RETRYABLE'))""",
+                (utc_text(now), utc_text(now), request.attempt_id),
+            )
+            connection.execute(
+                "DELETE FROM flaky_probe_capacity_slot WHERE trigger_id=?",
+                (trigger["trigger_id"],),
             )
             self._activate_governance(
                 connection, governance, request.expected_row_version
@@ -682,15 +933,106 @@ class FlakyV3Service:
                 raise FlakyStoreError(
                     "verified_branch_head_mismatch", "verified branch HEAD changed"
                 )
-            pending = connection.execute(
-                """SELECT 1 FROM flaky_probe_trigger
-                   WHERE attempt_id = ? AND status != 'EVIDENCE_COMPLETE' LIMIT 1""",
+            trigger = connection.execute(
+                """SELECT trigger.*, plan.plan_version, plan.target_commit_sha AS plan_target_sha
+                   FROM flaky_probe_trigger AS trigger
+                   JOIN flaky_probe_plan AS plan USING (attempt_id)
+                   WHERE trigger.attempt_id=?""",
                 (request.attempt_id,),
             ).fetchone()
-            if pending is not None:
+            if trigger is None or trigger["status"] != "COMPLETED":
                 raise FlakyStoreError(
                     "probe_trigger_not_terminal", "Probe trigger is still active or unknown"
                 )
+            incomplete_round = connection.execute(
+                """SELECT 1 FROM flaky_probe_round
+                   WHERE attempt_id=? AND status!='IMPORTED' LIMIT 1""",
+                (request.attempt_id,),
+            ).fetchone()
+            if incomplete_round is not None:
+                raise FlakyStoreError(
+                    "probe_round_not_settled", "all authorized Probe rounds must be imported"
+                )
+            if trigger["plan_version"] == "flaky-probe-plan.v1":
+                from quality.flaky_probe import ProbeEvidenceEnvelope, verify_probe_envelope
+
+                rows = connection.execute(
+                    """SELECT evidence.*, round.actual_target_commit_sha,
+                              round.run_id AS round_run_id,
+                              round.started_at AS round_started_at,
+                              plan.controller_commit_sha AS plan_controller_commit_sha
+                       FROM flaky_probe_evidence AS evidence
+                       JOIN flaky_probe_round AS round
+                         ON round.attempt_id=evidence.attempt_id
+                        AND round.round_no=evidence.round_no
+                       JOIN flaky_probe_plan AS plan USING (attempt_id)
+                       WHERE evidence.attempt_id=?""",
+                    (request.attempt_id,),
+                ).fetchall()
+                for evidence in rows:
+                    if not evidence["envelope_verified"] or evidence["envelope_json"] is None:
+                        raise FlakyStoreError(
+                            "probe_envelope_unverified", "Probe evidence is not verified"
+                        )
+                    payload = json.loads(evidence["envelope_json"])
+                    envelope = ProbeEvidenceEnvelope.model_validate(
+                        {**payload, "signature": evidence["envelope_signature"]}
+                    )
+                    secret = self.probe_evidence_keys.get(envelope.key_id)
+                    if secret is None:
+                        raise FlakyStoreError(
+                            "probe_envelope_key_unknown", "Probe envelope key is not configured"
+                        )
+                    verify_probe_envelope(envelope, secret)
+                    if (
+                        envelope.attempt_id != request.attempt_id
+                        or envelope.trigger_id != trigger["trigger_id"]
+                        or envelope.plan_digest != trigger["plan_digest"]
+                        or envelope.round_no != evidence["round_no"]
+                        or envelope.run_id != evidence["run_id"]
+                        or envelope.run_id != evidence["round_run_id"]
+                        or envelope.target_commit_sha != trigger["plan_target_sha"]
+                        or envelope.controller_commit_sha
+                        != evidence["plan_controller_commit_sha"]
+                        or envelope.job_full_name != trigger["claimed_job_full_name"]
+                        or envelope.build_number != trigger["claimed_build_number"]
+                        or envelope.outcome != evidence["raw_outcome"]
+                        or int(envelope.trusted_failure) != evidence["trusted_failure"]
+                        or int(envelope.rerun_supported) != evidence["rerun_supported"]
+                        or tuple(envelope.diagnostic_codes)
+                        != tuple(json.loads(evidence["diagnostic_codes_json"]))
+                        or envelope.p0_bundle_status != evidence["p0_bundle_status"]
+                        or envelope.p0_manifest_sha256 != evidence["p0_manifest_sha256"]
+                        or envelope.p0_file_hashes
+                        != json.loads(evidence["p0_file_hashes_json"])
+                        or envelope.trusted_started_at
+                        != _parse_time(evidence["round_started_at"])
+                        or envelope.trusted_finished_at
+                        != _parse_time(evidence["trusted_finished_at"])
+                    ):
+                        raise FlakyStoreError(
+                            "probe_envelope_binding_mismatch",
+                            "stored Probe evidence no longer matches its signed envelope",
+                        )
+                    if (
+                        evidence["actual_target_commit_sha"] != trigger["plan_target_sha"]
+                        or request.verified_branch_head != trigger["plan_target_sha"]
+                    ):
+                        raise FlakyStoreError(
+                            "verified_branch_head_mismatch",
+                            "verified branch HEAD or actual checkout differs",
+                        )
+                self._reclassify_probe_evidence(connection, attempt)
+                self._recalculate_attempt(connection, request.attempt_id, now)
+                attempt = connection.execute(
+                    "SELECT * FROM flaky_verification_attempt WHERE attempt_id=?",
+                    (request.attempt_id,),
+                ).fetchone()
+                if attempt["status"] != "READY_TO_CLOSE":
+                    raise FlakyStoreError(
+                        "attempt_not_ready",
+                        "Probe evidence no longer satisfies the close threshold",
+                    )
             rounds = {
                 int(row["round_no"])
                 for row in connection.execute(
@@ -749,6 +1091,19 @@ class FlakyV3Service:
                 now=now,
             )
             return self._attempt_status(connection, request.attempt_id)
+
+    def recovery_close_requires_fresh_head(self, attempt_id: str) -> bool:
+        """Return whether close must use the signed stage-3 Probe gates."""
+        with self._read() as connection:
+            row = connection.execute(
+                "SELECT plan_version FROM flaky_probe_plan WHERE attempt_id=?",
+                (_required(attempt_id, "attempt_id"),),
+            ).fetchone()
+            if row is None:
+                raise FlakyStoreError(
+                    "probe_plan_not_found", "attempt has no local Probe plan"
+                )
+            return row["plan_version"] == "flaky-probe-plan.v1"
 
     def override_detection(
         self,
@@ -940,11 +1295,18 @@ class FlakyV3Service:
             for code, sql in checks.items():
                 if connection.execute(sql).fetchone() is not None:
                     issues.append(code)
+            initialization = validate_store_schema(
+                connection, self.repository, self.migrations_directory
+            )
+            if initialization.schema_version >= 4:
+                from quality.flaky_probe import probe_invariant_issues
+
+                issues.extend(probe_invariant_issues(connection))
             return {
-                "schema_version": "quality.flaky-db-check.v3",
-                "database_schema_version": 3,
+                "schema_version": "quality.flaky-db-check.v4",
+                "database_schema_version": initialization.schema_version,
                 "status": "OK" if not issues else "FAILED",
-                "issue_codes": sorted(issues),
+                "issue_codes": sorted(set(issues)),
             }
 
     @contextmanager
@@ -1354,12 +1716,7 @@ class FlakyV3Service:
         ).fetchone()
         causal_id = causal_row["run_id"]
         if terminal:
-            connection.execute(
-                """UPDATE flaky_probe_trigger
-                   SET status = 'EVIDENCE_COMPLETE', updated_at = ?
-                   WHERE attempt_id = ? AND status = 'PENDING'""",
-                (utc_text(now), attempt_id),
-            )
+            self._complete_legacy_trigger(connection, attempt_id, now)
             self._activate_governance(
                 connection, governance, int(governance["row_version"])
             )
@@ -1376,12 +1733,7 @@ class FlakyV3Service:
                 now=now,
             )
         elif result.status is AttemptStatus.READY_TO_CLOSE:
-            connection.execute(
-                """UPDATE flaky_probe_trigger
-                   SET status = 'EVIDENCE_COMPLETE', updated_at = ?
-                   WHERE attempt_id = ? AND status = 'PENDING'""",
-                (utc_text(now), attempt_id),
-            )
+            self._complete_legacy_trigger(connection, attempt_id, now)
             if previous != result.status.value:
                 self._insert_event(
                     connection,
@@ -1395,6 +1747,35 @@ class FlakyV3Service:
                     reason="required_consecutive_passes_met",
                     now=now,
                 )
+
+    @staticmethod
+    def _complete_legacy_trigger(
+        connection: sqlite3.Connection, attempt_id: str, now: datetime
+    ) -> None:
+        trigger = connection.execute(
+            """SELECT trigger.trigger_id, trigger.status, plan.plan_version
+               FROM flaky_probe_trigger AS trigger
+               JOIN flaky_probe_plan AS plan USING (attempt_id)
+               WHERE trigger.attempt_id=?""",
+            (attempt_id,),
+        ).fetchone()
+        if (
+            trigger is None
+            or trigger["plan_version"] != "legacy-flaky-probe-plan.v0"
+            or trigger["status"] != "PENDING"
+        ):
+            return
+        connection.execute(
+            """UPDATE flaky_probe_trigger
+               SET status='COMPLETED', terminal_at=?, token_hash=NULL,
+                   row_version=row_version+1, updated_at=?
+               WHERE trigger_id=? AND status='PENDING'""",
+            (utc_text(now), utc_text(now), trigger["trigger_id"]),
+        )
+        connection.execute(
+            "DELETE FROM flaky_probe_capacity_slot WHERE trigger_id=?",
+            (trigger["trigger_id"],),
+        )
 
     def _reclassify_probe_evidence(
         self,
@@ -1705,7 +2086,7 @@ def _validate_run_manifest(run: RunRecord, manifest: dict[str, object]) -> None:
         "run_id": run.run_id,
         "status": "complete",
         "merge_version": "p0-merge.v1",
-        "fingerprint_version": "failure-fingerprint.v1",
+        "fingerprint_version": FINGERPRINT_VERSION,
         "integrity_status": run.integrity_status.value,
     }
     for field, value in required_values.items():

@@ -170,6 +170,7 @@ def migrate_store(
             backup_path: Path | None = None
             if pending:
                 _preflight_v3_migration(repository, connection, previous, pending)
+                _preflight_v4_migration(repository, connection, previous, pending)
                 backup_path = backup.create_pre_migration_backup(connection, repository)
                 apply_migrations(connection, pending)
                 applied = repository.read_applied_migrations(connection)
@@ -242,4 +243,43 @@ def _validate_v2_for_v3(connection: sqlite3.Connection) -> None:
         raise FlakyStoreError(
             "migration_orphan_governance",
             f"v2 governance {orphan['governance_id']!r} has no resolvable identity",
+        )
+
+
+def _preflight_v4_migration(
+    repository: FlakyRepository,
+    connection: sqlite3.Connection,
+    previous_version: int,
+    pending: Sequence[Migration],
+) -> None:
+    """Refuse to guess whether a legacy local Probe was externally dispatched."""
+    if not any(migration.version == 4 for migration in pending):
+        return
+    if previous_version >= 3:
+        _validate_v3_for_v4(connection)
+        return
+
+    with repository.in_memory_copy(connection) as preflight:
+        prerequisites = tuple(
+            migration for migration in pending if migration.version < 4
+        )
+        apply_migrations(preflight, prerequisites)
+        _validate_v3_for_v4(preflight)
+
+
+def _validate_v3_for_v4(connection: sqlite3.Connection) -> None:
+    live = connection.execute(
+        """
+        SELECT attempt.attempt_id
+        FROM flaky_verification_attempt AS attempt
+        LEFT JOIN flaky_probe_trigger AS trigger USING (attempt_id)
+        WHERE attempt.status IN ('ACTIVE', 'READY_TO_CLOSE')
+           OR trigger.status = 'PENDING'
+        LIMIT 1
+        """
+    ).fetchone()
+    if live is not None:
+        raise FlakyStoreError(
+            "migration_live_probe_attempt",
+            "cancel every legacy live Probe attempt before applying migration 0004",
         )

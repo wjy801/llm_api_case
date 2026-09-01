@@ -74,7 +74,7 @@ def test_synthetic_v2_recovering_governance_migrates_to_safe_v3_state(tmp_path):
     result = migrate_store(database)
 
     assert result.previous_schema_version == 2
-    assert result.schema_version == 3
+    assert result.schema_version == 4
     with sqlite3.connect(database) as connection:
         connection.row_factory = sqlite3.Row
         identity = connection.execute("SELECT * FROM flaky_identity").fetchone()
@@ -106,7 +106,7 @@ def test_checksum_tamper_and_too_new_schema_are_rejected(tmp_path):
     with sqlite3.connect(too_new_db) as connection:
         connection.execute(
             """INSERT INTO schema_migration(version, name, checksum, applied_at)
-               VALUES (4, '0004_future.sql', 'future', '2026-09-01T00:00:00Z')"""
+               VALUES (5, '0005_future.sql', 'future', '2026-09-01T00:00:00Z')"""
         )
     with pytest.raises(FlakyStoreError) as captured:
         FlakyV3Service(too_new_db).check_invariants()
@@ -164,7 +164,7 @@ def test_valid_v1_database_migrates_directly_to_v3(tmp_path):
     result = migrate_store(database)
 
     assert result.previous_schema_version == 1
-    assert result.schema_version == 3
+    assert result.schema_version == 4
     assert FlakyV3Service(database).check_invariants()["status"] == "OK"
 
 
@@ -224,7 +224,7 @@ def test_pre_migration_backup_can_be_restored_and_migrated(tmp_path):
     restored = (tmp_path / "restored.sqlite3").resolve()
     assert migrated.backup_path is not None
     shutil.copy2(migrated.backup_path, restored)
-    assert migrate_store(restored).schema_version == 3
+    assert migrate_store(restored).schema_version == 4
     assert FlakyV3Service(restored).check_invariants()["status"] == "OK"
 
 

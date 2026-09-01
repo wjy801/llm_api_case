@@ -1,0 +1,142 @@
+pipeline {
+    agent none
+
+    options {
+        skipDefaultCheckout(true)
+        disableConcurrentBuilds(abortPrevious: false)
+        timeout(time: 73, unit: 'HOURS')
+    }
+
+    parameters {
+        string(name: 'TRIGGER_ID', defaultValue: '', trim: true)
+        password(name: 'DISPATCH_TOKEN', defaultValue: '')
+        string(name: 'PLAN_DIGEST', defaultValue: '', trim: true)
+    }
+
+    stages {
+        stage('Claim before checkout') {
+            agent { label 'probe-controller' }
+            steps {
+                script {
+                    def planText
+                    dir(env.QUALITY_FLAKY_CONTROLLER_ROOT) {
+                        def claimText = bat(returnStdout: true, script: '@.venv\\Scripts\\python.exe -m quality.probe_job claim').trim()
+                        def claim = readJSON text: claimText.readLines().last()
+                        env.PROBE_ATTEMPT_ID = claim.attempt_id
+                        env.DISPATCH_TOKEN = null
+                        planText = bat(returnStdout: true, script: '@.venv\\Scripts\\python.exe -m quality.probe_job plan').trim()
+                    }
+                    writeFile file: 'probe-plan.json', text: planText.readLines().last(), encoding: 'UTF-8'
+                    stash name: 'immutable-probe-plan', includes: 'probe-plan.json'
+                }
+            }
+        }
+
+        stage('Execute bounded rounds') {
+            agent none
+            steps {
+                script {
+                    for (int roundIndex = 1; roundIndex <= 10; roundIndex++) {
+                        node('probe-controller') {
+                            dir(env.QUALITY_FLAKY_CONTROLLER_ROOT) {
+                                def roundText = bat(returnStdout: true, script: '@.venv\\Scripts\\python.exe -m quality.probe_job authorize').trim()
+                                def round = readJSON text: roundText.readLines().last()
+                                env.PROBE_ROUND_NO = "${round.round_no}"
+                                env.QUALITY_RUN_ID = round.run_id
+                            }
+                        }
+                        node('probe-target-restricted') {
+                            def actualTargetSha
+                            withEnv([
+                                'QUALITY_FLAKY_DB_PATH=',
+                                'QUALITY_FLAKY_CONTROLLER_ROOT=',
+                                'QUALITY_FLAKY_EVIDENCE_HMAC_KEY_FILE=',
+                                'QUALITY_FLAKY_JENKINS_CREDENTIAL_FILE=',
+                                'DISPATCH_TOKEN='
+                            ]) {
+                                deleteDir()
+                                unstash 'immutable-probe-plan'
+                                def plan = readJSON file: 'probe-plan.json'
+                                checkout([$class: 'GitSCM', branches: [[name: plan.target_commit_sha]],
+                                          extensions: [[$class: 'CleanBeforeCheckout']],
+                                          userRemoteConfigs: scm.userRemoteConfigs])
+                                actualTargetSha = bat(returnStdout: true, script: '@git rev-parse HEAD').trim()
+                                stash name: "probe-source-${roundIndex}", includes: '**/*', excludes: 'reports/**'
+                            }
+                            env.PROBE_ACTUAL_TARGET_SHA = actualTargetSha
+                        }
+                        node('probe-controller') {
+                            dir(env.QUALITY_FLAKY_CONTROLLER_ROOT) {
+                                bat '@.venv\\Scripts\\python.exe -m quality.probe_job start'
+                            }
+                        }
+                        node('probe-target-restricted') {
+                            withEnv([
+                                'QUALITY_FLAKY_DB_PATH=',
+                                'QUALITY_FLAKY_CONTROLLER_ROOT=',
+                                'QUALITY_FLAKY_EVIDENCE_HMAC_KEY_FILE=',
+                                'QUALITY_FLAKY_JENKINS_CREDENTIAL_FILE=',
+                                'DISPATCH_TOKEN='
+                            ]) {
+                                deleteDir()
+                                unstash "probe-source-${roundIndex}"
+                                unstash 'immutable-probe-plan'
+                                def plan = readJSON file: 'probe-plan.json'
+                                env.QUALITY_RUN_KIND = 'FLAKY_PROBE'
+                                env.QUALITY_PROBE_ATTEMPT_ID = env.PROBE_ATTEMPT_ID
+                                env.QUALITY_PROBE_TRIGGER_ID = params.TRIGGER_ID
+                                env.QUALITY_PROBE_PLAN_DIGEST = params.PLAN_DIGEST
+                                env.QUALITY_PROBE_ROUND_NO = env.PROBE_ROUND_NO
+                                env.QUALITY_PROBE_TARGET_COMMIT_SHA = plan.target_commit_sha
+                                env.QUALITY_CONTROLLER_COMMIT_SHA = plan.controller_commit_sha
+                                env.QUALITY_POLICY_REVISION = plan.policy_revision
+                                env.QUALITY_PROBE_JENKINS_JOB_NAME = env.JOB_NAME
+                                env.QUALITY_PROBE_JENKINS_BUILD_NUMBER = env.BUILD_NUMBER
+                                env.USE_CHINA_ENVIRONMENT = plan.environment == 'china' ? 'TRUE' : 'FALSE'
+                                env.QUALITY_ENABLE = '1'
+                                env.QUALITY_FLAKY_MODE = 'off'
+                                env.QUALITY_OUTPUT_DIR = 'reports/quality'
+                                withCredentials([string(credentialsId: 'probe-target-api-key', variable: 'PROBE_TARGET_API_KEY')]) {
+                                    def targetCommand = "@\"${env.QUALITY_FLAKY_TARGET_PYTHON}\" -m quality.probe_target probe-plan.json"
+                                    env.PROBE_TARGET_EXIT_CODE = "${bat(returnStatus: true, script: targetCommand)}"
+                                }
+                                stash name: "probe-round-${roundIndex}", includes: 'reports/quality/**', allowEmpty: true
+                            }
+                        }
+                        node('probe-controller') {
+                            deleteDir()
+                            unstash "probe-round-${roundIndex}"
+                            def evidenceDirectory = "${pwd()}\\reports\\quality"
+                            withCredentials([file(credentialsId: 'flaky-probe-evidence-key', variable: 'QUALITY_FLAKY_EVIDENCE_HMAC_KEY_FILE')]) {
+                                withEnv(["QUALITY_OUTPUT_DIR=${evidenceDirectory}"]) {
+                                    dir(env.QUALITY_FLAKY_CONTROLLER_ROOT) {
+                                        def importText = bat(returnStdout: true, script: '@.venv\\Scripts\\python.exe -m quality.probe_job import').trim()
+                                        def imported = readJSON text: importText.readLines().last()
+                                        env.PROBE_ATTEMPT_STATUS = imported.attempt_status
+                                    }
+                                }
+                            }
+                        }
+                        if (env.PROBE_ATTEMPT_STATUS != 'ACTIVE') {
+                            break
+                        }
+                        if (roundIndex < 10) {
+                            sleep time: 30, unit: 'MINUTES'
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            node('probe-controller') {
+                dir(env.QUALITY_FLAKY_CONTROLLER_ROOT) {
+                    bat '@.venv\\Scripts\\python.exe -m quality.probe_job finalize'
+                }
+                deleteDir()
+            }
+        }
+    }
+}

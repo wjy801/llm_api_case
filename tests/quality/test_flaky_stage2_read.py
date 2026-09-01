@@ -98,7 +98,7 @@ def test_read_service_summary_pagination_filters_and_same_data_as_of(tmp_path):
     scoped = service.governance_page(case_path="module/smoke")
 
     assert summary.database_health == "OK"
-    assert summary.database_schema_version == 3
+    assert summary.database_schema_version == 4
     assert summary.mode_requested == summary.mode_effective == "off"
     assert summary.governance_counts == {"ACTIVE": 1, "CLOSED": 1, "RECOVERING": 1}
     assert summary.overdue_count == 1
@@ -145,7 +145,7 @@ def test_read_service_detail_timeline_and_snapshot_candidates(tmp_path):
 
     assert detail.identity["case_id"] == "module/smoke/test_a.py::test_case"
     assert [item.event_id for item in detail.timeline] == ["event-1"]
-    assert source.database_schema_version == 3
+    assert source.database_schema_version == 4
     assert [item.flaky_key for item in source.candidates] == ["flaky-1", "flaky-3"]
 
 

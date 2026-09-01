@@ -43,6 +43,13 @@ from quality.flaky_store.v3_service import (
     RecoveryCloseRequest,
     RecoveryStartRequest,
 )
+from quality.flaky_probe import (
+    FixedJenkinsClient,
+    GitTargetResolver,
+    ProbeControlService,
+    load_probe_evidence_key,
+    load_probe_runtime_config,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -180,6 +187,45 @@ def main(argv: list[str] | None = None) -> int:
     recovery_cancel_parser.add_argument("--actor", required=True)
     recovery_cancel_parser.add_argument("--reason", required=True)
     recovery_cancel_parser.add_argument("--expected-row-version", required=True, type=int)
+    probe_dispatch_parser = subparsers.add_parser(
+        "flaky-probe-dispatch-once", help="dispatch at most one pending Probe trigger"
+    )
+    probe_dispatch_parser.add_argument("--db", required=True)
+    probe_reconcile_parser = subparsers.add_parser(
+        "flaky-probe-reconcile-once", help="reconcile at most one Probe trigger"
+    )
+    probe_reconcile_parser.add_argument("--db", required=True)
+    probe_claim_parser = subparsers.add_parser(
+        "flaky-probe-claim", help="claim one Probe build before checkout"
+    )
+    probe_claim_parser.add_argument("--db", required=True)
+    probe_claim_parser.add_argument("--trigger-id", required=True)
+    probe_claim_parser.add_argument("--plan-digest", required=True)
+    probe_claim_parser.add_argument("--job-full-name", required=True)
+    probe_claim_parser.add_argument("--build-number", required=True, type=int)
+    probe_claim_parser.add_argument("--dispatch-token-env", default="DISPATCH_TOKEN")
+    probe_plan_parser = subparsers.add_parser(
+        "flaky-probe-plan", help="read one immutable Probe plan"
+    )
+    probe_plan_parser.add_argument("--db", required=True)
+    probe_plan_parser.add_argument("--attempt-id", required=True)
+    probe_authorize_parser = subparsers.add_parser(
+        "flaky-probe-authorize-round", help="authorize the next Probe round"
+    )
+    probe_authorize_parser.add_argument("--db", required=True)
+    probe_authorize_parser.add_argument("--attempt-id", required=True)
+    probe_start_parser = subparsers.add_parser(
+        "flaky-probe-start-round", help="record the detached target checkout"
+    )
+    probe_start_parser.add_argument("--db", required=True)
+    probe_start_parser.add_argument("--attempt-id", required=True)
+    probe_start_parser.add_argument("--round-no", required=True, type=int)
+    probe_start_parser.add_argument("--actual-target-commit-sha", required=True)
+    probe_finalize_parser = subparsers.add_parser(
+        "flaky-probe-finalize", help="settle a terminal Probe build"
+    )
+    probe_finalize_parser.add_argument("--db", required=True)
+    probe_finalize_parser.add_argument("--trigger-id", required=True)
     flaky_quarantine_parser = subparsers.add_parser(
         "flaky-quarantine",
         help="create an audited quarantine governance lifecycle",
@@ -262,6 +308,16 @@ def main(argv: list[str] | None = None) -> int:
         "flaky-recovery-cancel",
     }:
         return _flaky_recovery(parsed)
+    if parsed.command in {
+        "flaky-probe-dispatch-once",
+        "flaky-probe-reconcile-once",
+        "flaky-probe-claim",
+        "flaky-probe-plan",
+        "flaky-probe-authorize-round",
+        "flaky-probe-start-round",
+        "flaky-probe-finalize",
+    }:
+        return _flaky_probe(parsed)
     if parsed.command == "flaky-state-evaluate":
         return _flaky_state_evaluate(parsed)
     if parsed.command == "flaky-state":
@@ -486,13 +542,23 @@ def _flaky_recovery(parsed: argparse.Namespace) -> int:
         elif parsed.command == "flaky-recovery-status":
             result = service.recovery_status(parsed.flaky_key)
         elif parsed.command == "flaky-recovery-close":
+            verified_branch_head = parsed.verified_branch_head
+            if service.recovery_close_requires_fresh_head(parsed.attempt_id):
+                verified_branch_head = GitTargetResolver(Path.cwd()).resolve_dev3()
+                evidence_key_id, evidence_secret = load_probe_evidence_key(
+                    repository_root=Path.cwd()
+                )
+                service = FlakyV3Service(
+                    Path(parsed.db),
+                    probe_evidence_keys={evidence_key_id: evidence_secret},
+                )
             result = service.recovery_close(
                 RecoveryCloseRequest(
                     attempt_id=parsed.attempt_id,
                     actor=parsed.actor,
                     reason=parsed.reason,
                     expected_row_version=parsed.expected_row_version,
-                    verified_branch_head=parsed.verified_branch_head,
+                    verified_branch_head=verified_branch_head,
                 ),
                 now=now,
             )
@@ -506,6 +572,53 @@ def _flaky_recovery(parsed: argparse.Namespace) -> int:
                 ),
                 now=now,
             )
+    except Exception as error:
+        _print_cli_error(error)
+        return 2
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
+def _flaky_probe(parsed: argparse.Namespace) -> int:
+    runtime = load_probe_runtime_config(repository_root=Path.cwd())
+    service = ProbeControlService(
+        Path(parsed.db),
+        runtime,
+        target_resolver=GitTargetResolver(Path.cwd()).resolve_dev3,
+    )
+    now = datetime.now(UTC)
+    try:
+        if parsed.command == "flaky-probe-dispatch-once":
+            result = service.dispatch_once(FixedJenkinsClient(runtime), now=now)
+        elif parsed.command == "flaky-probe-reconcile-once":
+            result = service.reconcile_once(FixedJenkinsClient(runtime), now=now)
+        elif parsed.command == "flaky-probe-claim":
+            token = os.environ.pop(parsed.dispatch_token_env, None)
+            if not token:
+                raise FlakyStoreError(
+                    "probe_dispatch_token_missing", "dispatch token environment is missing"
+                )
+            result = service.claim(
+                trigger_id=parsed.trigger_id,
+                dispatch_token=token,
+                plan_digest=parsed.plan_digest,
+                job_full_name=parsed.job_full_name,
+                build_number=parsed.build_number,
+                now=now,
+            )
+        elif parsed.command == "flaky-probe-plan":
+            result = service.get_plan(parsed.attempt_id).model_dump(mode="json")
+        elif parsed.command == "flaky-probe-authorize-round":
+            result = service.authorize_round(parsed.attempt_id, now=now)
+        elif parsed.command == "flaky-probe-start-round":
+            result = service.start_round(
+                parsed.attempt_id,
+                parsed.round_no,
+                actual_target_commit_sha=parsed.actual_target_commit_sha,
+                now=now,
+            )
+        else:
+            result = service.finalize_build(parsed.trigger_id, now=now)
     except Exception as error:
         _print_cli_error(error)
         return 2

@@ -74,12 +74,12 @@ def test_flaky_cli_explicit_migrate_and_read_only_check(tmp_path, capsys):
     database = (tmp_path / "v3.sqlite3").resolve()
     assert main(["flaky-db-migrate", "--db", str(database)]) == 0
     migrated = json.loads(capsys.readouterr().out)
-    assert migrated["database_schema_version"] == 3
+    assert migrated["database_schema_version"] == 4
     assert migrated["migration_applied"] is True
 
     assert main(["flaky-db-check", "--db", str(database)]) == 0
     checked = json.loads(capsys.readouterr().out)
-    assert checked["database_schema_version"] == 3
+    assert checked["database_schema_version"] == 4
     assert checked["status"] == "OK"
 
 

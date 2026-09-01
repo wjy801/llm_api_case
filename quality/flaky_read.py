@@ -71,6 +71,7 @@ class DetectionProjectionSummary(ReadModel):
 
 class GovernanceListItem(ReadModel):
     governance_id: str
+    row_version: int
     flaky_key: str
     case_id: str
     param_hash: str
@@ -562,6 +563,7 @@ def _governance_item(
     states = tuple(sorted({item.detection_state for item in projections}))
     return GovernanceListItem(
         governance_id=row["governance_id"],
+        row_version=int(row["row_version"]),
         flaky_key=row["flaky_key"],
         case_id=row["case_id"],
         param_hash=row["param_hash"],

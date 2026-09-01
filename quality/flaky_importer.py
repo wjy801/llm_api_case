@@ -93,6 +93,8 @@ class FoldResult:
 
 @dataclass(frozen=True)
 class PreparedFlakyImport:
+    run: RunRecord
+    manifest: dict[str, Any]
     metadata: FlakyRunMetadata
     candidates: tuple[CaseObservationCandidate, ...]
     excluded_reasons: dict[str, int]
@@ -244,6 +246,8 @@ def prepare_flaky_import(request: FlakyImportRequest) -> PreparedFlakyImport:
         for issue in integrity_issues
     )
     return PreparedFlakyImport(
+        run=run_record,
+        manifest=manifest,
         metadata=metadata,
         candidates=fold.candidates,
         excluded_reasons=fold.excluded_reasons,
