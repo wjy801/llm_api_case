@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 import hashlib
 import json
 from pathlib import Path
-import re
 from typing import Any, Sequence, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -41,6 +40,13 @@ from quality.flaky_models import (
     GovernanceStatus,
     ObservationOutcome,
 )
+from quality.flaky_identity import (
+    build_epoch_scope_key,
+    build_flaky_key,
+    normalize_execution_profile,
+    normalize_flaky_environment,
+    normalize_stored_execution_profile,
+)
 from quality.flaky_store import FlakyStore, FlakyStoreError
 from quality.identifiers import normalize_nodeid
 from quality.models import (
@@ -55,12 +61,10 @@ from quality.models import (
     RunRecord,
     RunStatus,
 )
-from quality.redaction import redact_quality_value, sanitize_identifier_part
+from quality.redaction import redact_quality_value
 from quality.storage import write_json_atomic
 
 
-_GW_WORKER_PATTERN = re.compile(r"^gw\d+$", re.IGNORECASE)
-_CUSTOM_PROFILE_PATTERN = re.compile(r"^custom:[a-z0-9._-]+$")
 _SAFE_WARN_CODES = frozenset(
     {
         "classification_failed",
@@ -96,76 +100,6 @@ class PreparedFlakyImport:
     source_hashes: dict[str, str]
     report_artifact_ref: str
     issues: tuple[FlakyImportIssue, ...]
-
-
-def normalize_flaky_environment(value: str) -> str:
-    normalized = _required_text(value, "environment").casefold()
-    if normalized not in {"china", "overseas"}:
-        raise ValueError(f"unsupported Flaky environment: {value!r}")
-    return normalized
-
-
-def normalize_execution_profile(execution_id: str, worker_id: str) -> str:
-    execution = _required_text(execution_id, "execution_id").casefold()
-    worker = _required_text(worker_id, "worker_id")
-    if execution == "serial-pool":
-        return "serial"
-    if execution == "parallel-pool":
-        return "parallel"
-    if execution == "manual-pytest":
-        if worker.casefold() == "master":
-            return "manual-serial"
-        if _GW_WORKER_PATTERN.fullmatch(worker):
-            return "manual-parallel"
-        raise ValueError(f"unsupported manual-pytest worker: {worker_id!r}")
-    sanitized = sanitize_identifier_part(execution).casefold()
-    if len(sanitized) > 64:
-        digest = hashlib.sha256(sanitized.encode("utf-8")).hexdigest()[:16]
-        sanitized = f"{sanitized[:47]}-{digest}"
-    return f"custom:{sanitized}"
-
-
-def normalize_stored_execution_profile(value: str) -> str:
-    normalized = _required_text(value, "execution_profile").casefold()
-    if normalized in {"serial", "parallel", "manual-serial", "manual-parallel"}:
-        return normalized
-    if _CUSTOM_PROFILE_PATTERN.fullmatch(normalized):
-        if len(normalized.removeprefix("custom:")) > 64:
-            raise ValueError("custom execution profile exceeds 64 characters")
-        return normalized
-    raise ValueError(f"unsupported execution profile: {value!r}")
-
-
-def build_epoch_scope_key(
-    case_id: str,
-    environment: str,
-    execution_profile: str,
-) -> str:
-    payload = {
-        "case_id": _required_text(case_id, "case_id"),
-        "environment": normalize_flaky_environment(environment),
-        "execution_profile": normalize_stored_execution_profile(execution_profile),
-    }
-    return f"epoch-scope-v1-{_full_hash(payload)}"
-
-
-def build_flaky_key(
-    case_id: str,
-    param_hash: str,
-    environment: str,
-    execution_profile: str,
-    state_epoch: int,
-) -> str:
-    if state_epoch < 1:
-        raise ValueError("state_epoch must be greater than or equal to 1")
-    payload = {
-        "case_id": _required_text(case_id, "case_id"),
-        "param_hash": _required_text(param_hash, "param_hash"),
-        "environment": normalize_flaky_environment(environment),
-        "execution_profile": normalize_stored_execution_profile(execution_profile),
-        "state_epoch": state_epoch,
-    }
-    return f"flaky-v1-{_full_hash(payload)}"
 
 
 def build_observation_id(run_id: str, flaky_key: str) -> str:

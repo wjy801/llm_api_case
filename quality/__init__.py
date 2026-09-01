@@ -61,8 +61,6 @@ _EXPORT_GROUPS = {
         "RunMetricsStatus",
     ),
     "quality.flaky_importer": (
-        "build_epoch_scope_key",
-        "build_flaky_key",
         "build_observation_id",
         "check_flaky_database",
         "confirm_flaky_state",
@@ -71,8 +69,6 @@ _EXPORT_GROUPS = {
         "import_flaky_history",
         "list_flaky_governance",
         "mark_flaky_not_flaky",
-        "normalize_execution_profile",
-        "normalize_flaky_environment",
         "query_flaky_history",
         "query_flaky_states",
         "quarantine_flaky_state",
@@ -80,6 +76,12 @@ _EXPORT_GROUPS = {
         "reset_flaky_epoch",
         "start_flaky_recovery",
         "cancel_flaky_quarantine",
+    ),
+    "quality.flaky_identity": (
+        "build_epoch_scope_key",
+        "build_flaky_key",
+        "normalize_execution_profile",
+        "normalize_flaky_environment",
     ),
     "quality.flaky_models": (
         "FLAKY_ENVIRONMENT_RULE_VERSION",
