@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from typing import Any
 
@@ -14,6 +15,13 @@ FLAKY_EXECUTION_PROFILE_RULE_VERSION = "flaky-execution-profile.v1"
 
 _GW_WORKER_PATTERN = re.compile(r"^gw\d+$", re.IGNORECASE)
 _CUSTOM_PROFILE_PATTERN = re.compile(r"^custom:[a-z0-9._-]+$")
+
+
+def runtime_flaky_environment() -> str:
+    value = os.environ.get("USE_CHINA_ENVIRONMENT")
+    if value is None:
+        return "unknown"
+    return "china" if value.strip().upper() == "TRUE" else "overseas"
 
 
 def normalize_flaky_environment(value: str) -> str:

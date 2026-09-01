@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 
+from master_service import CollectedTestCase
+from quality.config import QualityRuntimeConfig
+from quality.flaky_shadow import (
+    build_decision_plan,
+    generate_snapshot,
+    write_decision_plan,
+)
+from quality.identifiers import build_param_hash
 from quality.storage import read_jsonl
 from quality.junit import parse_junit_file
 
@@ -207,6 +216,104 @@ def test_collector_failure_does_not_change_pytest_outcome(pytester, monkeypatch)
     result = _run_subprocess(pytester, "-q")
 
     result.assert_outcomes(passed=1)
+
+
+def test_corrupt_shadow_plan_records_integrity_but_does_not_skip(
+    pytester,
+    monkeypatch,
+):
+    output_dir = _prepare_plugin(pytester, monkeypatch)
+    test_file = pytester.makepyfile(test_shadow="def test_ok(): pass")
+    now = datetime(2026, 9, 1, tzinfo=UTC)
+    config = QualityRuntimeConfig(
+        enabled=True,
+        run_id="run-plugin",
+        execution_id="manual-pytest",
+        output_dir=output_dir,
+    )
+    snapshot = generate_snapshot(
+        config,
+        run_id="run-plugin",
+        branch="dev3",
+        repository_root=pytester.path,
+        now=now,
+    )
+    case = CollectedTestCase(
+        nodeid=f"{test_file.name}::test_ok",
+        markers=frozenset(),
+        case_id=f"{test_file.name}::test_ok",
+        param_hash=build_param_hash(None),
+        normalized_case_path=test_file.name,
+    )
+    plan = build_decision_plan(
+        snapshot,
+        (case,),
+        run_id="run-plugin",
+        branch="dev3",
+        environment="overseas",
+        execution_profiles={case.nodeid: "manual-serial"},
+        collection_started_at=now,
+    )
+    path = write_decision_plan(plan, output_dir)
+    path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("QUALITY_FLAKY_DECISION_PLAN_PATH", str(path))
+    monkeypatch.setenv("QUALITY_FLAKY_DECISION_CHECKSUM", plan.content_checksum)
+
+    result = _run_subprocess(pytester, "-q")
+
+    result.assert_outcomes(passed=1)
+    issues = read_jsonl(output_dir / "shards/integrity-manual-pytest-master.jsonl")
+    assert any(issue["code"] == "flaky_decision_plan_invalid" for issue in issues)
+
+
+def test_valid_shadow_plan_uses_shared_unknown_environment_default(
+    pytester,
+    monkeypatch,
+):
+    output_dir = _prepare_plugin(pytester, monkeypatch)
+    monkeypatch.delenv("USE_CHINA_ENVIRONMENT")
+    test_file = pytester.makepyfile(test_shadow="def test_ok(): pass")
+    now = datetime(2026, 9, 1, tzinfo=UTC)
+    config = QualityRuntimeConfig(
+        enabled=True,
+        run_id="run-plugin",
+        execution_id="manual-pytest",
+        output_dir=output_dir,
+    )
+    snapshot = generate_snapshot(
+        config,
+        run_id="run-plugin",
+        branch="dev3",
+        repository_root=pytester.path,
+        now=now,
+    )
+    case = CollectedTestCase(
+        nodeid=f"{test_file.name}::test_ok",
+        markers=frozenset(),
+        case_id=f"{test_file.name}::test_ok",
+        param_hash=build_param_hash(None),
+        normalized_case_path=test_file.name,
+    )
+    plan = build_decision_plan(
+        snapshot,
+        (case,),
+        run_id="run-plugin",
+        branch="dev3",
+        environment="unknown",
+        execution_profiles={case.nodeid: "manual-serial"},
+        collection_started_at=now,
+    )
+    path = write_decision_plan(plan, output_dir)
+    monkeypatch.setenv("QUALITY_FLAKY_DECISION_PLAN_PATH", str(path))
+    monkeypatch.setenv("QUALITY_FLAKY_DECISION_CHECKSUM", plan.content_checksum)
+
+    result = _run_subprocess(pytester, "-q")
+
+    result.assert_outcomes(passed=1)
+    issues = read_jsonl(output_dir / "shards/integrity-manual-pytest-master.jsonl")
+    assert not any(
+        issue["code"] == "flaky_decision_plan_invalid" for issue in issues
+    )
 
 
 def test_semantic_plugin_writes_independent_http_operation_shards(pytester, monkeypatch):

@@ -22,14 +22,13 @@ from quality.collector import (
 )
 from quality.config import QualityRuntimeConfig, load_quality_config
 from quality.identifiers import (
-    build_case_id,
     build_invocation_id,
-    build_param_hash,
     build_run_id,
-    normalize_nodeid,
 )
 from quality.junit import QUALITY_CASE_ID_PROPERTY, QUALITY_INVOCATION_ID_PROPERTY
+from quality.flaky_identity import normalize_execution_profile, runtime_flaky_environment
 from quality.models import CasePhase, CaseResult, CaseStatus, IssueSeverity
+from quality.pytest_identity import build_pytest_item_identity
 from quality.runtime_context import (
     QualityCaseContext,
     QualityRunContext,
@@ -146,6 +145,12 @@ def pytest_configure_node(node: Any) -> None:
         "output_dir": str(state.config.output_dir),
         "semantic_enabled": state.config.semantic_enabled,
         "semantic_warning": state.config.semantic_warning,
+        "flaky_decision_plan_path": (
+            str(state.config.flaky_decision_plan_path)
+            if state.config.flaky_decision_plan_path is not None
+            else None
+        ),
+        "flaky_decision_checksum": state.config.flaky_decision_checksum,
     }
 
 
@@ -154,9 +159,10 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     collector = state.collector if state is not None else None
     if collector is None:
         return
+    _validate_flaky_shadow_plan(config, items, state, collector)
     for item in items:
         try:
-            build_case_id(item.nodeid)
+            build_pytest_item_identity(item, config.rootpath)
         except Exception as error:
             collector.capture_integrity(
                 source="pytest_plugin",
@@ -165,6 +171,59 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
                 related_id=None,
                 severity=IssueSeverity.ERROR,
             )
+
+
+def _validate_flaky_shadow_plan(
+    config: pytest.Config,
+    items: list[pytest.Item],
+    state: _PluginState,
+    collector: QualityCollector,
+) -> None:
+    path = state.config.flaky_decision_plan_path
+    checksum = state.config.flaky_decision_checksum
+    if path is None and checksum is None:
+        return
+    try:
+        from quality.flaky_shadow import read_decision_plan
+
+        plan = read_decision_plan(
+            path or "",
+            expected_run_id=_required(state.config.run_id, "run_id"),
+            expected_checksum=_required(checksum, "flaky_decision_checksum"),
+        )
+        by_nodeid = {item.nodeid: item for item in plan.decisions}
+        execution_id = _required(state.config.execution_id, "execution_id")
+        profile = normalize_execution_profile(execution_id, _worker_id(config))
+        environment = runtime_flaky_environment()
+        for item in items:
+            identity = build_pytest_item_identity(item, config.rootpath)
+            decision = by_nodeid.get(item.nodeid)
+            if decision is None:
+                raise ValueError(f"decision missing for nodeid: {item.nodeid}")
+            expected = (
+                identity.case_id,
+                identity.param_hash,
+                environment,
+                profile,
+                identity.normalized_case_path,
+            )
+            actual = (
+                decision.case_id,
+                decision.param_hash,
+                decision.environment,
+                decision.execution_profile,
+                decision.normalized_case_path,
+            )
+            if actual != expected:
+                raise ValueError(f"decision identity mismatch: {item.nodeid}")
+    except Exception as error:
+        collector.capture_integrity(
+            source="pytest_plugin",
+            code="flaky_decision_plan_invalid",
+            message=f"{type(error).__name__}: {error}",
+            related_id=None,
+            severity=IssueSeverity.ERROR,
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -186,7 +245,11 @@ def pytest_runtest_protocol(item: pytest.Item, nextitem: pytest.Item | None):
 
     token = None
     try:
-        case_context = _build_case_context(item, collector.run_context.run_id)
+        case_context = _build_case_context(
+            item,
+            collector.run_context.run_id,
+            item.config.rootpath,
+        )
         token = set_case_context(case_context)
     except Exception as error:
         collector.capture_integrity(
@@ -304,6 +367,12 @@ def _resolve_runtime_config(config: pytest.Config) -> QualityRuntimeConfig:
             output_dir=Path(payload["output_dir"]),
             semantic_enabled=bool(payload.get("semantic_enabled", False)),
             semantic_warning=payload.get("semantic_warning"),
+            flaky_decision_plan_path=(
+                Path(payload["flaky_decision_plan_path"])
+                if payload.get("flaky_decision_plan_path")
+                else None
+            ),
+            flaky_decision_checksum=payload.get("flaky_decision_checksum"),
         )
 
     loaded = load_quality_config()
@@ -320,25 +389,41 @@ def _resolve_runtime_config(config: pytest.Config) -> QualityRuntimeConfig:
         output_dir=output_dir,
         semantic_enabled=loaded.semantic_enabled,
         semantic_warning=loaded.semantic_warning,
+        metrics_enabled=loaded.metrics_enabled,
+        metrics_warning=loaded.metrics_warning,
+        flaky_history_enabled=loaded.flaky_history_enabled,
+        flaky_database_path=loaded.flaky_database_path,
+        flaky_history_warning=loaded.flaky_history_warning,
+        flaky_state_enabled=loaded.flaky_state_enabled,
+        flaky_state_warning=loaded.flaky_state_warning,
+        flaky_auto_skip_enabled=loaded.flaky_auto_skip_enabled,
+        flaky_skip_mode_requested=loaded.flaky_skip_mode_requested,
+        flaky_skip_mode_effective=loaded.flaky_skip_mode_effective,
+        flaky_skip_warning=loaded.flaky_skip_warning,
+        flaky_snapshot_max_age_minutes=loaded.flaky_snapshot_max_age_minutes,
+        flaky_decision_plan_path=loaded.flaky_decision_plan_path,
+        flaky_decision_checksum=loaded.flaky_decision_checksum,
+        flaky_dashboard_host=loaded.flaky_dashboard_host,
+        flaky_dashboard_port=loaded.flaky_dashboard_port,
+        flaky_dashboard_warning=loaded.flaky_dashboard_warning,
     )
 
 
-def _build_case_context(item: pytest.Item, run_id: str) -> QualityCaseContext:
-    normalized = normalize_nodeid(item.nodeid)
-    callspec = getattr(item, "callspec", None)
-    parameter_value = None
-    if callspec is not None:
-        parameter_value = {
-            "parameter_id": normalized.parameter_id,
-            "params": callspec.params,
-        }
-    param_hash = build_param_hash(parameter_value)
-    case_id = build_case_id(item.nodeid)
+def _build_case_context(
+    item: pytest.Item,
+    run_id: str,
+    repository_root: str | Path,
+) -> QualityCaseContext:
+    identity = build_pytest_item_identity(item, repository_root)
     return QualityCaseContext(
-        case_id=case_id,
-        invocation_id=build_invocation_id(run_id, case_id, param_hash),
+        case_id=identity.case_id,
+        invocation_id=build_invocation_id(
+            run_id,
+            identity.case_id,
+            identity.param_hash,
+        ),
         nodeid=item.nodeid,
-        param_hash=param_hash,
+        param_hash=identity.param_hash,
     )
 
 

@@ -151,6 +151,21 @@ class FlakySummary:
 
 
 @dataclass(frozen=True)
+class ShadowDecisionSummary:
+    available: bool = False
+    integrity_status: str = "UNKNOWN"
+    error_code: str | None = None
+    mode_requested: str | None = None
+    mode_effective: str | None = None
+    run_count: int | None = None
+    would_skip_count: int | None = None
+    skip_count: int | None = None
+    fail_open_count: int | None = None
+    reason_counts: tuple[tuple[str, int], ...] = ()
+    reconciliation_status: str | None = None
+
+
+@dataclass(frozen=True)
 class LoadedQualitySources:
     facts_available: bool = False
     run_id: str | None = None
@@ -158,6 +173,7 @@ class LoadedQualitySources:
     retry_health: RetryHealth = RetryHealth()
     interface_timings: tuple[InterfaceTiming, ...] = ()
     flaky: FlakySummary = FlakySummary()
+    shadow: ShadowDecisionSummary = ShadowDecisionSummary()
 
 
 @dataclass(frozen=True)
@@ -173,6 +189,7 @@ class LoadedPipelineSources:
     retry_health: RetryHealth = RetryHealth()
     interface_timings: tuple[InterfaceTiming, ...] = ()
     flaky: FlakySummary = FlakySummary()
+    shadow: ShadowDecisionSummary = ShadowDecisionSummary()
     warnings: tuple[str, ...] = ()
 
 
@@ -198,4 +215,5 @@ class PipelineReport:
     interface_timings: tuple[InterfaceTiming, ...]
     flaky: FlakySummary
     actions: tuple[str, ...]
+    shadow: ShadowDecisionSummary = ShadowDecisionSummary()
     warnings: tuple[str, ...] = ()

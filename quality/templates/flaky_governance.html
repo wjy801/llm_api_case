@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Flaky 治理列表</title></head>
+<body><h1>Flaky 治理列表</h1><p>数据时间：{{ page.data_as_of }}</p>
+<table><thead><tr><th>Case</th><th>检测</th><th>治理</th><th>Owner</th><th>到期</th></tr></thead><tbody>
+{% for item in page.items %}<tr><td><a href="/cases/{{ item.flaky_key }}">{{ item.case_id }}</a></td><td>{% if item.detection_projections %}{% for projection in item.detection_projections %}{{ projection.detection_state }}{% if projection.detection_state == 'STABLE' %}（{% if projection.stable_outcome == 'pass' %}稳定通过{% else %}稳定失败{% endif %}）{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}UNOBSERVED{% endif %}</td><td>{{ item.governance_status }}</td><td>{{ item.owner }}</td><td>{{ item.expires_at }}{% if item.overdue %}（OVERDUE）{% endif %}</td></tr>{% endfor %}
+</tbody></table>{% if page.next_cursor %}<p>下一页游标：{{ page.next_cursor }}</p>{% endif %}</body></html>

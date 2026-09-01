@@ -6,6 +6,8 @@ import os
 from quality.config import (
     QUALITY_ENABLE_ENV,
     QUALITY_EXECUTION_ID_ENV,
+    QUALITY_FLAKY_DECISION_CHECKSUM_ENV,
+    QUALITY_FLAKY_DECISION_PLAN_PATH_ENV,
     QUALITY_OUTPUT_DIR_ENV,
     QUALITY_RUN_ID_ENV,
     QualityRuntimeConfig,
@@ -46,6 +48,16 @@ def resolve_parent_quality_config() -> QualityRuntimeConfig:
             flaky_history_warning=configured.flaky_history_warning,
             flaky_state_enabled=False,
             flaky_state_warning=configured.flaky_state_warning,
+            flaky_auto_skip_enabled=configured.flaky_auto_skip_enabled,
+            flaky_skip_mode_requested=configured.flaky_skip_mode_requested,
+            flaky_skip_mode_effective=configured.flaky_skip_mode_effective,
+            flaky_skip_warning=configured.flaky_skip_warning,
+            flaky_snapshot_max_age_minutes=configured.flaky_snapshot_max_age_minutes,
+            flaky_decision_plan_path=configured.flaky_decision_plan_path,
+            flaky_decision_checksum=configured.flaky_decision_checksum,
+            flaky_dashboard_host=configured.flaky_dashboard_host,
+            flaky_dashboard_port=configured.flaky_dashboard_port,
+            flaky_dashboard_warning=configured.flaky_dashboard_warning,
         )
 
     return QualityRuntimeConfig(
@@ -62,6 +74,16 @@ def resolve_parent_quality_config() -> QualityRuntimeConfig:
         flaky_history_warning=configured.flaky_history_warning,
         flaky_state_enabled=configured.flaky_state_enabled,
         flaky_state_warning=configured.flaky_state_warning,
+        flaky_auto_skip_enabled=configured.flaky_auto_skip_enabled,
+        flaky_skip_mode_requested=configured.flaky_skip_mode_requested,
+        flaky_skip_mode_effective=configured.flaky_skip_mode_effective,
+        flaky_skip_warning=configured.flaky_skip_warning,
+        flaky_snapshot_max_age_minutes=configured.flaky_snapshot_max_age_minutes,
+        flaky_decision_plan_path=configured.flaky_decision_plan_path,
+        flaky_decision_checksum=configured.flaky_decision_checksum,
+        flaky_dashboard_host=configured.flaky_dashboard_host,
+        flaky_dashboard_port=configured.flaky_dashboard_port,
+        flaky_dashboard_warning=configured.flaky_dashboard_warning,
     )
 
 
@@ -86,6 +108,14 @@ def quality_stage_environment(
         QUALITY_EXECUTION_ID_ENV: execution_id,
         QUALITY_OUTPUT_DIR_ENV: str(quality_config.output_dir),
     }
+    if quality_config.flaky_decision_plan_path is not None:
+        values[QUALITY_FLAKY_DECISION_PLAN_PATH_ENV] = str(
+            quality_config.flaky_decision_plan_path
+        )
+    if quality_config.flaky_decision_checksum is not None:
+        values[QUALITY_FLAKY_DECISION_CHECKSUM_ENV] = (
+            quality_config.flaky_decision_checksum
+        )
     previous = {name: os.environ.get(name) for name in values}
     os.environ.update(values)
     try:

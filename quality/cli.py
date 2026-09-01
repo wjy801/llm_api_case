@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from datetime import UTC, datetime
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -198,6 +199,42 @@ def main(argv: list[str] | None = None) -> int:
         "--status", choices=[item.value for item in GovernanceStatus]
     )
     flaky_governance_parser.add_argument("--overdue", action="store_true")
+    flaky_governance_parser.add_argument("--owner")
+    flaky_governance_parser.add_argument("--environment")
+    flaky_governance_parser.add_argument("--execution-profile")
+    flaky_governance_parser.add_argument("--case-path")
+    flaky_governance_parser.add_argument("--keyword")
+    flaky_governance_parser.add_argument("--cursor")
+    flaky_governance_parser.add_argument("--page-size", type=int, default=50)
+    flaky_summary_parser = subparsers.add_parser(
+        "flaky-dashboard-summary", help="show the read-only Flaky dashboard summary"
+    )
+    flaky_summary_parser.add_argument("--db", required=True)
+    flaky_case_parser = subparsers.add_parser(
+        "flaky-case-detail", help="show one read-only Flaky case detail"
+    )
+    flaky_case_parser.add_argument("--db", required=True)
+    flaky_case_parser.add_argument("--flaky-key", required=True)
+    flaky_decisions_parser = subparsers.add_parser(
+        "flaky-run-decisions", help="show one Run's immutable Shadow decision summary"
+    )
+    flaky_decisions_parser.add_argument("--db", required=True)
+    flaky_decisions_parser.add_argument("--run-id", required=True)
+    flaky_decisions_parser.add_argument("--artifact-dir", required=True)
+    flaky_dashboard_parser = subparsers.add_parser(
+        "flaky-dashboard", help="serve the loopback-only read-only Flaky dashboard"
+    )
+    flaky_dashboard_parser.add_argument("--db", required=True)
+    flaky_dashboard_parser.add_argument("--artifact-dir")
+    flaky_dashboard_parser.add_argument(
+        "--host",
+        default=os.environ.get("QUALITY_FLAKY_DASHBOARD_HOST", "127.0.0.1"),
+    )
+    flaky_dashboard_parser.add_argument(
+        "--port",
+        type=int,
+        default=os.environ.get("QUALITY_FLAKY_DASHBOARD_PORT", "8765"),
+    )
     try:
         parsed = parser.parse_args(argv)
     except SystemExit as error:
@@ -241,6 +278,14 @@ def main(argv: list[str] | None = None) -> int:
         return _flaky_quarantine(parsed)
     if parsed.command == "flaky-governance-list":
         return _flaky_governance_list(parsed)
+    if parsed.command in {
+        "flaky-dashboard-summary",
+        "flaky-case-detail",
+        "flaky-run-decisions",
+    }:
+        return _flaky_read_query(parsed)
+    if parsed.command == "flaky-dashboard":
+        return _flaky_dashboard(parsed)
     if parsed.command == "semantic-merge":
         result = merge_semantic_run(
             SemanticMergeRequest(
@@ -617,11 +662,24 @@ def _flaky_quarantine(parsed: argparse.Namespace) -> int:
 
 def _flaky_governance_list(parsed: argparse.Namespace) -> int:
     try:
-        status = GovernanceStatus(parsed.status) if parsed.status else None
-        records = list_flaky_governance(
+        from quality.config import load_quality_config
+        from quality.flaky_read import FlakyReadService
+
+        runtime = load_quality_config()
+        page = FlakyReadService(
             Path(parsed.db),
-            status=status,
-            overdue=parsed.overdue,
+            mode_requested=runtime.flaky_skip_mode_requested,
+            mode_effective=runtime.flaky_skip_mode_effective,
+        ).governance_page(
+            status=parsed.status,
+            owner=parsed.owner,
+            overdue=True if parsed.overdue else None,
+            environment=parsed.environment,
+            execution_profile=parsed.execution_profile,
+            case_path=parsed.case_path,
+            keyword=parsed.keyword,
+            cursor=parsed.cursor,
+            page_size=parsed.page_size,
         )
     except Exception as error:
         print(
@@ -629,18 +687,49 @@ def _flaky_governance_list(parsed: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    print(
-        json.dumps(
-            {
-                "count": len(records),
-                "governance": [record.model_dump(mode="json") for record in records],
-            },
-            allow_nan=False,
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
+    print(_model_json(page))
+    return 0
+
+
+def _flaky_read_query(parsed: argparse.Namespace) -> int:
+    try:
+        from quality.config import load_quality_config
+        from quality.flaky_read import FlakyReadService
+
+        runtime = load_quality_config()
+        service = FlakyReadService(
+            Path(parsed.db),
+            mode_requested=runtime.flaky_skip_mode_requested,
+            mode_effective=runtime.flaky_skip_mode_effective,
         )
-    )
+        if parsed.command == "flaky-dashboard-summary":
+            result = service.summary()
+        elif parsed.command == "flaky-case-detail":
+            result = service.case_detail(parsed.flaky_key)
+        else:
+            result = service.run_decisions(parsed.run_id, Path(parsed.artifact_dir))
+    except Exception as error:
+        _print_cli_error(error)
+        return 2
+    print(_model_json(result))
+    return 0
+
+
+def _flaky_dashboard(parsed: argparse.Namespace) -> int:
+    try:
+        from quality.flaky_dashboard import run_dashboard
+
+        run_dashboard(
+            Path(parsed.db),
+            artifact_directory=(
+                Path(parsed.artifact_dir) if parsed.artifact_dir else None
+            ),
+            host=parsed.host,
+            port=parsed.port,
+        )
+    except Exception as error:
+        _print_cli_error(error)
+        return 2
     return 0
 
 

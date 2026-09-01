@@ -48,6 +48,7 @@ def build_pipeline_report(
         retry_health=sources.retry_health,
         interface_timings=sources.interface_timings,
         flaky=sources.flaky,
+        shadow=sources.shadow,
         actions=actions,
         warnings=sources.warnings,
     )

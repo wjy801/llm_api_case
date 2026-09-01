@@ -129,6 +129,7 @@ def load_pipeline_sources(
         retry_health=quality_sources.retry_health,
         interface_timings=quality_sources.interface_timings,
         flaky=quality_sources.flaky,
+        shadow=quality_sources.shadow,
         warnings=tuple(warnings),
     )
 

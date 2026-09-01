@@ -215,3 +215,53 @@ def test_invalid_flaky_state_setting_does_not_disable_history(tmp_path):
     assert config.flaky_history_enabled is True
     assert config.flaky_state_enabled is False
     assert "QUALITY_FLAKY_STATE_ENABLE" in str(config.flaky_state_warning)
+
+
+def test_flaky_shadow_config_is_fail_closed_and_enforce_is_unavailable(tmp_path):
+    enabled = load_quality_config(
+        {
+            "QUALITY_ENABLE": "1",
+            "QUALITY_FLAKY_AUTO_SKIP_ENABLE": "1",
+            "QUALITY_FLAKY_SKIP_MODE": "shadow",
+            "QUALITY_FLAKY_SNAPSHOT_MAX_AGE_MINUTES": "20",
+        },
+        default_output_dir=tmp_path,
+    )
+    assert enabled.flaky_auto_skip_enabled is True
+    assert enabled.flaky_skip_mode_requested == "shadow"
+    assert enabled.flaky_skip_mode_effective == "shadow"
+    assert enabled.flaky_snapshot_max_age_minutes == 20
+
+    enforce = load_quality_config(
+        {
+            "QUALITY_FLAKY_AUTO_SKIP_ENABLE": "1",
+            "QUALITY_FLAKY_SKIP_MODE": "enforce",
+        }
+    )
+    assert enforce.flaky_skip_mode_requested == "enforce"
+    assert enforce.flaky_skip_mode_effective == "off"
+    assert enforce.flaky_skip_warning == "skip_enforce_not_available"
+
+    invalid = load_quality_config(
+        {
+            "QUALITY_FLAKY_AUTO_SKIP_ENABLE": "perhaps",
+            "QUALITY_FLAKY_SKIP_MODE": "unsafe",
+            "QUALITY_FLAKY_SNAPSHOT_MAX_AGE_MINUTES": "0",
+        }
+    )
+    assert invalid.flaky_auto_skip_enabled is False
+    assert invalid.flaky_skip_mode_effective == "off"
+    assert "invalid QUALITY_FLAKY_AUTO_SKIP_ENABLE" in str(
+        invalid.flaky_skip_warning
+    )
+    assert "invalid QUALITY_FLAKY_SKIP_MODE" in str(invalid.flaky_skip_warning)
+
+    dashboard = load_quality_config(
+        {
+            "QUALITY_FLAKY_DASHBOARD_HOST": "0.0.0.0",
+            "QUALITY_FLAKY_DASHBOARD_PORT": "70000",
+        }
+    )
+    assert dashboard.flaky_dashboard_host == "127.0.0.1"
+    assert dashboard.flaky_dashboard_port == 8765
+    assert dashboard.flaky_dashboard_warning is not None

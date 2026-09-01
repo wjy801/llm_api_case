@@ -12,6 +12,7 @@ from quality.flaky_models import (
     FLAKY_EVALUATION_SCHEMA_VERSION,
     FlakyEvaluationStatus,
 )
+from quality.flaky_store import FlakyStoreError
 from quality.metrics_models import (
     RUN_METRICS_AGGREGATION_VERSION,
     RUN_METRICS_MANIFEST_VERSION,
@@ -35,6 +36,7 @@ from pipeline_reporting.contracts import (
     LoadedQualitySources,
     RequestHealth,
     RetryHealth,
+    ShadowDecisionSummary,
 )
 _USABLE_METRICS_STATUSES = {
     RunMetricsStatus.AGGREGATED.value,
@@ -84,6 +86,7 @@ def load_quality_sources(
         _load_flaky_payload(quality, run_id, warnings) if run_id else None
     )
     flaky = _flaky_summary(flaky_payload) if flaky_payload else FlakySummary()
+    shadow = _load_shadow_decisions(quality, run_id, warnings)
     return LoadedQualitySources(
         facts_available=facts_available,
         run_id=run_id,
@@ -91,6 +94,67 @@ def load_quality_sources(
         retry_health=retry_health,
         interface_timings=timings,
         flaky=flaky,
+        shadow=shadow,
+    )
+
+
+def _load_shadow_decisions(
+    quality_dir: Path,
+    run_id: str | None,
+    warnings: list[str],
+) -> ShadowDecisionSummary:
+    path = quality_dir / "flaky-skip-decisions.json"
+    if not path.is_file():
+        return ShadowDecisionSummary(error_code="decision_artifact_missing")
+    try:
+        from quality.flaky_shadow import read_decision_plan, read_reconciliation
+
+        plan = read_decision_plan(path, expected_run_id=run_id if run_id else None)
+        reconciliation_status = None
+        reconciliation_error = None
+        reconciliation_path = quality_dir / "flaky-skip-reconciliation.json"
+        if reconciliation_path.is_file():
+            reconciliation = read_reconciliation(reconciliation_path)
+            if (
+                reconciliation.run_id != plan.run_id
+                or reconciliation.decisions_checksum != plan.content_checksum
+            ):
+                raise FlakyStoreError(
+                    "decision_reconciliation_mismatch",
+                    "Shadow reconciliation does not reference the plan",
+                )
+            reconciliation_status = reconciliation.status
+        else:
+            reconciliation_status = "UNKNOWN"
+            reconciliation_error = "reconciliation_artifact_missing"
+    except FlakyStoreError as error:
+        warnings.append(f"Flaky Shadow 决策不可用：{error.code}")
+        return ShadowDecisionSummary(
+            integrity_status="DEGRADED",
+            error_code=error.code,
+        )
+    except Exception as error:
+        warnings.append(f"Flaky Shadow 决策不可用：{type(error).__name__}")
+        return ShadowDecisionSummary(
+            integrity_status="DEGRADED",
+            error_code="decision_artifact_invalid",
+        )
+    return ShadowDecisionSummary(
+        available=True,
+        integrity_status=(
+            "DEGRADED"
+            if reconciliation_status in {"DEGRADED", "UNKNOWN"}
+            else plan.integrity_status
+        ),
+        error_code=reconciliation_error,
+        mode_requested=plan.mode_requested,
+        mode_effective=plan.mode_effective,
+        run_count=plan.run_count,
+        would_skip_count=plan.would_skip_count,
+        skip_count=0,
+        fail_open_count=plan.fail_open_count,
+        reason_counts=tuple(sorted(plan.reason_counts.items())),
+        reconciliation_status=reconciliation_status,
     )
 
 

@@ -1,0 +1,5 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Flaky Case</title></head>
+<body><h1>{{ case.identity.case_id }}</h1><p>Flaky key：{{ case.identity.flaky_key }}</p>
+<h2>检测投影</h2><ul>{% for item in case.projections %}<li>{{ item.detection_state }}{% if item.detection_state == 'STABLE' %}（{% if item.stable_outcome == 'pass' %}稳定通过{% else %}稳定失败{% endif %}）{% endif %}</li>{% endfor %}</ul>
+<h2>时间线</h2><ul>{% for item in case.timeline %}<li>{{ item.occurred_at }} / {{ item.event_kind }} / {{ item.event_id }}</li>{% endfor %}</ul></body></html>

@@ -90,6 +90,9 @@ def test_collect_test_case_items_reads_function_class_and_file_markers(tmp_path:
     assert "file_marker" in markers_by_name["test_serial_case"]
     assert "file_marker" in markers_by_name["test_file_marker_only"]
     assert "serial" not in markers_by_name["test_file_marker_only"]
+    assert all(case.case_id is None for case in cases)
+    assert all(case.param_hash is None for case in cases)
+    assert all(case.normalized_case_path is None for case in cases)
 
 
 def test_split_test_cases_separates_serial_pool():

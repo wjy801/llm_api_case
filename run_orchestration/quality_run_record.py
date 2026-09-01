@@ -4,6 +4,7 @@ from datetime import datetime
 import os
 
 from quality.config import QualityRuntimeConfig
+from quality.flaky_identity import runtime_flaky_environment
 from quality.flaky_v3 import DEFAULT_GOVERNANCE_POLICY
 from quality.models import IntegrityStatus, RunKind, RunRecord, RunStatus
 from quality.storage import write_json_atomic
@@ -129,7 +130,4 @@ def quality_run_contract_fields() -> dict[str, object]:
 
 
 def quality_environment_name() -> str:
-    value = os.environ.get("USE_CHINA_ENVIRONMENT")
-    if value is None:
-        return "unknown"
-    return "china" if value.strip().upper() == "TRUE" else "overseas"
+    return runtime_flaky_environment()

@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Flaky 治理总览</title></head>
+<body>
+<h1>Flaky 治理总览</h1>
+<p>数据时间：{{ summary.data_as_of }}</p>
+<p>数据库：{{ summary.database_health }} / Schema {{ summary.database_schema_version }}</p>
+<p>策略：{{ summary.policy_revision }}</p>
+<p>Shadow 模式：{{ summary.mode_requested }} → {{ summary.mode_effective }}</p>
+<h2>检测状态</h2><ul>{% for state, count in summary.detection_counts|dictsort %}<li>{{ state }}：{{ count }}</li>{% endfor %}</ul>
+<h2>治理状态</h2><ul>{% for state, count in summary.governance_counts|dictsort %}<li>{{ state }}：{{ count }}</li>{% endfor %}</ul>
+<p>超期：{{ summary.overdue_count }}</p>
+<p><a href="/governance">查看治理列表</a></p>
+</body></html>
