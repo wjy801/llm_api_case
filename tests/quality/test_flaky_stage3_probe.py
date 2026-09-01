@@ -712,6 +712,8 @@ def test_probe_jenkinsfile_has_fixed_parameters_and_claims_before_checkout():
     assert "sleep time: 30, unit: 'MINUTES'" in text
     assert "QUALITY_FLAKY_CONTROLLER_ROOT" in text
     assert "QUALITY_FLAKY_TARGET_PYTHON" in text
+    assert "env.GIT_BRANCH = plan.target_branch" in text
+    assert "env.GIT_COMMIT = plan.target_commit_sha" in text
     assert "credentialsId: 'flaky-probe-db'" not in text
     assert "allowEmpty: true" in text
     assert text.count("'QUALITY_FLAKY_DB_PATH='") == 2

@@ -110,6 +110,8 @@ pipeline {
                                 env.QUALITY_PROBE_ROUND_NO = env.PROBE_ROUND_NO
                                 env.QUALITY_PROBE_TARGET_COMMIT_SHA = plan.target_commit_sha
                                 env.QUALITY_CONTROLLER_COMMIT_SHA = plan.controller_commit_sha
+                                env.GIT_BRANCH = plan.target_branch
+                                env.GIT_COMMIT = plan.target_commit_sha
                                 env.QUALITY_POLICY_REVISION = plan.policy_revision
                                 env.QUALITY_PROBE_JENKINS_JOB_NAME = env.JOB_NAME
                                 env.QUALITY_PROBE_JENKINS_BUILD_NUMBER = env.BUILD_NUMBER
