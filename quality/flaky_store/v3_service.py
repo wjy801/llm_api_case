@@ -659,6 +659,7 @@ class FlakyV3Service:
                     and request.run.controller_commit_sha == envelope.controller_commit_sha
                     and request.run.target_commit_sha == envelope.target_commit_sha
                     and request.run.commit_sha == envelope.target_commit_sha
+                    and request.run.environment == envelope.environment
                     and request.run.jenkins_job_name == envelope.job_full_name
                     and request.run.jenkins_build_number == str(envelope.build_number)
                     and envelope.trusted_started_at == _parse_time(round_row["started_at"])
@@ -692,6 +693,16 @@ class FlakyV3Service:
                 and request.run.plan_digest == trigger["plan_digest"]
                 and request.run.target_commit_sha == attempt["target_commit_sha"]
                 and request.run.policy_revision == attempt["policy_revision"]
+                and (
+                    not stage3_plan
+                    or (
+                        request.run.branch == plan["target_branch"]
+                        and request.run.environment == plan["environment"]
+                        and request.run.fact_schema_version == plan["fact_schema_version"]
+                        and envelope.environment == plan["environment"]
+                        and envelope.execution_profile == plan["execution_profile"]
+                    )
+                )
                 and (not stage3_plan or envelope is not None)
             )
             evidence_outcome = envelope.outcome if envelope is not None else request.outcome.value
@@ -958,9 +969,11 @@ class FlakyV3Service:
 
                 rows = connection.execute(
                     """SELECT evidence.*, round.actual_target_commit_sha,
-                              round.run_id AS round_run_id,
-                              round.started_at AS round_started_at,
-                              plan.controller_commit_sha AS plan_controller_commit_sha
+                               round.run_id AS round_run_id,
+                               round.started_at AS round_started_at,
+                               plan.controller_commit_sha AS plan_controller_commit_sha,
+                               plan.environment AS plan_environment,
+                               plan.execution_profile AS plan_execution_profile
                        FROM flaky_probe_evidence AS evidence
                        JOIN flaky_probe_round AS round
                          ON round.attempt_id=evidence.attempt_id
@@ -994,6 +1007,9 @@ class FlakyV3Service:
                         or envelope.target_commit_sha != trigger["plan_target_sha"]
                         or envelope.controller_commit_sha
                         != evidence["plan_controller_commit_sha"]
+                        or envelope.environment != evidence["plan_environment"]
+                        or envelope.execution_profile
+                        != evidence["plan_execution_profile"]
                         or envelope.job_full_name != trigger["claimed_job_full_name"]
                         or envelope.build_number != trigger["claimed_build_number"]
                         or envelope.outcome != evidence["raw_outcome"]

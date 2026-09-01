@@ -93,6 +93,19 @@ def _validate_controller_checkout(controller_root: Path, runtime) -> None:
         raise ValueError("Probe controller commit cannot be verified") from error
     if completed.stdout.strip() != runtime.controller_commit_sha:
         raise ValueError("Probe controller checkout does not match the configured commit")
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=controller_root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError("Probe controller working tree cannot be verified") from error
+    if status.stdout.strip():
+        raise ValueError("Probe controller working tree must match the configured commit")
     jenkinsfile = controller_root / "Jenkinsfile.probe"
     try:
         digest = hashlib.sha256(jenkinsfile.read_bytes()).hexdigest()
@@ -100,6 +113,25 @@ def _validate_controller_checkout(controller_root: Path, runtime) -> None:
         raise ValueError("Probe controller Jenkinsfile cannot be read") from error
     if digest != runtime.controller_jenkinsfile_sha256:
         raise ValueError("Probe controller Jenkinsfile digest does not match configuration")
+
+
+def _select_probe_candidate(plan, prepared):
+    identity_matches = [
+        item
+        for item in prepared.candidates
+        if item.case_id == plan.case_id and item.param_hash == plan.param_hash
+    ]
+    if len(identity_matches) != 1:
+        return None, "probe_identity_not_unique"
+    candidate = identity_matches[0]
+    if not (
+        prepared.run.environment == plan.environment
+        and candidate.environment == plan.environment
+        and candidate.environment == prepared.run.environment
+        and candidate.execution_profile == plan.execution_profile
+    ):
+        return candidate, "probe_execution_identity_mismatch"
+    return candidate, None
 
 
 def _import_round(service: ProbeControlService, runtime, now: datetime) -> dict[str, object]:
@@ -142,24 +174,28 @@ def _import_round(service: ProbeControlService, runtime, now: datetime) -> dict[
         outcome = ProbeOutcome.NO_DATA
         trusted_failure = False
     else:
-        matches = [
-            item for item in prepared.candidates
-            if item.case_id == plan.case_id and item.param_hash == plan.param_hash
-        ]
-        if len(matches) == 1:
+        candidate, mismatch_code = _select_probe_candidate(plan, prepared)
+        observed_environment = prepared.run.environment
+        observed_execution_profile = (
+            candidate.execution_profile if candidate is not None else plan.execution_profile
+        )
+        if mismatch_code is None:
             outcome = (
                 ProbeOutcome.PASS
-                if matches[0].observation_outcome is ObservationOutcome.PASS
+                if candidate.observation_outcome is ObservationOutcome.PASS
                 else ProbeOutcome.FAIL
             )
             trusted_failure = outcome is ProbeOutcome.FAIL
         else:
             outcome = ProbeOutcome.NO_DATA
             trusted_failure = False
-            diagnostics = tuple(sorted(set((*diagnostics, "probe_identity_not_unique"))))
+            diagnostics = tuple(sorted(set((*diagnostics, mismatch_code))))
         run = prepared.run
         manifest = prepared.manifest
         source_digest = prepared.metadata.source_digest
+    if prepared is None:
+        observed_environment = plan.environment
+        observed_execution_profile = plan.execution_profile
     secret_file = runtime.evidence_hmac_key_file
     if secret_file is None:
         raise ValueError("evidence HMAC key file is required")
@@ -176,6 +212,8 @@ def _import_round(service: ProbeControlService, runtime, now: datetime) -> dict[
         run_id=run_id,
         target_commit_sha=plan.target_commit_sha,
         controller_commit_sha=plan.controller_commit_sha,
+        environment=observed_environment,
+        execution_profile=observed_execution_profile,
         jenkins_origin_id=str(runtime.jenkins_origin),
         job_full_name=str(runtime.job_full_name),
         build_number=int(run.jenkins_build_number),

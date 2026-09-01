@@ -322,12 +322,13 @@ MVP 不建设 Jenkins 侧通用 receipt ledger。极端情况下，响应丢失�
 
 ### 11.1 Envelope 契约
 
-controller 对每个已授权 round 生成 `flaky-probe-envelope.v1`。收到合法 P0 时绑定其 hashes；目标进程已结束但 P0 缺失、超限、路径非法或结构损坏时，生成 controller-origin 的不合格 envelope，并固定分类为消耗配额的 `NON_COUNTING/probe_evidence_untrusted`。只有 controller/build 在生成 envelope 前失联时，才由 reconciler 将 round 标为 ABANDONED 并使 attempt 进入 INCONCLUSIVE：
+controller 对每个已授权 round 生成 `flaky-probe-envelope.v2`。v2 在原始契约上增加环境与执行画像绑定；阶段 3 尚未进行真实演练，因此旧实现期的 v1 evidence 不迁移并统一 fail-closed。收到合法 P0 时绑定其 hashes；目标进程已结束但 P0 缺失、超限、路径非法或结构损坏时，生成 controller-origin 的不合格 envelope，并固定分类为消耗配额的 `NON_COUNTING/probe_evidence_untrusted`。只有 controller/build 在生成 envelope 前失联时，才由 reconciler 将 round 标为 ABANDONED 并使 attempt 进入 INCONCLUSIVE：
 
 ```text
 schema_version / key_id
 attempt_id / trigger_id / plan_digest / round_no / run_id
 target_commit_sha / controller_commit_sha
+environment / execution_profile
 jenkins_origin_id / job_full_name / build_number
 trusted_started_at / trusted_finished_at
 p0_bundle_status / p0_manifest_sha256? / p0_file_hashes
@@ -433,7 +434,7 @@ QUALITY_FLAKY_EVIDENCE_KEY_ID=probe-evidence-key-v1
 | S3-02 | Web 写入口 | POST、CSRF、Origin、幂等 application service | 双击/重放/跨域/row version/容量测试通过 |
 | S3-03 | Jenkins client | 固定 URL client、token 处理、dispatcher-once | 确定失败与 UNKNOWN 分类、无锁 HTTP 测试通过 |
 | S3-04 | 对账与取消 | reconciler-once、CANCEL_REQUESTED、kill-switch 收敛 | 崩溃/响应丢失/queue/build 取消测试通过 |
-| S3-05 | Probe Job | 独立 `Jenkinsfile.probe`、固定 Job 配置清单 | 顶层 agent none、参数 allowlist、claim-before-checkout 校验通过 |
+| S3-05 | Probe Job | 独立 `Jenkinsfile.probe`、`flaky治理MVP阶段3JenkinsProbeJob配置清单.md` | 顶层 agent none、参数 allowlist、claim-before-checkout、controller/target 节点与 OS 身份隔离校验通过 |
 | S3-06 | 双工作区 | controller/target 交接、精确 collect 与凭据隔离 | target 无法读取 DB/token/HMAC，零/多匹配不执行 |
 | S3-07 | Evidence | envelope、HMAC、Probe import、round ledger | 篡改/重放/乱序/迟到与 NORMAL 隔离测试通过 |
 | S3-08 | 编排与 close | 5 PASS、可信 FAIL、NON_COUNTING、人工 close | 全部状态在事务内一致，绝不自动 close |

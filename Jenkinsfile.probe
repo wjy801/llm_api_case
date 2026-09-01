@@ -19,6 +19,11 @@ pipeline {
             steps {
                 script {
                     def planText
+                    env.PROBE_CONTROLLER_NODE_NAME = env.NODE_NAME
+                    env.PROBE_CONTROLLER_OS_IDENTITY = bat(
+                        returnStdout: true,
+                        script: '@whoami'
+                    ).trim()
                     dir(env.QUALITY_FLAKY_CONTROLLER_ROOT) {
                         def claimText = bat(returnStdout: true, script: '@.venv\\Scripts\\python.exe -m quality.probe_job claim').trim()
                         def claim = readJSON text: claimText.readLines().last()
@@ -47,6 +52,14 @@ pipeline {
                         }
                         node('probe-target-restricted') {
                             def actualTargetSha
+                            def targetIdentity = bat(
+                                returnStdout: true,
+                                script: '@whoami'
+                            ).trim()
+                            if (env.NODE_NAME == env.PROBE_CONTROLLER_NODE_NAME ||
+                                    targetIdentity.equalsIgnoreCase(env.PROBE_CONTROLLER_OS_IDENTITY)) {
+                                error('Probe target must use a different Jenkins node and OS identity')
+                            }
                             withEnv([
                                 'QUALITY_FLAKY_DB_PATH=',
                                 'QUALITY_FLAKY_CONTROLLER_ROOT=',
@@ -71,6 +84,14 @@ pipeline {
                             }
                         }
                         node('probe-target-restricted') {
+                            def targetIdentity = bat(
+                                returnStdout: true,
+                                script: '@whoami'
+                            ).trim()
+                            if (env.NODE_NAME == env.PROBE_CONTROLLER_NODE_NAME ||
+                                    targetIdentity.equalsIgnoreCase(env.PROBE_CONTROLLER_OS_IDENTITY)) {
+                                error('Probe target must use a different Jenkins node and OS identity')
+                            }
                             withEnv([
                                 'QUALITY_FLAKY_DB_PATH=',
                                 'QUALITY_FLAKY_CONTROLLER_ROOT=',
