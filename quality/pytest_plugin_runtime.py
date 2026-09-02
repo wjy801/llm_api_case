@@ -159,7 +159,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     collector = state.collector if state is not None else None
     if collector is None:
         return
-    _validate_flaky_shadow_plan(config, items, state, collector)
+    _validate_flaky_decision_plan(config, items, state, collector)
     for item in items:
         try:
             build_pytest_item_identity(item, config.rootpath)
@@ -173,7 +173,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             )
 
 
-def _validate_flaky_shadow_plan(
+def _validate_flaky_decision_plan(
     config: pytest.Config,
     items: list[pytest.Item],
     state: _PluginState,
@@ -195,6 +195,7 @@ def _validate_flaky_shadow_plan(
         execution_id = _required(state.config.execution_id, "execution_id")
         profile = normalize_execution_profile(execution_id, _worker_id(config))
         environment = runtime_flaky_environment()
+        governance_marks: list[tuple[pytest.Item, str]] = []
         for item in items:
             identity = build_pytest_item_identity(item, config.rootpath)
             decision = by_nodeid.get(item.nodeid)
@@ -216,6 +217,23 @@ def _validate_flaky_shadow_plan(
             )
             if actual != expected:
                 raise ValueError(f"decision identity mismatch: {item.nodeid}")
+            business_marker_present = bool(
+                {marker.name.casefold() for marker in item.iter_markers()}
+                & {"skip", "skipif", "xfail"}
+            )
+            if decision.business_marker_present != business_marker_present:
+                raise ValueError(f"decision marker mismatch: {item.nodeid}")
+            if decision.decision == "SKIP" and not business_marker_present:
+                governance_marks.append(
+                    (item, _required(decision.governance_id, "governance_id"))
+                )
+        # Mutation is deliberately delayed until the complete artifact and every
+        # identity collected by this worker have passed validation. Any error
+        # above therefore fails open without leaving a partially marked suite.
+        for item, governance_id in governance_marks:
+            item.add_marker(
+                pytest.mark.skip(reason=f"flaky-governance:{governance_id}")
+            )
     except Exception as error:
         collector.capture_integrity(
             source="pytest_plugin",

@@ -299,12 +299,24 @@ def _shadow_section(report: PipelineReport) -> list[str]:
             f"核对：`{_md(value.reconciliation_status or 'UNKNOWN')}`",
             "",
             _table(
-                ("RUN", "WOULD_SKIP", "实际治理 Skip", "Fail-open", "完整性"),
+                (
+                    "RUN",
+                    "WOULD_SKIP",
+                    "计划 SKIP",
+                    "实际治理 Skip",
+                    "Fail-open",
+                    "完整性",
+                ),
                 (
                     (
                         str(value.run_count),
                         str(value.would_skip_count),
-                        "0",
+                        str(value.skip_count),
+                        (
+                            str(value.actual_governance_skip_count)
+                            if value.actual_governance_skip_count is not None
+                            else "-"
+                        ),
                         str(value.fail_open_count),
                         value.integrity_status,
                     ),

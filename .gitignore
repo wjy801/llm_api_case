@@ -10,6 +10,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+.codex-tmp/
 .mypy_cache/
 .ruff_cache/
 .tox/

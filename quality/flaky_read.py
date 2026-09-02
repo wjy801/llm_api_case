@@ -653,8 +653,11 @@ def _requested_mode(value: object) -> str:
 
 def _effective_mode(value: object) -> str:
     text = str(value).strip().casefold()
-    if text not in {"off", "shadow"}:
-        raise FlakyStoreError("invalid_query", "mode_effective must be off or shadow")
+    if text not in {"off", "shadow", "enforce"}:
+        raise FlakyStoreError(
+            "invalid_query",
+            "mode_effective must be off, shadow, or enforce",
+        )
     return text
 
 

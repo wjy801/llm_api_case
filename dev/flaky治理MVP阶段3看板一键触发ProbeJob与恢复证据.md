@@ -6,7 +6,7 @@
 
 本阶段接受 SQLite 与 Jenkins 无法原子提交的事实，投递语义为“可能至少一次”：一次性 token 和构建开始前的原子 claim 保证最多一个构建取得执行权，仅作用于 `effect_status=APPLIED` evidence 的 `(attempt_id, round_no)` 部分唯一约束保证每轮最多计数一次。实际治理 Skip 继续保持 `off/shadow`，不得在本阶段启用 `enforce`。
 
-当前状态：`PROBE_READY / REAL_REHEARSAL_PENDING`。阶段 2 已达到 `SHADOW_VALIDATED / ENFORCE_NOT_AUTHORIZED`，阶段 3 代码、fake Jenkins 测试与独立验收已通过；成功、可信 FAIL、UNKNOWN、取消四类非生产真实演练尚未完成，因此不得标记为 `PROBE_VALIDATED`。
+当前状态：`PROBE_VALIDATED / ENFORCE_NOT_AUTHORIZED`。阶段 2 继续保持 `SHADOW_VALIDATED / ENFORCE_NOT_AUTHORIZED`；阶段 3 代码、fake Jenkins 测试、容器化 GitLab/Jenkins 非生产真实演练和人工关闭门禁均已通过。真实演练期间未启用治理 Skip，完成后 Probe trigger 开关已恢复为关闭，正式最小间隔已恢复为 30 分钟。
 
 ## 2. 目标、范围与非目标
 
@@ -322,12 +322,13 @@ MVP 不建设 Jenkins 侧通用 receipt ledger。极端情况下，响应丢失�
 
 ### 11.1 Envelope 契约
 
-controller 对每个已授权 round 生成 `flaky-probe-envelope.v1`。收到合法 P0 时绑定其 hashes；目标进程已结束但 P0 缺失、超限、路径非法或结构损坏时，生成 controller-origin 的不合格 envelope，并固定分类为消耗配额的 `NON_COUNTING/probe_evidence_untrusted`。只有 controller/build 在生成 envelope 前失联时，才由 reconciler 将 round 标为 ABANDONED 并使 attempt 进入 INCONCLUSIVE：
+controller 对每个已授权 round 生成 `flaky-probe-envelope.v2`。v2 在原始契约上增加环境与执行画像绑定；阶段 3 尚未进行真实演练，因此旧实现期的 v1 evidence 不迁移并统一 fail-closed。收到合法 P0 时绑定其 hashes；目标进程已结束但 P0 缺失、超限、路径非法或结构损坏时，生成 controller-origin 的不合格 envelope，并固定分类为消耗配额的 `NON_COUNTING/probe_evidence_untrusted`。只有 controller/build 在生成 envelope 前失联时，才由 reconciler 将 round 标为 ABANDONED 并使 attempt 进入 INCONCLUSIVE：
 
 ```text
 schema_version / key_id
 attempt_id / trigger_id / plan_digest / round_no / run_id
 target_commit_sha / controller_commit_sha
+environment / execution_profile
 jenkins_origin_id / job_full_name / build_number
 trusted_started_at / trusted_finished_at
 p0_bundle_status / p0_manifest_sha256? / p0_file_hashes
@@ -433,7 +434,7 @@ QUALITY_FLAKY_EVIDENCE_KEY_ID=probe-evidence-key-v1
 | S3-02 | Web 写入口 | POST、CSRF、Origin、幂等 application service | 双击/重放/跨域/row version/容量测试通过 |
 | S3-03 | Jenkins client | 固定 URL client、token 处理、dispatcher-once | 确定失败与 UNKNOWN 分类、无锁 HTTP 测试通过 |
 | S3-04 | 对账与取消 | reconciler-once、CANCEL_REQUESTED、kill-switch 收敛 | 崩溃/响应丢失/queue/build 取消测试通过 |
-| S3-05 | Probe Job | 独立 `Jenkinsfile.probe`、固定 Job 配置清单 | 顶层 agent none、参数 allowlist、claim-before-checkout 校验通过 |
+| S3-05 | Probe Job | 独立 `Jenkinsfile.probe`、`flaky治理MVP阶段3JenkinsProbeJob配置清单.md` | 顶层 agent none、参数 allowlist、claim-before-checkout、controller/target 节点与 OS 身份隔离校验通过 |
 | S3-06 | 双工作区 | controller/target 交接、精确 collect 与凭据隔离 | target 无法读取 DB/token/HMAC，零/多匹配不执行 |
 | S3-07 | Evidence | envelope、HMAC、Probe import、round ledger | 篡改/重放/乱序/迟到与 NORMAL 隔离测试通过 |
 | S3-08 | 编排与 close | 5 PASS、可信 FAIL、NON_COUNTING、人工 close | 全部状态在事务内一致，绝不自动 close |
@@ -473,6 +474,21 @@ QUALITY_FLAKY_EVIDENCE_KEY_ID=probe-evidence-key-v1
 4. 运行中关闭 trigger switch，进入 CANCEL_REQUESTED；只有 Jenkins 终态确认后才 CANCELLED 并回到 ACTIVE。
 
 真实演练只允许非生产 API 凭据和数据库。不得为了完成验收在生产治理记录上制造失败或取消。
+
+#### 15.2.1 2026-09-02 容器化环境演练记录
+
+演练环境使用容器内 GitLab 与 Jenkins、独立的 `probe-controller` 和 `probe-target-restricted` 节点、仓库外非生产 SQLite 数据库以及最小权限 `probe-dispatcher`。target 没有宿主机目录挂载，无法读取 controller checkout、数据库、HMAC key 或 Jenkins service credential。以下标识均为脱敏后的持久审计标识：
+
+| 场景 | 关键身份 | 结果 |
+| --- | --- | --- |
+| 5 次 PASS 与人工关闭 | attempt `attempt-v1-15ab5a230185f7857b890fc90b3f8ee4eb20c8508381a9d54a29b90658af11d8`；trigger `trigger-v1-821d446da255acc6173d61f7ac1de40e2dcf98a339894d2b705dcf3a99811268`；queue `293`；build `6` | 5 个 round 均为 `COUNT_PASS/APPLIED`，状态先到 `READY_TO_CLOSE`，trigger 为 `COMPLETED`；人工 close 后 governance 变为 `CLOSED`，detection generation 从 1 增加到 2 |
+| 已有 PASS 后可信 FAIL | attempt `attempt-v1-92c6f74fa8c157b57e641ac981b239c63d6c715f4c122e523235635dc4d6d729`；trigger `trigger-v1-c3376b359711c5f36cf5cb3d5450c55aea96de34b7fddb80ab4ecb770a12a4fc`；queue `321`；build `7` | round 1 为 `COUNT_PASS/APPLIED`；等待期内将非生产 target API credential 替换为随机无效值，round 2 为 `TRUSTED_FAIL/APPLIED`；attempt 变为 `FAILED`、governance 回到 `ACTIVE`，随后恢复有效 credential |
+| 响应丢失与重复 queue | attempt `attempt-v1-b6c690b81e73d9d8befbdd5949ada3626707043e7079a564ea7bdae0fed780c0`；trigger `trigger-v1-29a7ed44c68be9b3703f73401b1bde9d81713e6cc0a3dddea6899550c9082f2c`；queue `342`、`344`；build `9`、`10` | 首次请求已被 Jenkins 接受但响应被丢弃，本地先进入 `DISPATCH_UNKNOWN`；build 9 唯一 claim 并仅导入一条 APPLIED evidence，build 10 以 `probe_claim_not_allowed` 退出；dispatch attempt 仍为 1 |
+| kill-switch 运行中取消 | attempt `attempt-v1-40a8bb392e2f67d3c4e8ad3bcd94a241880ed3d25aa8691cdf1860edfd7353d9`；trigger `trigger-v1-ab854796b10e951c9f2e59ad722b55f07ca302e07b46625182a61cbae276f7bb`；queue `274`；build `4` | 关闭 Dashboard 与 controller trigger switch 后，disabled-runtime reconcile 先写入 `CANCEL_REQUESTED`；只有 Jenkins build 进入终态后才收敛为 `CANCELLED` 并释放容量 |
+
+为缩短非生产演练窗口，经明确授权将现场轮次间隔临时改为 5 分钟；5 次 PASS 的相邻 `started_at` 间隔均超过 5 分钟。正式代码、GitLab `dev3` 和 Jenkins Job 在验收后均恢复 30 分钟默认值；30 分钟边界继续由注入时间的状态机测试覆盖。一次 controller/target 版本未对齐的预备试跑被正确拒绝为 `NON_COUNTING/probe_p0_file_missing`，未误计 PASS；对齐到同一临时提交后才重新执行上述有效演练。
+
+收尾检查结果：`flaky-db-check` 返回 schema v4、`issue_codes=[]`；`tests/quality` 为 `461 passed, 44 warnings`；数据库、受信/受限工作区、Jenkins build 3～10 控制台与归档产物的明文敏感值扫描为 0 命中；等待窗口内 controller 与 target 的普通 executor 占用均为 0。Windows controller agent 已更换节点身份并轮换连接 secret，新进程仅通过受限 secret 文件读取凭据，不再把明文 secret 放入命令行。
 
 ### 15.3 退出门槛
 

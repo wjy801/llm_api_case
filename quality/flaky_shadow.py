@@ -27,7 +27,7 @@ RECONCILIATION_SCHEMA_VERSION = "flaky-skip-reconciliation.v1"
 SNAPSHOT_FILE_NAME = "flaky-skip-snapshot.json"
 DECISION_FILE_NAME = "flaky-skip-decisions.json"
 RECONCILIATION_FILE_NAME = "flaky-skip-reconciliation.json"
-SUPPORTED_DATABASE_SCHEMA_VERSION = 3
+SUPPORTED_DATABASE_SCHEMA_VERSION = 4
 
 
 class ShadowModel(BaseModel):
@@ -120,11 +120,11 @@ class DecisionRecord(ShadowModel):
     business_marker_present: bool = False
 
     @model_validator(mode="after")
-    def _stage_two_decision(self) -> "DecisionRecord":
-        if self.decision not in {"RUN", "WOULD_SKIP"}:
-            raise ValueError("stage 2 decision must be RUN or WOULD_SKIP")
-        if self.decision == "WOULD_SKIP" and self.governance_id is None:
-            raise ValueError("WOULD_SKIP requires governance_id")
+    def _decision_contract(self) -> "DecisionRecord":
+        if self.decision not in {"RUN", "WOULD_SKIP", "SKIP"}:
+            raise ValueError("decision must be RUN, WOULD_SKIP, or SKIP")
+        if self.decision in {"WOULD_SKIP", "SKIP"} and self.governance_id is None:
+            raise ValueError(f"{self.decision} requires governance_id")
         return self
 
 
@@ -150,13 +150,24 @@ class DecisionPlan(ShadowModel):
 
     @model_validator(mode="after")
     def _counts(self) -> "DecisionPlan":
-        if self.skip_count != 0:
-            raise ValueError("stage 2 SKIP count must be zero")
         actual = Counter(item.decision for item in self.decisions)
         if actual["RUN"] != self.run_count:
             raise ValueError("decision RUN count mismatch")
         if actual["WOULD_SKIP"] != self.would_skip_count:
             raise ValueError("decision WOULD_SKIP count mismatch")
+        if actual["SKIP"] != self.skip_count:
+            raise ValueError("decision SKIP count mismatch")
+        if self.mode_effective not in {"off", "shadow", "enforce"}:
+            raise ValueError("unsupported effective skip mode")
+        if (
+            self.mode_effective in {"shadow", "enforce"}
+            and self.mode_requested != self.mode_effective
+        ):
+            raise ValueError("active effective mode must match requested mode")
+        if self.mode_effective != "shadow" and self.would_skip_count:
+            raise ValueError("WOULD_SKIP requires shadow mode")
+        if self.mode_effective != "enforce" and self.skip_count:
+            raise ValueError("SKIP requires enforce mode")
         if sum(item.fail_open for item in self.decisions) != self.fail_open_count:
             raise ValueError("decision fail-open count mismatch")
         reasons = dict(
@@ -192,11 +203,9 @@ class ReconciliationResult(ShadowModel):
     content_checksum: str
 
     @model_validator(mode="after")
-    def _stage_two_result(self) -> "ReconciliationResult":
+    def _result_contract(self) -> "ReconciliationResult":
         if self.status not in {"OK", "DEGRADED", "NOT_EXECUTED"}:
             raise ValueError("unsupported reconciliation status")
-        if self.actual_governance_skip_count != 0:
-            raise ValueError("stage 2 actual governance skip count must be zero")
         return self
 
 
@@ -354,7 +363,7 @@ def build_decision_plan(
                 continue
             disabled_reason = (
                 "auto_skip_disabled"
-                if snapshot.mode_requested == "shadow"
+                if snapshot.mode_requested in {"shadow", "enforce"}
                 else "mode_off"
             )
             config_failed_open = bool(snapshot.diagnostic_codes)
@@ -462,14 +471,19 @@ def build_decision_plan(
         entry_diagnostics = (
             ("governance_overdue",) if entry.governance_overdue else ()
         )
+        enforce = snapshot.mode_effective == "enforce"
         provisional.append(
             _decision(
                 run_id,
                 case,
                 environment=environment,
                 execution_profile=profile,
-                decision="WOULD_SKIP",
-                reason="governance_shadow_match",
+                decision="SKIP" if enforce else "WOULD_SKIP",
+                reason=(
+                    "governance_enforce_match"
+                    if enforce
+                    else "governance_shadow_match"
+                ),
                 diagnostics=entry_diagnostics,
                 entry=entry,
                 business_marker_present=business_marker,
@@ -543,13 +557,23 @@ def reconcile_decision_plan(
         sorted(nodeid for nodeid, values in invocations.items() if len(values) > 1)
     )
     unexpected = tuple(sorted(observed - set(planned)))
+    planned_governance_skips = {
+        nodeid
+        for nodeid, decision in planned.items()
+        if decision.decision == "SKIP" and not decision.business_marker_present
+    }
+    actual_governance_skips = skipped & planned_governance_skips
     unexpected_skipped = tuple(
         sorted(
             nodeid
             for nodeid in skipped & set(planned)
-            if not planned[nodeid].business_marker_present
+            if (
+                not planned[nodeid].business_marker_present
+                and planned[nodeid].decision != "SKIP"
+            )
         )
     )
+    governance_skip_not_observed = tuple(sorted(planned_governance_skips - skipped))
     diagnostics: list[str] = []
     if missing:
         diagnostics.append("execution_result_missing")
@@ -559,6 +583,8 @@ def reconcile_decision_plan(
         diagnostics.append("execution_result_unplanned")
     if unexpected_skipped:
         diagnostics.append("unexpected_skip_observed")
+    if governance_skip_not_observed:
+        diagnostics.append("governance_skip_not_observed")
     if plan.integrity_status == "DEGRADED":
         diagnostics.append("decision_plan_degraded")
     return _reconciliation(
@@ -568,6 +594,7 @@ def reconcile_decision_plan(
         status="DEGRADED" if diagnostics else "OK",
         planned_count=len(plan.decisions),
         observed_count=len(observed),
+        actual_governance_skip_count=len(actual_governance_skips),
         missing_nodeids=missing,
         duplicate_nodeids=duplicates,
         unexpected_nodeids=unexpected,
@@ -719,7 +746,7 @@ def _decision_plan(**payload: object) -> DecisionPlan:
         "decisions": decisions,
         "run_count": sum(item.decision == "RUN" for item in decisions),
         "would_skip_count": sum(item.decision == "WOULD_SKIP" for item in decisions),
-        "skip_count": 0,
+        "skip_count": sum(item.decision == "SKIP" for item in decisions),
         "fail_open_count": sum(item.fail_open for item in decisions),
         "reason_counts": dict(
             sorted(Counter(item.primary_reason_code for item in decisions).items())
@@ -823,8 +850,10 @@ def _snapshot_validation_diagnostics(
     ]
     if snapshot.status != "READY":
         values.append(snapshot.error_code or "snapshot_not_ready")
-    if snapshot.mode_effective != "shadow":
-        values.append("snapshot_mode_not_shadow")
+    if snapshot.mode_effective not in {"shadow", "enforce"}:
+        values.append("snapshot_mode_not_active")
+    elif snapshot.mode_requested != snapshot.mode_effective:
+        values.append("snapshot_mode_mismatch")
     return tuple(sorted(set(values)))
 
 

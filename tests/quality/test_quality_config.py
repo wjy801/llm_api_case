@@ -217,7 +217,7 @@ def test_invalid_flaky_state_setting_does_not_disable_history(tmp_path):
     assert "QUALITY_FLAKY_STATE_ENABLE" in str(config.flaky_state_warning)
 
 
-def test_flaky_shadow_config_is_fail_closed_and_enforce_is_unavailable(tmp_path):
+def test_flaky_skip_config_requires_double_opt_in_and_supports_enforce(tmp_path):
     enabled = load_quality_config(
         {
             "QUALITY_ENABLE": "1",
@@ -239,8 +239,17 @@ def test_flaky_shadow_config_is_fail_closed_and_enforce_is_unavailable(tmp_path)
         }
     )
     assert enforce.flaky_skip_mode_requested == "enforce"
-    assert enforce.flaky_skip_mode_effective == "off"
-    assert enforce.flaky_skip_warning == "skip_enforce_not_available"
+    assert enforce.flaky_skip_mode_effective == "enforce"
+    assert enforce.flaky_skip_warning is None
+
+    kill_switched = load_quality_config(
+        {
+            "QUALITY_FLAKY_AUTO_SKIP_ENABLE": "0",
+            "QUALITY_FLAKY_SKIP_MODE": "enforce",
+        }
+    )
+    assert kill_switched.flaky_skip_mode_requested == "enforce"
+    assert kill_switched.flaky_skip_mode_effective == "off"
 
     invalid = load_quality_config(
         {

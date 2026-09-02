@@ -28,7 +28,7 @@ from quality.models import RunRecord
 
 
 PROBE_PLAN_VERSION = "flaky-probe-plan.v1"
-PROBE_ENVELOPE_VERSION = "flaky-probe-envelope.v1"
+PROBE_ENVELOPE_VERSION = "flaky-probe-envelope.v2"
 PROBE_CREATE_PAYLOAD_VERSION = "flaky-probe-create.v1"
 PROBE_DB_SCHEMA_VERSION = 4
 DEFAULT_MAX_DISPATCH_ATTEMPTS = 3
@@ -201,6 +201,8 @@ class ProbeEvidenceEnvelope(FrozenProbeModel):
     run_id: str
     target_commit_sha: str
     controller_commit_sha: str
+    environment: str
+    execution_profile: str
     jenkins_origin_id: str
     job_full_name: str
     build_number: int = Field(ge=1)
@@ -219,6 +221,11 @@ class ProbeEvidenceEnvelope(FrozenProbeModel):
     @classmethod
     def _envelope_sha(cls, value: str) -> str:
         return _require_sha(value, "commit sha")
+
+    @field_validator("environment", "execution_profile")
+    @classmethod
+    def _execution_identity(cls, value: str) -> str:
+        return _required(value, "execution identity")
 
     @field_validator("plan_digest", "p0_manifest_sha256")
     @classmethod
@@ -1275,15 +1282,28 @@ class ProbeControlService:
                 )
                 self._release_slot(connection, str(current["trigger_id"]))
             else:
-                connection.execute(
-                    """UPDATE flaky_probe_trigger
-                       SET last_error_code=?, next_reconcile_at=?, updated_at=?
-                       WHERE trigger_id=?""",
-                    (
-                        observed.error_code or "jenkins_state_unknown",
-                        utc_text(now), utc_text(now), current["trigger_id"],
-                    ),
-                )
+                error_code = observed.error_code or "jenkins_state_unknown"
+                if state == TriggerStatus.DISPATCHING.value:
+                    connection.execute(
+                        """UPDATE flaky_probe_trigger
+                           SET status='DISPATCH_UNKNOWN', last_error_code=?,
+                               next_reconcile_at=?, row_version=row_version+1, updated_at=?
+                           WHERE trigger_id=? AND status='DISPATCHING'""",
+                        (
+                            error_code, utc_text(now), utc_text(now),
+                            current["trigger_id"],
+                        ),
+                    )
+                else:
+                    connection.execute(
+                        """UPDATE flaky_probe_trigger
+                           SET last_error_code=?, next_reconcile_at=?, updated_at=?
+                           WHERE trigger_id=?""",
+                        (
+                            error_code, utc_text(now), utc_text(now),
+                            current["trigger_id"],
+                        ),
+                    )
             result = self._safe_trigger_result(
                 self._trigger_row(connection, str(current["trigger_id"])), created=False
             )

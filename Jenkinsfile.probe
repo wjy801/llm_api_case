@@ -19,6 +19,11 @@ pipeline {
             steps {
                 script {
                     def planText
+                    env.PROBE_CONTROLLER_NODE_NAME = env.NODE_NAME
+                    env.PROBE_CONTROLLER_OS_IDENTITY = bat(
+                        returnStdout: true,
+                        script: '@whoami'
+                    ).trim()
                     dir(env.QUALITY_FLAKY_CONTROLLER_ROOT) {
                         def claimText = bat(returnStdout: true, script: '@.venv\\Scripts\\python.exe -m quality.probe_job claim').trim()
                         def claim = readJSON text: claimText.readLines().last()
@@ -47,6 +52,13 @@ pipeline {
                         }
                         node('probe-target-restricted') {
                             def actualTargetSha
+                            def targetIdentity = isUnix()
+                                ? sh(returnStdout: true, script: 'id -un').trim()
+                                : bat(returnStdout: true, script: '@whoami').trim()
+                            if (env.NODE_NAME == env.PROBE_CONTROLLER_NODE_NAME ||
+                                    targetIdentity.equalsIgnoreCase(env.PROBE_CONTROLLER_OS_IDENTITY)) {
+                                error('Probe target must use a different Jenkins node and OS identity')
+                            }
                             withEnv([
                                 'QUALITY_FLAKY_DB_PATH=',
                                 'QUALITY_FLAKY_CONTROLLER_ROOT=',
@@ -60,7 +72,9 @@ pipeline {
                                 checkout([$class: 'GitSCM', branches: [[name: plan.target_commit_sha]],
                                           extensions: [[$class: 'CleanBeforeCheckout']],
                                           userRemoteConfigs: scm.userRemoteConfigs])
-                                actualTargetSha = bat(returnStdout: true, script: '@git rev-parse HEAD').trim()
+                                actualTargetSha = isUnix()
+                                    ? sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                                    : bat(returnStdout: true, script: '@git rev-parse HEAD').trim()
                                 stash name: "probe-source-${roundIndex}", includes: '**/*', excludes: 'reports/**'
                             }
                             env.PROBE_ACTUAL_TARGET_SHA = actualTargetSha
@@ -71,6 +85,13 @@ pipeline {
                             }
                         }
                         node('probe-target-restricted') {
+                            def targetIdentity = isUnix()
+                                ? sh(returnStdout: true, script: 'id -un').trim()
+                                : bat(returnStdout: true, script: '@whoami').trim()
+                            if (env.NODE_NAME == env.PROBE_CONTROLLER_NODE_NAME ||
+                                    targetIdentity.equalsIgnoreCase(env.PROBE_CONTROLLER_OS_IDENTITY)) {
+                                error('Probe target must use a different Jenkins node and OS identity')
+                            }
                             withEnv([
                                 'QUALITY_FLAKY_DB_PATH=',
                                 'QUALITY_FLAKY_CONTROLLER_ROOT=',
@@ -89,6 +110,8 @@ pipeline {
                                 env.QUALITY_PROBE_ROUND_NO = env.PROBE_ROUND_NO
                                 env.QUALITY_PROBE_TARGET_COMMIT_SHA = plan.target_commit_sha
                                 env.QUALITY_CONTROLLER_COMMIT_SHA = plan.controller_commit_sha
+                                env.GIT_BRANCH = plan.target_branch
+                                env.GIT_COMMIT = plan.target_commit_sha
                                 env.QUALITY_POLICY_REVISION = plan.policy_revision
                                 env.QUALITY_PROBE_JENKINS_JOB_NAME = env.JOB_NAME
                                 env.QUALITY_PROBE_JENKINS_BUILD_NUMBER = env.BUILD_NUMBER
@@ -96,9 +119,15 @@ pipeline {
                                 env.QUALITY_ENABLE = '1'
                                 env.QUALITY_FLAKY_MODE = 'off'
                                 env.QUALITY_OUTPUT_DIR = 'reports/quality'
-                                withCredentials([string(credentialsId: 'probe-target-api-key', variable: 'PROBE_TARGET_API_KEY')]) {
-                                    def targetCommand = "@\"${env.QUALITY_FLAKY_TARGET_PYTHON}\" -m quality.probe_target probe-plan.json"
-                                    env.PROBE_TARGET_EXIT_CODE = "${bat(returnStatus: true, script: targetCommand)}"
+                                def targetApiKeyVariable = plan.environment == 'china'
+                                    ? 'CHINA_API_KEY'
+                                    : 'OVERSEAS_API_KEY'
+                                withCredentials([string(credentialsId: 'probe-target-api-key', variable: targetApiKeyVariable)]) {
+                                    def targetCommand = "\"${env.QUALITY_FLAKY_TARGET_PYTHON}\" -m quality.probe_target probe-plan.json"
+                                    def targetExitCode = isUnix()
+                                        ? sh(returnStatus: true, script: targetCommand)
+                                        : bat(returnStatus: true, script: "@${targetCommand}")
+                                    env.PROBE_TARGET_EXIT_CODE = "${targetExitCode}"
                                 }
                                 stash name: "probe-round-${roundIndex}", includes: 'reports/quality/**', allowEmpty: true
                             }

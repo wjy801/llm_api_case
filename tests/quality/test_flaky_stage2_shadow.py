@@ -42,7 +42,9 @@ def _config(tmp_path, *, enabled=True, mode="shadow"):
         flaky_database_path=(tmp_path / "flaky.sqlite3").resolve(),
         flaky_auto_skip_enabled=enabled,
         flaky_skip_mode_requested=mode,
-        flaky_skip_mode_effective=mode if enabled and mode == "shadow" else "off",
+        flaky_skip_mode_effective=(
+            mode if enabled and mode in {"shadow", "enforce"} else "off"
+        ),
     )
 
 
@@ -66,7 +68,7 @@ def _candidate(case_id: str, *, profile="parallel", key=None):
 
 class _ReadService:
     candidates = ()
-    schema_version = 3
+    schema_version = 4
 
     def __init__(self, _path):
         pass
@@ -329,7 +331,7 @@ def test_run_branch_policy_schema_and_sibling_identity_mismatches_fail_open(tmp_
     case_file.write_text("", encoding="utf-8")
     case_id = "module/smoke/test_demo.py::test_case"
     _ReadService.candidates = (_candidate(case_id),)
-    _ReadService.schema_version = 3
+    _ReadService.schema_version = 4
     alternate_policy = GovernancePolicy(required_consecutive_passes=6)
     snapshot = generate_snapshot(
         _config(tmp_path),
@@ -390,7 +392,7 @@ def test_run_branch_policy_schema_and_sibling_identity_mismatches_fail_open(tmp_
     assert sibling_plan.decisions[0].primary_reason_code == "governance_not_matched"
     assert sibling_plan.fail_open_count == 0
 
-    _ReadService.schema_version = 4
+    _ReadService.schema_version = 3
     unavailable = generate_snapshot(
         _config(tmp_path),
         run_id="run-2",
@@ -401,7 +403,7 @@ def test_run_branch_policy_schema_and_sibling_identity_mismatches_fail_open(tmp_
     )
     assert unavailable.status == "UNAVAILABLE"
     assert unavailable.error_code == "snapshot_version_incompatible"
-    _ReadService.schema_version = 3
+    _ReadService.schema_version = 4
 
 
 def test_duplicate_candidate_and_smoke_extra_scope_are_rejected(tmp_path):

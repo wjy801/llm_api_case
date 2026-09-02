@@ -228,8 +228,6 @@ def _parse_skip_mode(
     requested = (value or "off").strip().casefold() or "off"
     if requested not in {"off", "shadow", "enforce"}:
         return requested, "off", f"invalid {QUALITY_FLAKY_SKIP_MODE_ENV} value: {value!r}"
-    if requested == "enforce":
-        return requested, "off", "skip_enforce_not_available"
     if not enabled:
         return requested, "off", None
     return requested, requested, None

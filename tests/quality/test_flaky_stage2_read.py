@@ -117,7 +117,7 @@ def test_read_service_summary_pagination_filters_and_same_data_as_of(tmp_path):
 
 @pytest.mark.parametrize(
     "requested,effective",
-    (("shadow", "shadow"), ("enforce", "off"), ("unsafe", "off")),
+        (("shadow", "shadow"), ("enforce", "enforce"), ("unsafe", "off")),
 )
 def test_summary_cli_uses_runtime_requested_and_effective_mode(
     tmp_path,

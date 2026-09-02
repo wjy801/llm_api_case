@@ -1,0 +1,275 @@
+pipeline {
+    agent { label 'probe-controller' }
+
+    options {
+        timestamps()
+        timeout(time: 20, unit: 'MINUTES')
+        disableConcurrentBuilds(abortPrevious: false)
+        skipDefaultCheckout(true)
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    environment {
+        PYTHONIOENCODING = 'utf-8'
+        PYTHONUTF8 = '1'
+        PIP_DISABLE_PIP_VERSION_CHECK = '1'
+        GENERATE_ALLURE_REPORT = 'FALSE'
+        GENERATE_HISTORY_REPORT = 'FALSE'
+        OVERSEAS_TEST_BASE_URL = 'https://offline.invalid'
+        OVERSEAS_API_KEY = 'stage5-canary-offline-placeholder'
+        QUALITY_FLAKY_AUTO_SKIP_ENABLE = '0'
+        QUALITY_FLAKY_SKIP_MODE = 'off'
+    }
+
+    stages {
+        stage('Trusted Checkout') {
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/dev3']],
+                    userRemoteConfigs: [[
+                        credentialsId: 'scm',
+                        url: 'http://localhost:8929/root/llm_api_case.git',
+                    ]],
+                ])
+                script {
+                    def branchCheck = powershell(
+                        returnStatus: true,
+                        script: '''
+                        $head = (git rev-parse HEAD).Trim().ToLowerInvariant()
+                        $dev3 = (git rev-parse refs/remotes/origin/dev3).Trim().ToLowerInvariant()
+                        if ($LASTEXITCODE -ne 0 -or $head -ne $dev3) { exit 1 }
+                        ''',
+                    )
+                    if (branchCheck != 0) {
+                        error('Enforce canary checkout is not the exact origin/dev3 HEAD.')
+                    }
+                }
+            }
+        }
+
+        stage('Prepare Isolated Canary') {
+            steps {
+                script {
+                    def stateRoot = String.valueOf(env.QUALITY_FLAKY_CANARY_STATE_ROOT ?: '').trim()
+                    if (!stateRoot) {
+                        stateRoot = powershell(
+                            returnStdout: true,
+                            script: '''
+                            $workspace = [IO.Path]::GetFullPath($env:WORKSPACE)
+                            $workspaceParent = Split-Path -Path $workspace -Parent
+                            [IO.Path]::GetFullPath((Join-Path $workspaceParent 'stage5-enforce-state'))
+                            ''',
+                        ).trim()
+                    }
+                    env.QUALITY_FLAKY_CANARY_STATE_ROOT = stateRoot
+                    def safeBuild = "${env.JOB_NAME}-${env.BUILD_NUMBER}".replaceAll('[^A-Za-z0-9._-]', '-')
+                    env.CANARY_STATE_DIR = "${stateRoot}\\${safeBuild}"
+                    env.CANARY_DB = "${env.CANARY_STATE_DIR}\\canary.sqlite3"
+                }
+                canaryPowerShell('''
+                $workspace = [IO.Path]::GetFullPath((Get-Location).Path)
+                $stateRoot = [IO.Path]::GetFullPath($env:QUALITY_FLAKY_CANARY_STATE_ROOT)
+                $stateDir = [IO.Path]::GetFullPath($env:CANARY_STATE_DIR)
+                if ($stateRoot.StartsWith($workspace, [StringComparison]::OrdinalIgnoreCase)) {
+                    throw 'Canary state root must be outside the Jenkins workspace.'
+                }
+                if (!$stateDir.StartsWith($stateRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+                    throw 'Canary state directory escaped its configured root.'
+                }
+                if (Test-Path -LiteralPath $stateDir) {
+                    throw 'Unique canary state directory already exists.'
+                }
+                New-Item -ItemType Directory -Path $stateDir | Out-Null
+                if (!(Test-Path -LiteralPath '.venv/Scripts/python.exe')) {
+                    python -m venv .venv
+                }
+                $canaryRequirements = Join-Path $stateDir 'requirements-ci.txt'
+                Get-Content -LiteralPath requirements.txt |
+                  Where-Object { -not $_.TrimStart().StartsWith('--index-url ') } |
+                  Set-Content -LiteralPath $canaryRequirements -Encoding Ascii
+                ./.venv/Scripts/python.exe -m pip install `
+                  --index-url https://pypi.org/simple `
+                  -r $canaryRequirements
+                $reports = [IO.Path]::GetFullPath((Join-Path $workspace 'reports'))
+                if (Test-Path -LiteralPath $reports) {
+                    Remove-Item -LiteralPath $reports -Recurse -Force
+                }
+                New-Item -ItemType Directory -Force -Path reports | Out-Null
+                ./.venv/Scripts/python.exe -m quality.flaky_enforce_gate prepare `
+                  --db $env:CANARY_DB `
+                  --repository-root . `
+                  --environment overseas `
+                  --execution-profile parallel `
+                  --acknowledge-nonproduction `
+                  --output reports/enforce-canary-preparation.json
+                ''')
+            }
+        }
+
+        stage('Plan-only Gate') {
+            steps {
+                withEnv([
+                    'BRANCH_NAME=dev3',
+                    'USE_CHINA_ENVIRONMENT=FALSE',
+                    'QUALITY_ENABLE=1',
+                    'QUALITY_SEMANTIC_ENABLE=0',
+                    'QUALITY_METRICS_ENABLE=0',
+                    'QUALITY_FLAKY_HISTORY_ENABLE=0',
+                    'QUALITY_FLAKY_STATE_ENABLE=0',
+                    "QUALITY_FLAKY_DB_PATH=${env.CANARY_DB}",
+                    'QUALITY_FLAKY_AUTO_SKIP_ENABLE=1',
+                    'QUALITY_FLAKY_SKIP_MODE=enforce',
+                    "QUALITY_RUN_ID=stage5-plan-${env.BUILD_NUMBER}",
+                    'QUALITY_OUTPUT_DIR=reports/enforce-plan',
+                ]) {
+                    canaryPowerShell('''
+                    ./.venv/Scripts/python.exe run_master.py `
+                      module/smoke/test_flaky_enforce_canary.py `
+                      -n 2 --collect-only -q
+                    ./.venv/Scripts/python.exe -m quality.flaky_enforce_gate verify `
+                      --artifact-dir reports/enforce-plan `
+                      --run-id $env:QUALITY_RUN_ID `
+                      --expect-mode enforce `
+                      --max-skip-count 6 `
+                      --output reports/enforce-plan-gate.json
+                    ''')
+                }
+            }
+        }
+
+        stage('Execute Enforce Canary') {
+            steps {
+                script {
+                    env.ENFORCE_CANARY_EXIT = String.valueOf(
+                        canaryPowerShellStatus('''
+                        $env:BRANCH_NAME = 'dev3'
+                        $env:USE_CHINA_ENVIRONMENT = 'FALSE'
+                        $env:QUALITY_ENABLE = '1'
+                        $env:QUALITY_SEMANTIC_ENABLE = '0'
+                        $env:QUALITY_METRICS_ENABLE = '0'
+                        $env:QUALITY_FLAKY_HISTORY_ENABLE = '0'
+                        $env:QUALITY_FLAKY_STATE_ENABLE = '0'
+                        $env:QUALITY_FLAKY_DB_PATH = $env:CANARY_DB
+                        $env:QUALITY_FLAKY_AUTO_SKIP_ENABLE = '1'
+                        $env:QUALITY_FLAKY_SKIP_MODE = 'enforce'
+                        $env:QUALITY_RUN_ID = "stage5-enforce-$env:BUILD_NUMBER"
+                        $env:QUALITY_OUTPUT_DIR = 'reports/enforce-run'
+                        $env:QUALITY_FLAKY_ENFORCE_CANARY_MARKER_DIR = `
+                          [IO.Path]::GetFullPath('reports/enforce-markers')
+                        ./.venv/Scripts/python.exe run_master.py `
+                          module/smoke/test_flaky_enforce_canary.py -n 2 -q
+                        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                        ./.venv/Scripts/python.exe -m quality.flaky_enforce_gate verify `
+                          --artifact-dir reports/enforce-run `
+                          --run-id $env:QUALITY_RUN_ID `
+                          --expect-mode enforce `
+                          --max-skip-count 6 `
+                          --require-executed `
+                          --output reports/enforce-execution-gate.json
+                        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                        if (Test-Path -LiteralPath $env:QUALITY_FLAKY_ENFORCE_CANARY_MARKER_DIR) {
+                            throw 'Enforce canary body executed unexpectedly.'
+                        }
+                        ''')
+                    )
+                }
+            }
+        }
+
+        stage('Kill-switch Rollback') {
+            steps {
+                script {
+                    env.ROLLBACK_CANARY_EXIT = String.valueOf(
+                        canaryPowerShellStatus('''
+                        $env:BRANCH_NAME = 'dev3'
+                        $env:USE_CHINA_ENVIRONMENT = 'FALSE'
+                        $env:QUALITY_ENABLE = '1'
+                        $env:QUALITY_SEMANTIC_ENABLE = '0'
+                        $env:QUALITY_METRICS_ENABLE = '0'
+                        $env:QUALITY_FLAKY_HISTORY_ENABLE = '0'
+                        $env:QUALITY_FLAKY_STATE_ENABLE = '0'
+                        $env:QUALITY_FLAKY_DB_PATH = $env:CANARY_DB
+                        $env:QUALITY_FLAKY_AUTO_SKIP_ENABLE = '0'
+                        $env:QUALITY_FLAKY_SKIP_MODE = 'enforce'
+                        $env:QUALITY_RUN_ID = "stage5-rollback-$env:BUILD_NUMBER"
+                        $env:QUALITY_OUTPUT_DIR = 'reports/rollback-run'
+                        $env:QUALITY_FLAKY_ENFORCE_CANARY_MARKER_DIR = `
+                          [IO.Path]::GetFullPath('reports/rollback-markers')
+                        ./.venv/Scripts/python.exe run_master.py `
+                          module/smoke/test_flaky_enforce_canary.py -n 2 -q
+                        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                        ./.venv/Scripts/python.exe -m quality.flaky_enforce_gate verify `
+                          --artifact-dir reports/rollback-run `
+                          --run-id $env:QUALITY_RUN_ID `
+                          --expect-mode off `
+                          --max-skip-count 0 `
+                          --require-executed `
+                          --output reports/rollback-execution-gate.json
+                        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                        $markers = @(Get-ChildItem -LiteralPath `
+                          $env:QUALITY_FLAKY_ENFORCE_CANARY_MARKER_DIR `
+                          -Filter '*.executed' -File)
+                        if ($markers.Count -ne 6) {
+                            throw "Kill-switch execution marker count mismatch: $($markers.Count)"
+                        }
+                        ''')
+                    )
+                }
+            }
+        }
+
+        stage('Final Verdict') {
+            steps {
+                script {
+                    if (env.ENFORCE_CANARY_EXIT != '0') {
+                        error("Enforce canary failed with exit ${env.ENFORCE_CANARY_EXIT}; rollback was still attempted.")
+                    }
+                    if (env.ROLLBACK_CANARY_EXIT != '0') {
+                        error("Kill-switch rollback failed with exit ${env.ROLLBACK_CANARY_EXIT}.")
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
+            script {
+                if (env.CANARY_STATE_DIR && env.QUALITY_FLAKY_CANARY_STATE_ROOT) {
+                    canaryPowerShell('''
+                    $root = [IO.Path]::GetFullPath($env:QUALITY_FLAKY_CANARY_STATE_ROOT)
+                    $target = [IO.Path]::GetFullPath($env:CANARY_STATE_DIR)
+                    if (!$target.StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+                        throw 'Refusing to clean a canary directory outside its configured root.'
+                    }
+                    if (Test-Path -LiteralPath $target) {
+                        Remove-Item -LiteralPath $target -Recurse -Force
+                    }
+                    ''')
+                }
+            }
+        }
+    }
+}
+
+void canaryPowerShell(String body) {
+    powershell(script: canaryPowerShellScript(body))
+}
+
+int canaryPowerShellStatus(String body) {
+    return powershell(returnStatus: true, script: canaryPowerShellScript(body))
+}
+
+String canaryPowerShellScript(String body) {
+    return """
+    chcp 65001 | Out-Null
+    [Console]::InputEncoding = [Text.Encoding]::UTF8
+    [Console]::OutputEncoding = [Text.Encoding]::UTF8
+    \$OutputEncoding = [Text.Encoding]::UTF8
+    \$env:PYTHONIOENCODING = 'utf-8'
+    \$env:PYTHONUTF8 = '1'
+    ${body}
+    """
+}

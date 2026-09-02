@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from dataclasses import replace
 import hashlib
+import json
 from pathlib import Path
 import shutil
 import sqlite3
@@ -25,9 +26,15 @@ from quality.flaky_probe import (
     ProbeCreateRequest,
     ProbeRuntimeConfig,
     build_probe_envelope,
+    canonical_json,
+    sign_probe_envelope,
 )
 from quality.cli import main as cli_main
-from quality.probe_job import _import_round, _validate_controller_checkout
+from quality.probe_job import (
+    _import_round,
+    _select_probe_candidate,
+    _validate_controller_checkout,
+)
 from quality.flaky_store import MIGRATIONS_DIRECTORY, FlakyStoreError, migrate_store
 from quality.flaky_store.v3_service import (
     FlakyV3Service,
@@ -106,6 +113,31 @@ def test_dispatch_unknown_is_not_retried_and_claim_is_at_most_once(tmp_path):
         )
 
 
+def test_reconcile_moves_interrupted_dispatch_to_unknown_without_releasing_capacity(tmp_path):
+    database, control, governance_id = _control(tmp_path)
+    created = control.create_attempt(_create_request(governance_id), now=NOW)
+    claimed = control._claim_dispatch(NOW + timedelta(seconds=1))
+    assert claimed is not None
+
+    gateway = FakeJenkins()
+    gateway.observation = JenkinsObservation(
+        JenkinsObservationKind.UNKNOWN,
+        error_code="jenkins_receipt_unknown",
+    )
+    reconciled = control.reconcile_once(gateway, now=NOW + timedelta(minutes=1))
+
+    assert reconciled["status"] == "DISPATCH_UNKNOWN"
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT last_error_code FROM flaky_probe_trigger WHERE trigger_id=?",
+            (created["trigger_id"],),
+        ).fetchone()[0] == "jenkins_receipt_unknown"
+        assert connection.execute(
+            "SELECT trigger_id FROM flaky_probe_capacity_slot WHERE slot_id=1"
+        ).fetchone()[0] == created["trigger_id"]
+    assert control.dispatch_once(gateway, now=NOW + timedelta(minutes=2)) == {"status": "IDLE"}
+
+
 def test_signed_round_imports_atomically_and_tampering_is_rejected(tmp_path):
     database, control, governance_id = _control(tmp_path)
     created, token = _running(control, governance_id)
@@ -134,6 +166,23 @@ def test_signed_round_imports_atomically_and_tampering_is_rejected(tmp_path):
         actual_target_commit_sha=TARGET_SHA, now=NOW + timedelta(minutes=32, seconds=1),
     )
     tampered = _probe_import(control, created, next_round, NOW + timedelta(minutes=32, seconds=1))
+    legacy_envelope = tampered.envelope.model_copy(
+        update={"schema_version": "flaky-probe-envelope.v1"}
+    )
+    legacy_envelope = legacy_envelope.model_copy(
+        update={
+            "signature": sign_probe_envelope(
+                legacy_envelope.signing_payload,
+                SECRET,
+            )
+        }
+    )
+    with pytest.raises(FlakyStoreError) as legacy_error:
+        service.import_probe(
+            ProbeImportRequest(**{**tampered.__dict__, "envelope": legacy_envelope}),
+            now=NOW + timedelta(minutes=33),
+        )
+    assert legacy_error.value.code == "probe_envelope_invalid"
     for changes in (
         {"outcome": "FAIL", "trusted_failure": True},
         {"rerun_supported": False},
@@ -361,10 +410,11 @@ def test_controller_checkout_verifies_commit_and_jenkinsfile_digest(
         controller_jenkinsfile_sha256=digest,
     )
     monkeypatch.chdir(controller_root)
-    monkeypatch.setattr(
-        "quality.probe_job.subprocess.run",
-        lambda *args, **kwargs: SimpleNamespace(stdout=f"{CONTROLLER_SHA}\n"),
-    )
+    def clean_checkout(command, **_kwargs):
+        output = f"{CONTROLLER_SHA}\n" if command[1:] == ["rev-parse", "HEAD"] else ""
+        return SimpleNamespace(stdout=output)
+
+    monkeypatch.setattr("quality.probe_job.subprocess.run", clean_checkout)
 
     _validate_controller_checkout(controller_root, runtime)
 
@@ -373,6 +423,18 @@ def test_controller_checkout_verifies_commit_and_jenkinsfile_digest(
             controller_root,
             replace(runtime, controller_jenkinsfile_sha256="a" * 64),
         )
+
+    def dirty_checkout(command, **_kwargs):
+        output = (
+            f"{CONTROLLER_SHA}\n"
+            if command[1:] == ["rev-parse", "HEAD"]
+            else " M quality/flaky_probe.py\n"
+        )
+        return SimpleNamespace(stdout=output)
+
+    monkeypatch.setattr("quality.probe_job.subprocess.run", dirty_checkout)
+    with pytest.raises(ValueError, match="working tree"):
+        _validate_controller_checkout(controller_root, runtime)
 
 
 def test_five_signed_passes_require_build_completion_before_manual_close(tmp_path):
@@ -415,6 +477,36 @@ def test_five_signed_passes_require_build_completion_before_manual_close(tmp_pat
             "UPDATE flaky_probe_evidence SET rerun_supported=1 WHERE evidence_id=?",
             (evidence_id,),
         )
+        original_envelope_json, original_signature = connection.execute(
+            "SELECT envelope_json, envelope_signature FROM flaky_probe_evidence WHERE evidence_id=?",
+            (evidence_id,),
+        ).fetchone()
+    original_payload = json.loads(original_envelope_json)
+    for field, value in (("environment", "china"), ("execution_profile", "parallel")):
+        changed = build_probe_envelope(
+            secret=SECRET,
+            **{**original_payload, field: value},
+        )
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                """UPDATE flaky_probe_evidence
+                   SET envelope_json=?, envelope_signature=? WHERE evidence_id=?""",
+                (canonical_json(changed.signing_payload), changed.signature, evidence_id),
+            )
+        with pytest.raises(FlakyStoreError) as identity_tampered:
+            service.recovery_close(
+                RecoveryCloseRequest(
+                    created["attempt_id"], "operator", "verified", 2, TARGET_SHA
+                ),
+                now=NOW + timedelta(hours=3, milliseconds=750),
+            )
+        assert identity_tampered.value.code == "probe_envelope_binding_mismatch"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """UPDATE flaky_probe_evidence
+               SET envelope_json=?, envelope_signature=? WHERE evidence_id=?""",
+            (original_envelope_json, original_signature, evidence_id),
+        )
     closed = service.recovery_close(
         RecoveryCloseRequest(created["attempt_id"], "operator", "verified", 2, TARGET_SHA),
         now=NOW + timedelta(hours=3, seconds=1),
@@ -422,6 +514,76 @@ def test_five_signed_passes_require_build_completion_before_manual_close(tmp_pat
     assert closed["attempt"]["status"] == "CLOSED"
     assert closed["governance"]["status"] == "CLOSED"
     assert service.check_invariants()["status"] == "OK"
+
+
+@pytest.mark.parametrize(
+    ("environment", "execution_profile"),
+    (("china", "serial"), ("overseas", "parallel")),
+)
+def test_signed_probe_with_wrong_execution_identity_cannot_count(
+    tmp_path,
+    environment,
+    execution_profile,
+):
+    database, control, governance_id = _control(tmp_path)
+    created, _token = _running(control, governance_id)
+    started = NOW + timedelta(minutes=1)
+    round_row = control.authorize_round(created["attempt_id"], now=started)
+    control.start_round(
+        created["attempt_id"],
+        round_row["round_no"],
+        actual_target_commit_sha=TARGET_SHA,
+        now=started,
+    )
+    request = _probe_import(
+        control,
+        created,
+        round_row,
+        started,
+        environment=environment,
+        execution_profile=execution_profile,
+    )
+
+    imported = FlakyV3Service(
+        database,
+        probe_evidence_keys={"key-v1": SECRET},
+    ).import_probe(request, now=started + timedelta(seconds=2))
+
+    assert imported["classification"] == "NON_COUNTING"
+    assert imported["effect_status"] == "AUDIT_ONLY"
+    assert imported["reason_code"] == "probe_plan_mismatch"
+
+
+@pytest.mark.parametrize(
+    ("run_environment", "candidate_environment", "execution_profile"),
+    (("china", "china", "serial"), ("overseas", "overseas", "parallel")),
+)
+def test_controller_rejects_candidate_from_wrong_execution_identity(
+    run_environment,
+    candidate_environment,
+    execution_profile,
+):
+    plan = SimpleNamespace(
+        case_id="module/smoke/test_probe.py::test_case",
+        param_hash="param-stage3",
+        environment="overseas",
+        execution_profile="serial",
+    )
+    candidate = SimpleNamespace(
+        case_id=plan.case_id,
+        param_hash=plan.param_hash,
+        environment=candidate_environment,
+        execution_profile=execution_profile,
+    )
+    prepared = SimpleNamespace(
+        run=SimpleNamespace(environment=run_environment),
+        candidates=(candidate,),
+    )
+
+    selected, diagnostic = _select_probe_candidate(plan, prepared)
+
+    assert selected is candidate
+    assert diagnostic == "probe_execution_identity_mismatch"
 
 
 def test_cli_stage3_close_fetches_head_and_loads_key_with_switch_off(
@@ -550,10 +712,26 @@ def test_probe_jenkinsfile_has_fixed_parameters_and_claims_before_checkout():
     assert "sleep time: 30, unit: 'MINUTES'" in text
     assert "QUALITY_FLAKY_CONTROLLER_ROOT" in text
     assert "QUALITY_FLAKY_TARGET_PYTHON" in text
+    assert "env.GIT_BRANCH = plan.target_branch" in text
+    assert "env.GIT_COMMIT = plan.target_commit_sha" in text
     assert "credentialsId: 'flaky-probe-db'" not in text
     assert "allowEmpty: true" in text
     assert text.count("'QUALITY_FLAKY_DB_PATH='") == 2
     assert text.count("'DISPATCH_TOKEN='") == 2
+    assert "PROBE_CONTROLLER_NODE_NAME" in text
+    assert "PROBE_CONTROLLER_OS_IDENTITY" in text
+    assert text.count("isUnix()") == 4
+    assert "variable: targetApiKeyVariable" in text
+    assert text.count("Probe target must use a different Jenkins node and OS identity") == 2
+
+    checklist = (
+        Path(__file__).parents[2]
+        / "dev"
+        / "flaky治理MVP阶段3JenkinsProbeJob配置清单.md"
+    ).read_text(encoding="utf-8")
+    assert "不得同时配置 `probe-target-restricted` label" in checklist
+    assert "使用不同的受限 OS 身份" in checklist
+    assert "target 身份验证 controller root、数据库和密钥文件均不可读" in checklist
 
 
 def _control(tmp_path):
@@ -619,13 +797,21 @@ def _running(control, governance_id):
     return created, gateway.tokens[0]
 
 
-def _probe_import(control, created, round_row, started):
+def _probe_import(
+    control,
+    created,
+    round_row,
+    started,
+    *,
+    environment="overseas",
+    execution_profile="serial",
+):
     plan = control.get_plan(created["attempt_id"])
     finished = started + timedelta(seconds=1)
     run_id = round_row["run_id"]
     run = RunRecord(
         run_id=run_id, job_name="quality/probe", build_number="7", branch="dev3",
-        commit_sha=TARGET_SHA, trigger="jenkins", environment="overseas",
+        commit_sha=TARGET_SHA, trigger="jenkins", environment=environment,
         start_time=started, end_time=finished, status=RunStatus.FINISHED,
         integrity_status=IntegrityStatus.COMPLETE, run_kind=RunKind.FLAKY_PROBE,
         policy_revision=plan.policy_revision, controller_commit_sha=CONTROLLER_SHA,
@@ -639,7 +825,8 @@ def _probe_import(control, created, round_row, started):
         secret=SECRET, key_id="key-v1", attempt_id=created["attempt_id"],
         trigger_id=created["trigger_id"], plan_digest=created["plan_digest"],
         round_no=round_row["round_no"], run_id=run_id, target_commit_sha=TARGET_SHA,
-        controller_commit_sha=CONTROLLER_SHA, jenkins_origin_id="jenkins.example.test",
+        controller_commit_sha=CONTROLLER_SHA, environment=environment,
+        execution_profile=execution_profile, jenkins_origin_id="jenkins.example.test",
         job_full_name="quality/probe", build_number=7, trusted_started_at=started,
         trusted_finished_at=finished, p0_bundle_status="VALID",
         p0_manifest_sha256=f"sha256:{'a' * 64}",

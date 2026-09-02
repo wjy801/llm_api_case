@@ -160,6 +160,7 @@ class ShadowDecisionSummary:
     run_count: int | None = None
     would_skip_count: int | None = None
     skip_count: int | None = None
+    actual_governance_skip_count: int | None = None
     fail_open_count: int | None = None
     reason_counts: tuple[tuple[str, int], ...] = ()
     reconciliation_status: str | None = None

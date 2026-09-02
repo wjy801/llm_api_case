@@ -111,6 +111,7 @@ def _load_shadow_decisions(
 
         plan = read_decision_plan(path, expected_run_id=run_id if run_id else None)
         reconciliation_status = None
+        actual_governance_skip_count = None
         reconciliation_error = None
         reconciliation_path = quality_dir / "flaky-skip-reconciliation.json"
         if reconciliation_path.is_file():
@@ -124,6 +125,9 @@ def _load_shadow_decisions(
                     "Shadow reconciliation does not reference the plan",
                 )
             reconciliation_status = reconciliation.status
+            actual_governance_skip_count = (
+                reconciliation.actual_governance_skip_count
+            )
         else:
             reconciliation_status = "UNKNOWN"
             reconciliation_error = "reconciliation_artifact_missing"
@@ -151,7 +155,8 @@ def _load_shadow_decisions(
         mode_effective=plan.mode_effective,
         run_count=plan.run_count,
         would_skip_count=plan.would_skip_count,
-        skip_count=0,
+        skip_count=plan.skip_count,
+        actual_governance_skip_count=actual_governance_skip_count,
         fail_open_count=plan.fail_open_count,
         reason_counts=tuple(sorted(plan.reason_counts.items())),
         reconciliation_status=reconciliation_status,
