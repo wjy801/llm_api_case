@@ -136,6 +136,33 @@ def create_app(
     )
     ready_cache = _ReadinessCache(service)
 
+    def probe_template_response(
+        request: Request,
+        *,
+        name: str,
+        context: dict[str, object],
+    ):
+        token = csrf_protector.issue() if csrf_protector is not None else None
+        response = templates.TemplateResponse(
+            request=request,
+            name=name,
+            context={
+                **context,
+                "probe_enabled": probe_actions_enabled and token is not None,
+                "csrf_token": token,
+            },
+        )
+        response.headers["Cache-Control"] = "no-store"
+        if token is not None:
+            response.set_cookie(
+                "flaky_probe_csrf",
+                token,
+                httponly=True,
+                samesite="strict",
+                secure=dashboard_origin.startswith("https://"),
+            )
+        return response
+
     @app.middleware("http")
     async def reject_unknown_query_fields(request: Request, call_next):
         allowed = _allowed_query_keys(request.url.path)
@@ -287,10 +314,30 @@ def create_app(
 
     @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
     async def index(request: Request):
-        return templates.TemplateResponse(
-            request=request,
+        summary = service.summary()
+        active = service.governance_page(status="ACTIVE", page_size=100)
+        recovering = service.governance_page(status="RECOVERING", page_size=100)
+        pending_items = tuple(
+            sorted(
+                (*active.items, *recovering.items),
+                key=lambda item: (
+                    not item.overdue,
+                    item.expires_at,
+                    item.case_id,
+                    item.governance_id,
+                ),
+            )
+        )
+        return probe_template_response(
+            request,
             name="flaky_summary.html",
-            context={"summary": service.summary()},
+            context={
+                "summary": summary,
+                "pending_items": pending_items,
+                "pending_truncated": bool(
+                    active.next_cursor is not None or recovering.next_cursor is not None
+                ),
+            },
         )
 
     @app.api_route(
@@ -300,7 +347,7 @@ def create_app(
         request: Request,
         status: str | None = Query(default=None, max_length=128),
         owner: str | None = Query(default=None, max_length=128),
-        overdue: bool | None = None,
+        overdue: str | None = Query(default=None, max_length=5),
         environment: str | None = Query(default=None, max_length=128),
         execution_profile: str | None = Query(default=None, max_length=128),
         case_path: str | None = Query(default=None, max_length=128),
@@ -309,36 +356,23 @@ def create_app(
         page_size: int = Query(default=50, ge=1, le=100),
     ):
         page = service.governance_page(
-            status=status,
-            owner=owner,
-            overdue=overdue,
-            environment=environment,
-            execution_profile=execution_profile,
-            case_path=case_path,
-            keyword=keyword,
-            cursor=cursor,
+            status=status or None,
+            owner=owner or None,
+            overdue=_optional_bool(overdue),
+            environment=environment or None,
+            execution_profile=execution_profile or None,
+            case_path=case_path or None,
+            keyword=keyword or None,
+            cursor=cursor or None,
             page_size=page_size,
         )
-        token = csrf_protector.issue() if csrf_protector is not None else None
-        response = templates.TemplateResponse(
-            request=request,
+        return probe_template_response(
+            request,
             name="flaky_governance.html",
             context={
                 "page": page,
-                "probe_enabled": probe_actions_enabled,
-                "csrf_token": token,
             },
         )
-        response.headers["Cache-Control"] = "no-store"
-        if token is not None:
-            response.set_cookie(
-                "flaky_probe_csrf",
-                token,
-                httponly=True,
-                samesite="strict",
-                secure=dashboard_origin.startswith("https://"),
-            )
-        return response
 
     @app.api_route(
         "/cases/{flaky_key}", methods=["GET", "HEAD"], response_class=HTMLResponse
@@ -459,6 +493,17 @@ def _write_error(response_type, status_code: int, code: str):
         status_code=status_code,
         content={"error": {"code": code, "message": _safe_message(code)}},
     )
+
+
+def _optional_bool(value: str | None) -> bool | None:
+    if value is None or value == "":
+        return None
+    normalized = value.casefold()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise FlakyStoreError("invalid_query", "request parameters are invalid")
 
 
 def _allowed_query_keys(path: str) -> frozenset[str] | None:

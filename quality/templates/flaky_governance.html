@@ -1,26 +1,65 @@
+{% from "_flaky_macros.html" import status_badge, detection_badges %}
 <!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8"><title>Flaky 治理列表</title>
-{% if csrf_token %}<meta name="flaky-probe-csrf" content="{{ csrf_token }}">{% endif %}
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>全部治理记录 · Flaky 治理</title>
+  {% if csrf_token %}<meta name="flaky-probe-csrf" content="{{ csrf_token }}">{% endif %}
+  {% include "_flaky_dashboard_styles.html" %}
 </head>
 <body>
-<h1>Flaky 治理列表</h1><p>数据时间：{{ page.data_as_of }}</p>
-<p><strong>匿名触发风险：</strong>此页面没有用户身份或审批能力；触发者统一记录为 dashboard-anonymous。</p>
-<table><thead><tr><th>Case</th><th>检测</th><th>治理</th><th>Owner</th><th>到期</th><th>恢复验证</th></tr></thead><tbody>
-{% for item in page.items %}<tr><td><a href="/cases/{{ item.flaky_key }}">{{ item.case_id }}</a></td><td>{% if item.detection_projections %}{% for projection in item.detection_projections %}{{ projection.detection_state }}{% if projection.detection_state == 'STABLE' %}（{% if projection.stable_outcome == 'pass' %}稳定通过{% else %}稳定失败{% endif %}）{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}UNOBSERVED{% endif %}</td><td>{{ item.governance_status }}</td><td>{{ item.owner }}</td><td>{{ item.expires_at }}{% if item.overdue %}（OVERDUE）{% endif %}</td><td>{% if probe_enabled and item.governance_status == 'ACTIVE' %}<button type="button" data-probe-governance="{{ item.governance_id }}" data-row-version="{{ item.row_version }}">触发 Probe</button>{% else %}不可触发{% endif %}</td></tr>{% endfor %}
-</tbody></table>{% if page.next_cursor %}<p>下一页游标：{{ page.next_cursor }}</p>{% endif %}
-{% if csrf_token %}<script>
-document.querySelectorAll('[data-probe-governance]').forEach((button) => button.addEventListener('click', async () => {
-  const reason = window.prompt('请输入恢复验证原因（1-500 字）');
-  if (!reason) return;
-  const requestId = crypto.randomUUID();
-  const csrf = document.querySelector('meta[name="flaky-probe-csrf"]').content;
-  const response = await fetch(`/api/v1/governances/${encodeURIComponent(button.dataset.probeGovernance)}/probe-attempts`, {
-    method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
-    body: JSON.stringify({reason, row_version: Number(button.dataset.rowVersion), request_id: requestId})
-  });
-  window.alert(response.ok ? 'Probe 已创建' : 'Probe 创建失败');
-}));
-</script>{% endif %}
-</body></html>
+  <header class="topbar"><div class="app-shell topbar__inner">
+    <div class="brand"><span class="brand__mark" aria-hidden="true"></span><span>Flaky 治理</span><small>MVP DEMO</small></div>
+    <nav class="nav" aria-label="主导航"><a href="/">治理工作台</a><a href="/governance" aria-current="page">全部记录</a></nav>
+  </div></header>
+
+  <main class="app-shell">
+    <section class="hero">
+      <div><p class="eyebrow">Governance records</p><h1>全部治理记录</h1><p class="lede">检索历史与当前治理记录，查看检测结论、验证状态及责任人。</p></div>
+      <div class="as-of"><span class="live-dot" aria-hidden="true"></span>数据更新于 {{ page.data_as_of.strftime('%Y-%m-%d %H:%M:%S') }}</div>
+    </section>
+
+    <form class="panel filter-bar" method="get" action="/governance">
+      <input class="field" type="search" name="keyword" maxlength="128" value="{{ request.query_params.get('keyword', '') }}" placeholder="搜索 Case ID 或负责人">
+      <select class="field" name="status" aria-label="治理状态">
+        <option value="">全部治理状态</option>
+        <option value="ACTIVE" {% if request.query_params.get('status') == 'ACTIVE' %}selected{% endif %}>待治理</option>
+        <option value="RECOVERING" {% if request.query_params.get('status') == 'RECOVERING' %}selected{% endif %}>验证中</option>
+        <option value="CLOSED" {% if request.query_params.get('status') == 'CLOSED' %}selected{% endif %}>已关闭</option>
+      </select>
+      <select class="field" name="overdue" aria-label="逾期状态">
+        <option value="">全部时效</option>
+        <option value="true" {% if request.query_params.get('overdue') == 'true' %}selected{% endif %}>仅看逾期</option>
+        <option value="false" {% if request.query_params.get('overdue') == 'false' %}selected{% endif %}>排除逾期</option>
+      </select>
+      <button class="button button--primary" type="submit">筛选</button>
+    </form>
+
+    <section class="section">
+      <div class="section-heading"><div><h2>治理记录 <span style="color: var(--subtle);">{{ page.items|length }}</span></h2><p>当前页最多展示 {{ page.page_size }} 条。</p></div></div>
+      <div class="panel table-panel">
+        <table class="data-table">
+          <thead><tr><th>用例</th><th>检测状态</th><th>治理状态</th><th>验证状态</th><th>负责人 / 到期</th><th>操作</th></tr></thead>
+          <tbody>
+          {% for item in page.items %}
+            <tr>
+              <td class="table-case"><a href="/cases/{{ item.flaky_key }}">{{ item.case_id }}</a><span class="secondary-line">{{ item.environment }} · {{ item.execution_profile }}</span></td>
+              <td>{{ detection_badges(item) }}</td>
+              <td>{{ status_badge(item.governance_status) }}</td>
+              <td>{{ status_badge(item.attempt_status or '未开始') }}{% if item.attempt_counted_passes is not none %}<span class="secondary-line">有效通过 {{ item.attempt_counted_passes }}/{{ item.attempt_required_consecutive_passes }}</span>{% endif %}</td>
+              <td>{{ item.owner }}<span class="secondary-line">{{ item.expires_at.strftime('%Y-%m-%d') }}{% if item.overdue %} · 已逾期{% endif %}</span></td>
+              <td><div class="actions" style="justify-content: flex-start;"><a class="button" href="/cases/{{ item.flaky_key }}">详情</a>{% if item.governance_status == 'ACTIVE' and probe_enabled %}<button class="button button--primary" type="button" data-probe-governance="{{ item.governance_id }}" data-row-version="{{ item.row_version }}" data-case-id="{{ item.case_id }}">启动验证</button>{% elif item.governance_status == 'ACTIVE' %}<button class="button" type="button" disabled>开关关闭</button>{% endif %}</div></td>
+            </tr>
+          {% else %}
+            <tr><td colspan="6"><div class="empty-state"><h3>没有匹配的治理记录</h3><p>请调整筛选条件后重试。</p></div></td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if page.next_cursor %}<div class="notice">当前查询还有更多结果。MVP Demo 保留游标分页接口，可通过 API 继续读取。</div>{% endif %}
+    </section>
+  </main>
+  {% include "_flaky_interactions.html" %}
+</body>
+</html>

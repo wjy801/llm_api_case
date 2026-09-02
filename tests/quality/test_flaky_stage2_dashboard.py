@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
 from quality.flaky_dashboard import create_app, validate_loopback_host
+from quality.flaky_probe import CsrfProtector
 from quality.flaky_store import migrate_store
 
 
@@ -133,3 +135,63 @@ def test_dashboard_api_html_escaping_head_and_stable_errors(tmp_path):
     assert client.get("/api/v1/cases/flaky-pass").json()["projections"][0][
         "stable_outcome"
     ] == "pass"
+
+
+def test_dashboard_home_is_an_unfolded_governance_workbench(tmp_path):
+    client = TestClient(create_app(_database(tmp_path)))
+
+    page = client.get("/")
+
+    assert page.status_code == 200
+    assert "Flaky 治理工作台" in page.text
+    assert "检测状态" in page.text
+    assert "治理状态" in page.text
+    assert "待治理用例" in page.text
+    assert "module/smoke/test_html.py::test_case" in page.text
+    assert "修复并合并 dev3" in page.text
+    assert "启动流水线验证" in page.text
+    assert "收集可信证据" in page.text
+    assert "人工关闭 Flaky" in page.text
+    assert "验证开关已关闭" in page.text
+    assert "<details" not in page.text
+    assert "module/smoke/test_pass.py::test_case" not in page.text
+    assert "<script>alert(1)</script>" not in page.text
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page.text
+    for hidden_technical_detail in ("数据库", "Schema", "策略", "Shadow 模式"):
+        assert hidden_technical_detail not in page.text
+
+
+def test_dashboard_home_enables_probe_interaction_without_login(tmp_path):
+    probe_control = SimpleNamespace(runtime=SimpleNamespace(enabled=True))
+    csrf = CsrfProtector(
+        b"csrf-secret-material-for-dashboard-demo",
+        clock=lambda: datetime(2026, 9, 1, tzinfo=UTC),
+    )
+    client = TestClient(
+        create_app(
+            _database(tmp_path),
+            probe_control=probe_control,
+            csrf_protector=csrf,
+        )
+    )
+
+    page = client.get("/")
+
+    assert page.status_code == 200
+    assert 'data-probe-governance="governance-html"' in page.text
+    assert 'id="probe-dialog"' in page.text
+    assert "登录" not in page.text
+    assert "RBAC" not in page.text
+    assert client.cookies.get("flaky_probe_csrf")
+
+
+def test_dashboard_governance_filter_form_accepts_empty_options(tmp_path):
+    client = TestClient(create_app(_database(tmp_path)))
+
+    page = client.get("/governance?keyword=&status=&overdue=")
+
+    assert page.status_code == 200
+    assert "module/smoke/test_html.py::test_case" in page.text
+    invalid = client.get("/governance?overdue=maybe")
+    assert invalid.status_code == 400
+    assert invalid.json()["error"]["code"] == "invalid_query"

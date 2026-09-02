@@ -82,7 +82,13 @@ class GovernanceListItem(ReadModel):
     detection_states: tuple[str, ...]
     detection_projections: tuple[DetectionProjectionSummary, ...]
     governance_status: str
+    attempt_id: str | None
     attempt_status: str | None
+    attempt_target_commit_sha: str | None
+    attempt_counted_passes: int | None
+    attempt_required_consecutive_passes: int | None
+    attempt_non_counting_runs: int | None
+    attempt_max_non_counting_runs: int | None
     owner: str
     reason: str
     created_at: datetime
@@ -287,9 +293,15 @@ class FlakyReadService:
             SELECT governance.*, identity.case_id, identity.param_hash,
                    identity.environment, identity.execution_profile,
                    identity.state_epoch, identity.current_detection_generation,
-                   (SELECT attempt.status FROM flaky_verification_attempt AS attempt
-                    WHERE attempt.governance_id = governance.governance_id
-                    ORDER BY attempt.attempt_no DESC LIMIT 1) AS attempt_status,
+                   latest_attempt.attempt_id AS attempt_id,
+                   latest_attempt.status AS attempt_status,
+                   latest_attempt.target_commit_sha AS attempt_target_commit_sha,
+                   latest_attempt.counted_passes AS attempt_counted_passes,
+                   latest_attempt.required_consecutive_passes
+                       AS attempt_required_consecutive_passes,
+                   latest_attempt.non_counting_runs AS attempt_non_counting_runs,
+                   latest_attempt.max_non_counting_runs
+                       AS attempt_max_non_counting_runs,
                    (SELECT MAX(evidence_time) FROM (
                         SELECT observation.observed_at AS evidence_time
                         FROM flaky_normal_observation AS observation
@@ -303,6 +315,13 @@ class FlakyReadService:
                    )) AS latest_evidence_at
             FROM flaky_governance AS governance
             JOIN flaky_identity AS identity USING (flaky_key)
+            LEFT JOIN flaky_verification_attempt AS latest_attempt
+              ON latest_attempt.attempt_id = (
+                   SELECT attempt.attempt_id
+                   FROM flaky_verification_attempt AS attempt
+                   WHERE attempt.governance_id = governance.governance_id
+                   ORDER BY attempt.attempt_no DESC LIMIT 1
+              )
             {where}
             ORDER BY governance.created_at, governance.governance_id
             LIMIT ?
@@ -574,7 +593,29 @@ def _governance_item(
         detection_states=states or ("UNOBSERVED",),
         detection_projections=projections,
         governance_status=row["status"],
+        attempt_id=row["attempt_id"],
         attempt_status=row["attempt_status"],
+        attempt_target_commit_sha=row["attempt_target_commit_sha"],
+        attempt_counted_passes=(
+            int(row["attempt_counted_passes"])
+            if row["attempt_counted_passes"] is not None
+            else None
+        ),
+        attempt_required_consecutive_passes=(
+            int(row["attempt_required_consecutive_passes"])
+            if row["attempt_required_consecutive_passes"] is not None
+            else None
+        ),
+        attempt_non_counting_runs=(
+            int(row["attempt_non_counting_runs"])
+            if row["attempt_non_counting_runs"] is not None
+            else None
+        ),
+        attempt_max_non_counting_runs=(
+            int(row["attempt_max_non_counting_runs"])
+            if row["attempt_max_non_counting_runs"] is not None
+            else None
+        ),
         owner=row["owner"],
         reason=row["reason"],
         created_at=_time(row["created_at"]),

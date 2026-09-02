@@ -660,6 +660,10 @@ def test_dashboard_post_enforces_origin_csrf_body_and_idempotent_status(tmp_path
     assert first.status_code == 201
     assert replay.status_code == 200
     assert first.json()["attempt_id"] == replay.json()["attempt_id"]
+    workbench = client.get("/")
+    assert workbench.status_code == 200
+    assert "有效通过 0/5" in workbench.text
+    assert "验证进行中" in workbench.text
 
 
 def test_migration_0004_rejects_live_legacy_probe(tmp_path):

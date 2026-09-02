@@ -1,13 +1,156 @@
+{% from "_flaky_macros.html" import status_badge, detection_badges, workflow, evidence_progress %}
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>Flaky 治理总览</title></head>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaky 治理工作台</title>
+  {% if csrf_token %}<meta name="flaky-probe-csrf" content="{{ csrf_token }}">{% endif %}
+  {% include "_flaky_dashboard_styles.html" %}
+</head>
 <body>
-<h1>Flaky 治理总览</h1>
-<p>数据时间：{{ summary.data_as_of }}</p>
-<p>数据库：{{ summary.database_health }} / Schema {{ summary.database_schema_version }}</p>
-<p>策略：{{ summary.policy_revision }}</p>
-<p>Shadow 模式：{{ summary.mode_requested }} → {{ summary.mode_effective }}</p>
-<h2>检测状态</h2><ul>{% for state, count in summary.detection_counts|dictsort %}<li>{{ state }}：{{ count }}</li>{% endfor %}</ul>
-<h2>治理状态</h2><ul>{% for state, count in summary.governance_counts|dictsort %}<li>{{ state }}：{{ count }}</li>{% endfor %}</ul>
-<p>超期：{{ summary.overdue_count }}</p>
-<p><a href="/governance">查看治理列表</a></p>
-</body></html>
+  <header class="topbar">
+    <div class="app-shell topbar__inner">
+      <div class="brand"><span class="brand__mark" aria-hidden="true"></span><span>Flaky 治理</span><small>MVP DEMO</small></div>
+      <nav class="nav" aria-label="主导航">
+        <a href="/" aria-current="page">治理工作台</a>
+        <a href="/governance">全部记录</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Quality governance</p>
+        <h1>Flaky 治理工作台</h1>
+        <p class="lede">聚焦需要处理的用例，直接查看检测结论、治理进度，并从修复合并推进到流水线验证。</p>
+      </div>
+      <div class="as-of"><span class="live-dot" aria-hidden="true"></span>数据更新于 {{ summary.data_as_of.strftime('%Y-%m-%d %H:%M:%S') }}</div>
+    </section>
+
+    <section class="metric-grid" aria-label="治理概览">
+      <article class="metric-card metric-card--attention">
+        <div class="metric-card__label">待治理</div>
+        <div class="metric-card__value">{{ summary.governance_counts.get('ACTIVE', 0) }}</div>
+        <div class="metric-card__hint">等待修复并合并 dev3</div>
+      </article>
+      <article class="metric-card metric-card--progress">
+        <div class="metric-card__label">验证中</div>
+        <div class="metric-card__value">{{ summary.governance_counts.get('RECOVERING', 0) }}</div>
+        <div class="metric-card__hint">正在收集 Probe 证据</div>
+      </article>
+      <article class="metric-card metric-card--success">
+        <div class="metric-card__label">已关闭</div>
+        <div class="metric-card__value">{{ summary.governance_counts.get('CLOSED', 0) }}</div>
+        <div class="metric-card__hint">已完成治理闭环</div>
+      </article>
+      <article class="metric-card {% if summary.overdue_count %}metric-card--attention{% endif %}">
+        <div class="metric-card__label">已逾期</div>
+        <div class="metric-card__value">{{ summary.overdue_count }}</div>
+        <div class="metric-card__hint">需要优先处理</div>
+      </article>
+    </section>
+
+    <section class="overview-grid" aria-label="状态分布">
+      <article class="overview-card">
+        <h2>检测状态</h2>
+        <div class="state-list">
+          {% for state, count in summary.detection_counts|dictsort %}
+          <div class="state-count">{{ status_badge(state) }}<strong>{{ count }}</strong></div>
+          {% else %}
+          <div class="state-count"><span>暂无检测结果</span><strong>0</strong></div>
+          {% endfor %}
+        </div>
+      </article>
+      <article class="overview-card">
+        <h2>治理状态</h2>
+        <div class="state-list">
+          {% for state, count in summary.governance_counts|dictsort %}
+          <div class="state-count">{{ status_badge(state) }}<strong>{{ count }}</strong></div>
+          {% else %}
+          <div class="state-count"><span>暂无治理记录</span><strong>0</strong></div>
+          {% endfor %}
+        </div>
+      </article>
+    </section>
+
+    <section class="section">
+      <div class="section-heading">
+        <div><h2>治理路径</h2><p>操作只推进现有治理状态机，不改变检测与关闭规则。</p></div>
+      </div>
+      <div class="panel flow-guide">
+        <div class="flow-guide__step"><span class="flow-guide__number">01</span><h3>修复并合并 dev3</h3><p>在开发分支修复 Flaky 用例，评审后合并到 dev3。</p></div>
+        <div class="flow-guide__step"><span class="flow-guide__number">02</span><h3>启动流水线验证</h3><p>从当前 dev3 HEAD 创建一次不可变的 Probe 验证计划。</p></div>
+        <div class="flow-guide__step"><span class="flow-guide__number">03</span><h3>收集可信证据</h3><p>按治理规则累计有效通过次数，非计数结果单独记录。</p></div>
+        <div class="flow-guide__step"><span class="flow-guide__number">04</span><h3>人工关闭 Flaky</h3><p>达到 READY_TO_CLOSE 后，通过 CLI 门禁完成关闭。</p></div>
+      </div>
+    </section>
+
+    <section class="section" id="pending-governance">
+      <div class="section-heading">
+        <div><h2>待治理用例 <span style="color: var(--subtle);">{{ pending_items|length }}</span></h2><p>全部直接展开，逾期用例优先显示。</p></div>
+        <a class="text-link" href="/governance">查看全部记录 →</a>
+      </div>
+
+      {% if pending_items %}
+      <div class="case-list">
+        {% for item in pending_items %}
+        <article class="panel case-card {% if item.overdue %}case-card--overdue{% endif %}" data-governance-status="{{ item.governance_status }}">
+          <div class="case-card__head">
+            <div>
+              <h3 class="case-card__title"><a href="/cases/{{ item.flaky_key }}">{{ item.case_id }}</a></h3>
+              <div class="case-meta">
+                <span>环境：{{ item.environment }}</span>
+                <span>执行：{{ item.execution_profile }}</span>
+                <span>负责人：{{ item.owner }}</span>
+                <span>到期：{{ item.expires_at.strftime('%Y-%m-%d') }}{% if item.overdue %} · 已逾期{% endif %}</span>
+              </div>
+            </div>
+            <div class="case-card__status" aria-label="当前状态">
+              {{ detection_badges(item) }}
+              {{ status_badge(item.governance_status) }}
+              {% if item.attempt_status %}{{ status_badge(item.attempt_status) }}{% endif %}
+            </div>
+          </div>
+
+          {{ workflow(item) }}
+          {{ evidence_progress(item) }}
+
+          <div class="case-card__footer">
+            <p class="action-hint">
+              {% if item.governance_status == 'ACTIVE' %}确认修复已进入 dev3 后启动验证；系统会记录操作者为 dashboard-anonymous。
+              {% elif item.attempt_status == 'READY_TO_CLOSE' %}可信证据已满足要求。复制命令模板后补充操作人和原因，执行最终关闭。
+              {% else %}验证任务已启动，可进入详情查看最新证据和事件时间线。{% endif %}
+            </p>
+            <div class="actions">
+              <button class="button" type="button" data-copy-text="{{ item.case_id }}" data-copy-success="Case ID 已复制">复制 Case ID</button>
+              <a class="button" href="/cases/{{ item.flaky_key }}">查看证据</a>
+              {% if item.governance_status == 'ACTIVE' %}
+                {% if probe_enabled %}
+                <button class="button button--primary" type="button" data-probe-governance="{{ item.governance_id }}" data-row-version="{{ item.row_version }}" data-case-id="{{ item.case_id }}">启动流水线验证</button>
+                {% else %}
+                <button class="button button--primary" type="button" disabled title="QUALITY_FLAKY_TRIGGER_ENABLE 未启用">验证开关已关闭</button>
+                {% endif %}
+              {% elif item.attempt_status == 'READY_TO_CLOSE' and item.attempt_id %}
+              <button class="button button--primary" type="button"
+                data-copy-success="关闭命令模板已复制"
+                data-copy-text='python -m quality.cli flaky-recovery-close --db "$env:QUALITY_FLAKY_DB_PATH" --attempt-id "{{ item.attempt_id }}" --actor "&lt;操作人&gt;" --reason "&lt;关闭原因&gt;" --expected-row-version {{ item.row_version }} --verified-branch-head "{{ item.attempt_target_commit_sha }}"'>复制关闭命令模板</button>
+              {% else %}
+              <button class="button button--primary" type="button" disabled>验证进行中</button>
+              {% endif %}
+            </div>
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+      {% if pending_truncated %}<div class="notice">待治理记录超过首页展示上限，请进入“全部记录”继续查看。</div>{% endif %}
+      {% else %}
+      <div class="panel empty-state"><div class="empty-state__icon">✓</div><h3>当前没有待治理用例</h3><p>新检测到的 Flaky 用例会直接出现在这里。</p></div>
+      {% endif %}
+    </section>
+  </main>
+
+  {% include "_flaky_interactions.html" %}
+</body>
+</html>
