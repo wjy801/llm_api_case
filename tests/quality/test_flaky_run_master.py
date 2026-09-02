@@ -245,6 +245,37 @@ def test_flaky_state_evaluation_runs_after_committed_history_import(
     assert events == ["run-record", "semantic", "history", "state"]
 
 
+def test_v3_or_newer_import_uses_import_time_projection_instead_of_legacy_evaluator(
+    monkeypatch,
+    tmp_path,
+):
+    events = []
+    result = FlakyImportResult(
+        run_id="run-1",
+        status=FlakyImportStatus.NO_DATA,
+        database_schema_version=4,
+    )
+    monkeypatch.setattr(
+        quality_flaky_stage,
+        "evaluate_flaky_state",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("legacy evaluator must not run for v3")
+        ),
+    )
+    monkeypatch.setattr(
+        quality_flaky_stage,
+        "write_flaky_v3_state_report",
+        lambda **kwargs: events.append(kwargs["import_result"]),
+    )
+
+    quality_flaky_stage.run_flaky_state_stage(
+        _config(tmp_path, flaky_state_enabled=True),
+        result,
+    )
+
+    assert events == [result]
+
+
 def test_flaky_state_failure_is_fail_open(monkeypatch, tmp_path, capsys):
     events = []
     _stub_fact_finalize(monkeypatch, events)

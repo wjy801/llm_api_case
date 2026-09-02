@@ -83,7 +83,7 @@
         <div class="flow-guide__step"><span class="flow-guide__number">01</span><h3>推送修复分支</h3><p>在独立分支修复 Flaky 用例，并将分支推送到 GitLab。</p></div>
         <div class="flow-guide__step"><span class="flow-guide__number">02</span><h3>验证修复提交</h3><p>锁定修复分支当前提交，启动不可变的 Probe 验证计划。</p></div>
         <div class="flow-guide__step"><span class="flow-guide__number">03</span><h3>允许合并 dev3</h3><p>只有可信验证满足门槛后，才进入可合并状态。</p></div>
-        <div class="flow-guide__step"><span class="flow-guide__number">04</span><h3>合并并关闭 Flaky</h3><p>合并后由 CLI 核对 dev3，再完成治理关闭。</p></div>
+        <div class="flow-guide__step"><span class="flow-guide__number">04</span><h3>合并并自动关闭</h3><p>一键 fast-forward 到 dev3，核对提交后自动调用 CLI 关闭治理。</p></div>
       </div>
     </section>
 
@@ -120,7 +120,7 @@
           <div class="case-card__footer">
             <p class="action-hint">
               {% if item.governance_status == 'ACTIVE' %}输入已推送到 GitLab 的修复分支，验证通过前不要合并 dev3；操作者记录为 dashboard-anonymous。
-              {% elif item.attempt_status == 'READY_TO_CLOSE' %}修复分支验证已通过。合并 dev3 后复制命令模板，核对提交并完成关闭。
+              {% elif item.attempt_status == 'READY_TO_CLOSE' %}修复分支验证已通过。确认后将已验证提交 fast-forward 到 dev3，并自动关闭 Flaky。
               {% else %}验证任务已启动，可进入详情查看最新证据和事件时间线。{% endif %}
             </p>
             <div class="actions">
@@ -133,9 +133,14 @@
                 <button class="button button--primary" type="button" disabled title="QUALITY_FLAKY_TRIGGER_ENABLE 未启用">验证开关已关闭</button>
                 {% endif %}
               {% elif item.attempt_status == 'READY_TO_CLOSE' and item.attempt_id %}
-              <button class="button button--primary" type="button"
-                data-copy-success="关闭命令模板已复制"
-                data-copy-text='python -m quality.cli flaky-recovery-close --db "$env:QUALITY_FLAKY_DB_PATH" --attempt-id "{{ item.attempt_id }}" --actor "&lt;操作人&gt;" --reason "&lt;关闭原因&gt;" --expected-row-version {{ item.row_version }} --verified-branch-head "{{ item.attempt_target_commit_sha }}"'>复制关闭命令模板</button>
+                {% if merge_enabled %}
+                <button class="button button--primary" type="button"
+                  data-merge-attempt="{{ item.attempt_id }}"
+                  data-row-version="{{ item.row_version }}"
+                  data-target-sha="{{ item.attempt_target_commit_sha }}">合并 dev3 并关闭</button>
+                {% else %}
+                <button class="button button--primary" type="button" disabled title="合并服务未启用">合并服务未启用</button>
+                {% endif %}
               {% else %}
               <button class="button button--primary" type="button" disabled>验证进行中</button>
               {% endif %}

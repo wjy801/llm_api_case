@@ -47,7 +47,8 @@ from quality.flaky_identity import (
     normalize_flaky_environment,
     normalize_stored_execution_profile,
 )
-from quality.flaky_store import FlakyStore, FlakyStoreError
+from quality.flaky_store import FlakyStore, FlakyStoreError, NormalImportRequest
+from quality.flaky_v3 import NormalRunAdmissionFacts
 from quality.identifiers import normalize_nodeid
 from quality.models import (
     SCHEMA_VERSION,
@@ -262,10 +263,11 @@ def import_flaky_history(request: FlakyImportRequest) -> FlakyImportResult:
     prepared: PreparedFlakyImport | None = None
     try:
         prepared = prepare_flaky_import(request)
-        outcome = FlakyStore(request.database_path).import_run(
-            prepared.metadata,
-            prepared.candidates,
-        )
+        store = FlakyStore(request.database_path)
+        database_check = store.check_database()
+        if database_check.schema_version >= 3:
+            return _import_v3_normal_history(request, prepared, store, database_check)
+        outcome = store.import_run(prepared.metadata, prepared.candidates)
         if not outcome.imported:
             status = FlakyImportStatus.NOOP
         elif not prepared.candidates:
@@ -323,6 +325,95 @@ def import_flaky_history(request: FlakyImportRequest) -> FlakyImportResult:
                 ),
             ),
         )
+    return _write_import_report(request.quality_output_dir, result)
+
+
+def _import_v3_normal_history(
+    request: FlakyImportRequest,
+    prepared: PreparedFlakyImport,
+    store: FlakyStore,
+    database_check: FlakyDatabaseCheck,
+) -> FlakyImportResult:
+    """Audit a P0 NORMAL run without inventing missing comparability evidence.
+
+    The current P0 artifact contract does not carry controller-attested
+    configuration, SUT, test-definition, or state-epoch inputs.  A v3 store
+    must therefore reject these cases at admission instead of converting them
+    into observations with synthetic comparability values.
+    """
+
+    preexcluded_count = (
+        prepared.metadata.eligible_count + prepared.metadata.excluded_count
+    )
+    outcome = store.import_normal(
+        NormalImportRequest(
+            run=prepared.run,
+            manifest=prepared.manifest,
+            source_digest=prepared.metadata.source_digest,
+            admission_facts=NormalRunAdmissionFacts(
+                run_kind=prepared.run.run_kind,
+                source_job_allowed=False,
+                branch_allowed=True,
+                environment_allowed=True,
+                execution_profile_allowed=True,
+                run_finished=True,
+                versions_compatible=True,
+                artifacts_trusted=True,
+                integrity_eligible=True,
+                comparability_valid=False,
+                rerun_supported=True,
+                contract_values_known=False,
+            ),
+            cases=(),
+            preexcluded_count=preexcluded_count,
+        ),
+        now=datetime.now(UTC),
+    )
+    if outcome["status"] == "NOOP":
+        status = FlakyImportStatus.NOOP
+        excluded_reasons = prepared.excluded_reasons
+        issues = prepared.issues
+    else:
+        admission = outcome["run_admission"]
+        primary_reason = str(admission["primary_reason_code"])
+        excluded_reasons = dict(prepared.excluded_reasons)
+        if prepared.metadata.eligible_count:
+            excluded_reasons[primary_reason] = (
+                excluded_reasons.get(primary_reason, 0)
+                + prepared.metadata.eligible_count
+            )
+        reason_codes = ", ".join(str(code) for code in admission["reason_codes"])
+        issues = (
+            *prepared.issues,
+            FlakyImportIssue(
+                severity=IssueSeverity.WARN,
+                code=primary_reason,
+                summary=(
+                    "v3 NORMAL evidence was audited but not admitted: "
+                    f"{reason_codes}"
+                ),
+            ),
+        )
+        status = FlakyImportStatus.NO_DATA
+    result = FlakyImportResult(
+        run_id=request.run_id,
+        status=status,
+        source_digest=prepared.metadata.source_digest,
+        artifact_ref=prepared.report_artifact_ref,
+        environment=prepared.metadata.environment,
+        profile_distribution=prepared.profile_distribution,
+        eligible_count=0,
+        excluded_count=preexcluded_count,
+        inserted_count=0,
+        excluded_reasons=dict(sorted(excluded_reasons.items())),
+        database_schema_version=database_check.schema_version,
+        quick_check=database_check.quick_check,
+        source_hashes=prepared.source_hashes,
+        p0_integrity_status=prepared.metadata.p0_integrity_status,
+        migration_applied=False,
+        backup_created=False,
+        issues=issues,
+    )
     return _write_import_report(request.quality_output_dir, result)
 
 
@@ -449,6 +540,52 @@ def write_flaky_state_no_data_report(
                 summary=_safe_summary(summary),
             ),
         ),
+    )
+    return _write_evaluation_report(quality_output_dir, result)
+
+
+def write_flaky_v3_state_report(
+    *,
+    quality_output_dir: str | Path,
+    import_result: FlakyImportResult,
+) -> FlakyEvaluationResult:
+    """Describe the projection work already committed by the v3 importer."""
+
+    if import_result.database_schema_version < 3:
+        raise ValueError("v3 state report requires a schema version 3 or newer import")
+    if import_result.status is FlakyImportStatus.NOOP:
+        status = FlakyEvaluationStatus.NOOP
+        issues: tuple[FlakyImportIssue, ...] = ()
+    elif import_result.status is FlakyImportStatus.NO_DATA:
+        status = FlakyEvaluationStatus.NO_DATA
+        issues = (
+            FlakyImportIssue(
+                severity=IssueSeverity.WARN,
+                code="v3_normal_evidence_not_admitted",
+                summary=(
+                    "v3 NORMAL import recorded admission audit only; "
+                    "no detection observation was admitted"
+                ),
+            ),
+        )
+    elif import_result.status is FlakyImportStatus.DEGRADED:
+        status = FlakyEvaluationStatus.DEGRADED
+        issues = import_result.issues
+    elif import_result.status is FlakyImportStatus.IMPORTED:
+        status = FlakyEvaluationStatus.EVALUATED
+        issues = ()
+    else:
+        status = FlakyEvaluationStatus.FAILED
+        issues = import_result.issues
+    result = FlakyEvaluationResult(
+        run_id=import_result.run_id,
+        status=status,
+        evaluated_at=datetime.now(UTC),
+        affected_count=import_result.inserted_count,
+        evaluated_count=import_result.inserted_count,
+        database_schema_version=import_result.database_schema_version,
+        quick_check=import_result.quick_check,
+        issues=issues,
     )
     return _write_evaluation_report(quality_output_dir, result)
 

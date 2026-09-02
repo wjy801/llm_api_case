@@ -76,6 +76,7 @@ _EXPORT_GROUPS = {
         "reset_flaky_epoch",
         "start_flaky_recovery",
         "cancel_flaky_quarantine",
+        "write_flaky_v3_state_report",
     ),
     "quality.flaky_identity": (
         "build_epoch_scope_key",
@@ -446,6 +447,7 @@ __all__ = [
     "verify_probe_envelope",
     "write_json_atomic",
     "write_jsonl_atomic",
+    "write_flaky_v3_state_report",
 ]
 
 

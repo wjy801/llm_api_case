@@ -4,7 +4,7 @@
 
 阶段 2 交付只读看板、统一查询服务、运行级不可变 Skip 快照和 Shadow 决策链。所有命中只产生 `WOULD_SKIP`，测试仍实际执行；任何配置、数据库、快照或身份异常都退化为 `RUN` 并留下结构化原因。
 
-当前状态：`SHADOW_READY / OBSERVATION_PENDING`。阶段 2 实现、自动化测试与独立智能体验收已通过；10 个正式 Smoke Run 的人工观察尚未完成，因此不得标记为 `SHADOW_VALIDATED`，也不授权 Enforce。
+当前状态：`SHADOW_VALIDATED / ENFORCE_NOT_AUTHORIZED`。阶段 2 实现、自动化测试与独立智能体验收已通过；2026-09-01 已按 6 个并发 Smoke 用例完成 10 个连续真实运行的逐轮核对，零身份扩大、零范围外候选、零实际 Skip。观察期间治理库无 ACTIVE/RECOVERING 候选，因此本轮只覆盖 `governance_not_matched -> RUN` 的真实运行链路；`WOULD_SKIP` 命中行为继续由自动化测试覆盖，本状态不授权 Enforce。详见《flaky治理MVP阶段2Shadow观察记录.md》。
 
 ## 2. 目标、范围与非目标
 

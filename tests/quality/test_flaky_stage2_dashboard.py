@@ -83,7 +83,7 @@ def _database(tmp_path):
     return database
 
 
-def test_dashboard_is_loopback_only_and_has_only_the_probe_write_route(tmp_path):
+def test_dashboard_is_loopback_only_and_has_only_governance_write_routes(tmp_path):
     assert validate_loopback_host("127.0.0.1") == "127.0.0.1"
     assert validate_loopback_host("::1") == "::1"
     for host in ("localhost", "0.0.0.0", "192.168.1.10"):
@@ -96,7 +96,10 @@ def test_dashboard_is_loopback_only_and_has_only_the_probe_write_route(tmp_path)
         for route in app.routes
         if "POST" in (getattr(route, "methods", None) or set())
     }
-    assert write_routes == {"/api/v1/governances/{governance_id}/probe-attempts"}
+    assert write_routes == {
+        "/api/v1/governances/{governance_id}/probe-attempts",
+        "/api/v1/probe-attempts/{attempt_id}/merge-and-close",
+    }
 
 
 def test_dashboard_api_html_escaping_head_and_stable_errors(tmp_path):
@@ -151,7 +154,7 @@ def test_dashboard_home_is_an_unfolded_governance_workbench(tmp_path):
     assert "推送修复分支" in page.text
     assert "验证修复提交" in page.text
     assert "允许合并 dev3" in page.text
-    assert "合并并关闭 Flaky" in page.text
+    assert "合并并自动关闭" in page.text
     assert "验证开关已关闭" in page.text
     assert "<details" not in page.text
     assert "module/smoke/test_pass.py::test_case" not in page.text
@@ -185,6 +188,71 @@ def test_dashboard_home_enables_probe_interaction_without_login(tmp_path):
     assert "登录" not in page.text
     assert "RBAC" not in page.text
     assert client.cookies.get("flaky_probe_csrf")
+
+
+def test_ready_attempt_exposes_merge_and_automatic_close_interaction(tmp_path):
+    database = _database(tmp_path)
+    now = "2026-09-01T00:00:00+00:00"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """UPDATE flaky_governance
+               SET status='RECOVERING', row_version=2,
+                   recovery_started_by='dashboard-anonymous',
+                   recovery_started_at=?, recovery_reason='verify fix'
+               WHERE governance_id='governance-html'""",
+            (now,),
+        )
+        connection.execute(
+            """INSERT INTO flaky_verification_attempt(
+                   attempt_id, governance_id, attempt_no, status, target_commit_sha,
+                   policy_revision, required_consecutive_passes, min_interval_minutes,
+                   max_non_counting_runs, counted_passes, non_counting_runs,
+                   started_by, start_reason, started_at, expires_at, created_at, updated_at
+               ) VALUES(
+                   'attempt-ready', 'governance-html', 1, 'READY_TO_CLOSE', ?,
+                   'flaky-governance.v1', 5, 30, 3, 5, 0,
+                   'dashboard-anonymous', 'verify fix', ?, ?, ?, ?
+               )""",
+            ("a" * 40, now, "2026-09-04T00:00:00+00:00", now, now),
+        )
+
+    class FakeMergeClose:
+        def execute(self, **kwargs):
+            return {
+                "schema_version": "quality.flaky-merge-close.v1",
+                "status": "CLOSED",
+                "merge_status": "MERGED",
+                "target_branch": "dev3",
+                "target_commit_sha": "a" * 40,
+            }
+
+    csrf = CsrfProtector(
+        b"csrf-secret-material-for-dashboard-merge",
+        clock=lambda: datetime(2026, 9, 1, tzinfo=UTC),
+    )
+    client = TestClient(
+        create_app(
+            database,
+            merge_close_service=FakeMergeClose(),
+            csrf_protector=csrf,
+            dashboard_origin="http://dashboard.test",
+        ),
+        base_url="http://dashboard.test",
+    )
+
+    page = client.get("/")
+    token = client.cookies.get("flaky_probe_csrf")
+    assert 'data-merge-attempt="attempt-ready"' in page.text
+    assert "合并 dev3 并关闭" in page.text
+    assert "自动调用 CLI" in page.text
+
+    path = "/api/v1/probe-attempts/attempt-ready/merge-and-close"
+    headers = {"Origin": "http://dashboard.test", "X-CSRF-Token": token}
+    assert client.post(path, json={"row_version": 2}, headers={**headers, "Origin": "http://evil.test"}).status_code == 403
+    assert client.post(path, json={"row_version": 2, "extra": True}, headers=headers).status_code == 400
+    response = client.post(path, json={"row_version": 2}, headers=headers)
+    assert response.status_code == 200
+    assert response.json()["status"] == "CLOSED"
 
 
 def test_dashboard_governance_filter_form_accepts_empty_options(tmp_path):

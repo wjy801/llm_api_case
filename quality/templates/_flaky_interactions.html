@@ -45,6 +45,46 @@
     });
   });
 
+  document.querySelectorAll('[data-merge-attempt]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const shortSha = (button.dataset.targetSha || '').slice(0, 12);
+      if (!window.confirm(`将已验证提交 ${shortSha} fast-forward 合并到 dev3，并自动关闭 Flaky。是否继续？`)) return;
+      button.disabled = true;
+      button.textContent = '正在合并并关闭…';
+      const csrf = document.querySelector('meta[name="flaky-probe-csrf"]')?.content || '';
+      try {
+        const response = await fetch(
+          `/api/v1/probe-attempts/${encodeURIComponent(button.dataset.mergeAttempt)}/merge-and-close`,
+          {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+            body: JSON.stringify({row_version: Number(button.dataset.rowVersion)})
+          }
+        );
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const messages = {
+            attempt_not_ready: '验证状态已经变化，请刷新后重试',
+            row_version_conflict: '治理状态已更新，请刷新后重试',
+            verified_branch_head_mismatch: '修复分支已变化，需要重新验证',
+            dev3_not_fast_forward: 'dev3 已变化，请基于最新 dev3 更新分支并重新验证',
+            git_merge_rejected: 'GitLab 拒绝合并，请检查 dev3 权限或分支状态',
+            automatic_close_failed: '代码已尝试合并，但自动关闭失败；请查看证据后重试',
+            merge_action_disabled: '合并服务未启用'
+          };
+          throw new Error(messages[payload?.error?.code] || '合并关闭失败，请刷新后重试');
+        }
+        button.textContent = '已合并并关闭';
+        showToast('dev3 合并成功，Flaky 已自动关闭');
+        window.setTimeout(() => window.location.reload(), 900);
+      } catch (error) {
+        button.textContent = '合并 dev3 并关闭';
+        button.disabled = false;
+        showToast(error.message || '合并关闭失败，请稍后重试');
+      }
+    });
+  });
+
   const dialog = document.getElementById('probe-dialog');
   if (!dialog) return;
   const form = document.getElementById('probe-form');

@@ -11,6 +11,7 @@
 - 协议与业务层已覆盖 OpenAI Chat Completions、Responses、Anthropic Messages，以及图片、视频和真实 Smoke 链路。
 - 质量链已实现事实归并、完整性校验、失败分类、请求指标和机器可读产物。
 - 语义与指标链已实现逻辑调用、HTTP/SSE/异步耗时、Token/媒体用量覆盖；Flaky 历史、状态机与治理命令完整保留。
+- Flaky 治理看板已支持提交修复分支、触发独立 Jenkins Probe、验证通过后 fast-forward 合并 dev3，并自动调用关闭 CLI 解除后续运行的治理 Skip。
 - Jenkins 已支持参数化执行、并发优先与串行收尾、每轮 Pipeline 执行摘要、JUnit/Allure、邮件直达链接和构建产物自动清理。
 - `reports/pipeline-summary.md` 是唯一人工质量报告；缺失的 Metrics 或 Flaky 数据只降级对应章节，不按零计算，也不覆盖 pytest/Jenkins 结果。
 
@@ -69,7 +70,8 @@ quality/
   runtime_adapter.py       # Runtime Hooks 到质量采集器的适配层
   metrics/                 # 来源校验、调用/请求粒度聚合与指标写入
   flaky_store/             # SQLite 仓储、迁移、投影、治理及事务门面
-  flaky*.py                # Flaky 模型、规则、历史导入与配置
+  flaky*.py                # Flaky 模型、规则、历史导入、看板与合并关闭
+  templates/               # Flaky 看板服务端 HTML 模板与交互
 
 tests/
   mock_helpers.py          # 离线响应、故障、流式响应和睡眠记录工具
@@ -92,7 +94,9 @@ run_orchestration/
   quality_*_stage.py       # 事实归并、语义、指标与 Flaky 阶段
   quality_pipeline.py      # 质量阶段顺序编排
 Jenkinsfile                # Jenkins 单 Job 参数化流水线
+Jenkinsfile.probe          # 单用例 Flaky 修复验证专用流水线
 JENKINS_MIGRATION_TEMPLATE.md # Jenkins 环境迁移与复建模板
+FLAKY_DASHBOARD_MIGRATION.md  # Flaky 看板、Probe、合并关闭迁移配置
 pytest.ini                 # pytest 与 Allure 默认配置
 requirements.txt           # Python 依赖
 package.json               # Allure CLI 依赖
@@ -753,6 +757,35 @@ RECOVERING -> STABLE | CONFIRMED（恢复证据判定）
 .\.venv\Scripts\python.exe -m quality.cli flaky-state --db D:\path\flaky-history.db --case-id "module/smoke/test_xxx.py::TestXxx::test_xxx"
 ```
 
+### Flaky 治理看板
+
+看板默认只监听 loopback，不提供第一版应用登录；写操作通过同源检查和 CSRF 保护。启动前必须配置独立 Jenkins Probe、仓库外 SQLite、三个相互独立的密钥文件，以及能够读取修复分支并非强制更新 dev3 的 GitLab 凭据。
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dashboard.txt
+.\.venv\Scripts\python.exe -m quality.cli flaky-db-check --db D:\path\flaky.sqlite3
+.\.venv\Scripts\python.exe -m quality.cli flaky-dashboard `
+  --db D:\path\flaky.sqlite3 `
+  --host 127.0.0.1 `
+  --port 8765
+```
+
+修复闭环固定为：
+
+```text
+推送 GitLab 修复分支
+-> 看板为一个 Flaky 参数实例创建 Probe
+-> Jenkins 最多执行 10 轮，5 次可信 PASS 按至少 30 分钟间隔计数
+-> READY_TO_CLOSE 后开放“合并 dev3 并关闭”
+-> 后端确认修复分支 SHA 未漂移且 dev3 可以 fast-forward
+-> 非强制更新 dev3，再自动执行 flaky-recovery-close
+-> 治理记录关闭；后续新运行生成的 Skip 快照不再包含该用例
+```
+
+当前 Probe 一次只验证一个 `case_id + param_hash`，全局只允许一个活动 Probe；主体 Smoke 流水线仍可通过 pytest-xdist 并发执行多个用例。已有运行使用的 Skip 决策计划是不可变产物，不会被中途修改。
+
+完整的 GitLab/Jenkins 容器配置、密钥格式、环境变量、迁移步骤和回退方式见 [FLAKY_DASHBOARD_MIGRATION.md](FLAKY_DASHBOARD_MIGRATION.md)。
+
 如果用例语义或测试实现已经明确改变，应使用 `flaky-reset-epoch` 开启新样本周期；已知代码修复导致的“失败变通过”不应直接确认为 Flaky。`QUARANTINED` 只是带 owner、原因和到期时间的治理标签，不会自动跳过用例。
 
 ### Smoke 中的质量能力
@@ -963,6 +996,7 @@ SMTP 授权码只配置在 Jenkins 中，不写入 `Jenkinsfile` 或仓库。
 Jenkins 环境复建和迁移参考：
 
 - `JENKINS_MIGRATION_TEMPLATE.md`
+- `FLAKY_DASHBOARD_MIGRATION.md`：GitLab/Jenkins 容器环境中的 Flaky 看板、Probe、自动合并关闭配置
 
 ### 本地验收
 

@@ -11,8 +11,13 @@ import threading
 import time
 from typing import Callable
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from quality.flaky_merge import (
+    CliRecoveryCloser,
+    GitFastForwardMerger,
+    MergeAndCloseService,
+)
 from quality.flaky_read import FlakyReadService
 from quality.flaky_store import FlakyStoreError
 from quality.flaky_probe import (
@@ -28,6 +33,12 @@ from quality.flaky_probe import (
 
 DEFAULT_DASHBOARD_HOST = "127.0.0.1"
 DEFAULT_DASHBOARD_PORT = 8765
+
+
+class MergeClosePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    row_version: int = Field(ge=0)
 
 
 def validate_loopback_host(host: str) -> str:
@@ -50,6 +61,7 @@ def create_app(
     mode_effective: str | None = None,
     probe_control: ProbeControlService | None = None,
     probe_gateway: JenkinsGateway | None = None,
+    merge_close_service: MergeAndCloseService | None = None,
     probe_poll_interval_seconds: float = 2.0,
     csrf_protector: CsrfProtector | None = None,
     dashboard_origin: str = "http://127.0.0.1:8765",
@@ -97,6 +109,15 @@ def create_app(
                 ).resolve_branch,
             )
             probe_gateway = probe_gateway or FixedJenkinsClient(probe_runtime)
+            if merge_close_service is None:
+                merge_close_service = MergeAndCloseService(
+                    database.resolve(),
+                    probe_control,
+                    GitFastForwardMerger(
+                        Path.cwd(), remote=probe_runtime.git_remote
+                    ),
+                    CliRecoveryCloser(database.resolve(), Path.cwd()),
+                )
             if csrf_protector is None and probe_runtime.csrf_secret_file is not None:
                 csrf_protector = CsrfProtector(probe_runtime.csrf_secret_file.read_bytes())
     if probe_poll_interval_seconds <= 0:
@@ -105,6 +126,7 @@ def create_app(
         probe_control is not None
         and getattr(getattr(probe_control, "runtime", None), "enabled", True)
     )
+    merge_actions_enabled = merge_close_service is not None
 
     @asynccontextmanager
     async def lifespan(app_instance):
@@ -151,6 +173,7 @@ def create_app(
             context={
                 **context,
                 "probe_enabled": probe_actions_enabled and token is not None,
+                "merge_enabled": merge_actions_enabled and token is not None,
                 "csrf_token": token,
             },
         )
@@ -189,7 +212,9 @@ def create_app(
             status = 400
         elif error.code in {
             "attempt_already_active", "row_version_conflict", "idempotency_conflict",
-            "governance_out_of_scope",
+            "governance_out_of_scope", "attempt_not_ready",
+            "verified_branch_head_mismatch", "dev3_not_fast_forward",
+            "git_merge_rejected", "git_merge_verification_failed",
         }:
             status = 409
         elif error.code == "probe_capacity_exhausted":
@@ -301,6 +326,45 @@ def create_app(
             raise FlakyStoreError("probe_trigger_disabled", "Probe trigger is disabled")
         result = probe_control.create_attempt(command, now=datetime.now(UTC))
         return JSONResponse(status_code=201 if result["created"] else 200, content=result)
+
+    @app.post("/api/v1/probe-attempts/{attempt_id}/merge-and-close")
+    async def merge_and_close(request: Request, attempt_id: str):
+        if request.headers.get("origin") != dashboard_origin:
+            return _write_error(JSONResponse, 403, "origin_rejected")
+        content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().casefold()
+        if content_type != "application/json":
+            return _write_error(JSONResponse, 415, "json_required")
+        declared = request.headers.get("content-length")
+        if declared is not None:
+            try:
+                if int(declared) > 4096:
+                    return _write_error(JSONResponse, 413, "request_too_large")
+            except ValueError:
+                return _write_error(JSONResponse, 400, "invalid_merge_request")
+        body = await request.body()
+        if len(body) > 4096:
+            return _write_error(JSONResponse, 413, "request_too_large")
+        if csrf_protector is None or not csrf_protector.validate(
+            cookie_token=request.cookies.get("flaky_probe_csrf"),
+            header_token=request.headers.get("x-csrf-token"),
+        ):
+            return _write_error(JSONResponse, 403, "csrf_rejected")
+        try:
+            payload = json.loads(body)
+            if not isinstance(payload, dict):
+                raise ValueError("request body must be an object")
+            command = MergeClosePayload(**payload)
+        except (UnicodeError, json.JSONDecodeError, TypeError, ValueError, ValidationError):
+            return _write_error(JSONResponse, 400, "invalid_merge_request")
+        if not merge_actions_enabled or merge_close_service is None:
+            raise FlakyStoreError("merge_action_disabled", "merge action is disabled")
+        result = await asyncio.to_thread(
+            merge_close_service.execute,
+            attempt_id=attempt_id,
+            expected_row_version=command.row_version,
+            reason="validated commit merged into dev3; automatic Flaky close",
+        )
+        return JSONResponse(status_code=200, content=result)
 
     @app.api_route("/api/v1/cases/{flaky_key}", methods=["GET", "HEAD"])
     async def api_case(flaky_key: str):
@@ -528,6 +592,8 @@ def _allowed_query_keys(path: str) -> frozenset[str] | None:
     if path.startswith(("/api/v1/cases/", "/api/v1/runs/", "/cases/", "/runs/")):
         return frozenset()
     if path.startswith("/api/v1/governances/") and path.endswith("/probe-attempts"):
+        return frozenset()
+    if path.startswith("/api/v1/probe-attempts/") and path.endswith("/merge-and-close"):
         return frozenset()
     return None
 

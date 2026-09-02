@@ -50,7 +50,7 @@
     </div>
     <div class="workflow-step">
       <div class="workflow-step__top"><span class="workflow-step__index">4</span><strong>合并并关闭 Flaky</strong></div>
-      <small>{% if item.attempt_status == 'READY_TO_CLOSE' %}合并后使用 CLI 门禁确认{% else %}等待验证与合并{% endif %}</small>
+      <small>{% if item.attempt_status == 'READY_TO_CLOSE' %}合并后自动调用 CLI 关闭{% else %}等待验证与合并{% endif %}</small>
     </div>
   </div>
 {%- endmacro %}

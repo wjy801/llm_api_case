@@ -6,6 +6,7 @@ from quality.flaky_importer import (
     import_flaky_history,
     write_flaky_no_data_report,
     write_flaky_state_no_data_report,
+    write_flaky_v3_state_report,
 )
 from quality.flaky_models import (
     FlakyImportRequest,
@@ -98,6 +99,15 @@ def run_flaky_state_stage(
                 quality_output_dir=quality_config.output_dir,
                 code="flaky_database_path_missing",
                 summary="Flaky state database path is missing",
+            )
+        elif (
+            flaky_import_result is not None
+            and flaky_import_result.database_schema_version is not None
+            and flaky_import_result.database_schema_version >= 3
+        ):
+            result = write_flaky_v3_state_report(
+                quality_output_dir=quality_config.output_dir,
+                import_result=flaky_import_result,
             )
         elif (
             flaky_import_result is None
