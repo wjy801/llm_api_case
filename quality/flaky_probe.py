@@ -129,12 +129,15 @@ class ProbePlan(FrozenProbeModel):
     def _job(cls, value: str) -> str:
         return validate_job_full_name(value)
 
+    @field_validator("target_branch")
+    @classmethod
+    def _target_branch(cls, value: str) -> str:
+        return validate_target_branch(value)
+
     @model_validator(mode="after")
     def _fixed_contract(self) -> "ProbePlan":
         if self.schema_version != PROBE_PLAN_VERSION:
             raise ValueError("unsupported Probe plan version")
-        if self.target_branch != "dev3":
-            raise ValueError("Probe target branch must be dev3")
         if self.required_consecutive_passes != 5:
             raise ValueError("Probe plan requires exactly five consecutive passes")
         if self.min_interval_minutes != 30:
@@ -160,6 +163,7 @@ class ProbePlan(FrozenProbeModel):
 
 class ProbeCreateRequest(FrozenProbeModel):
     governance_id: str
+    target_branch: str
     reason: str
     row_version: int = Field(ge=0)
     request_id: str
@@ -168,6 +172,14 @@ class ProbeCreateRequest(FrozenProbeModel):
     @classmethod
     def _governance(cls, value: str) -> str:
         return _required(value, "governance_id")
+
+    @field_validator("target_branch")
+    @classmethod
+    def _branch(cls, value: str) -> str:
+        branch = validate_target_branch(value)
+        if branch == "dev3":
+            raise ValueError("a pre-merge fix branch is required")
+        return branch
 
     @field_validator("reason")
     @classmethod
@@ -185,6 +197,7 @@ class ProbeCreateRequest(FrozenProbeModel):
             {
                 "schema_version": PROBE_CREATE_PAYLOAD_VERSION,
                 "governance_id": self.governance_id,
+                "target_branch": self.target_branch,
                 "row_version": self.row_version,
                 "reason": self.reason,
             }
@@ -324,28 +337,30 @@ class GitTargetResolver:
         self.remote = _required(remote, "remote")
 
     def resolve_dev3(self) -> str:
+        return self.resolve_branch("dev3")
+
+    def resolve_branch(self, branch: str) -> str:
+        target_branch = validate_target_branch(branch)
+        expected_ref = f"refs/heads/{target_branch}"
         try:
-            subprocess.run(
-                ["git", "fetch", "--quiet", self.remote, "dev3"],
+            result = subprocess.run(
+                ["git", "ls-remote", "--exit-code", self.remote, expected_ref],
                 cwd=self.repository_root,
                 check=True,
                 capture_output=True,
                 text=True,
                 timeout=30,
             )
-            result = subprocess.run(
-                ["git", "rev-parse", f"refs/remotes/{self.remote}/dev3"],
-                cwd=self.repository_root,
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
         except (OSError, subprocess.SubprocessError) as error:
             raise FlakyStoreError(
-                "target_head_unavailable", "origin/dev3 could not be verified"
+                "target_head_unavailable", "target branch could not be verified"
             ) from error
-        return _require_sha(result.stdout.strip(), "origin/dev3 HEAD")
+        lines = [line.split("\t", 1) for line in result.stdout.splitlines() if line]
+        if len(lines) != 1 or len(lines[0]) != 2 or lines[0][1] != expected_ref:
+            raise FlakyStoreError(
+                "target_head_unavailable", "target branch could not be verified"
+            )
+        return _require_sha(lines[0][0], "target branch HEAD")
 
 
 def load_probe_runtime_config(
@@ -502,7 +517,7 @@ class ProbeControlService:
         database_path: str | Path,
         runtime: ProbeRuntimeConfig,
         *,
-        target_resolver: Callable[[], str] | None = None,
+        target_resolver: Callable[[str], str] | None = None,
         busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
         migrations_directory: str | Path = MIGRATIONS_DIRECTORY,
     ) -> None:
@@ -528,8 +543,10 @@ class ProbeControlService:
             if duplicate is not None:
                 return self._idempotent_result(duplicate, request.payload_hash)
         if self.target_resolver is None:
-            raise FlakyStoreError("target_head_unavailable", "origin/dev3 resolver is unavailable")
-        target_sha = _require_sha(self.target_resolver(), "origin/dev3 HEAD")
+            raise FlakyStoreError("target_head_unavailable", "target branch resolver is unavailable")
+        target_sha = _require_sha(
+            self.target_resolver(request.target_branch), "target branch HEAD"
+        )
         with self._write() as connection:
             duplicate = self._request_row(connection, request.request_id)
             if duplicate is not None:
@@ -572,6 +589,7 @@ class ProbeControlService:
                 environment=str(governance["environment"]),
                 execution_profile=str(governance["execution_profile"]),
                 state_epoch=int(governance["state_epoch"]),
+                target_branch=request.target_branch,
                 target_commit_sha=target_sha,
                 controller_commit_sha=str(self.runtime.controller_commit_sha),
                 policy_revision=policy.revision,
@@ -2134,6 +2152,28 @@ def validate_git_remote(value: object) -> str:
     return text
 
 
+def validate_target_branch(value: object) -> str:
+    text = _required(str(value or ""), "target branch")
+    parts = text.split("/")
+    if (
+        len(text) > 200
+        or text.casefold() == "head"
+        or text.casefold().startswith("refs/")
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", text) is None
+        or ".." in text
+        or "@{" in text
+        or any(
+            not part
+            or part.startswith(".")
+            or part.endswith(".")
+            or part.endswith(".lock")
+            for part in parts
+        )
+    ):
+        raise ValueError("invalid target branch")
+    return text
+
+
 def validate_relative_artifact_path(value: str) -> str:
     text = str(value).replace("\\", "/")
     if (
@@ -2286,5 +2326,6 @@ __all__ = (
     "validate_jenkins_origin",
     "validate_job_full_name",
     "validate_git_remote",
+    "validate_target_branch",
     "validate_relative_artifact_path",
 )

@@ -3,13 +3,15 @@
   <form id="probe-form">
     <div class="dialog__head">
       <h2 id="probe-dialog-title">启动流水线验证</h2>
-      <p>系统会锁定当前 dev3 提交并创建 Probe。请确认修复分支已合并，再执行此操作。</p>
+      <p>输入已经推送到 GitLab 的修复分支。系统会锁定该分支当前提交并创建 Probe，通过后才允许合并 dev3。</p>
     </div>
     <div class="dialog__body">
       <label for="probe-target">待验证用例</label>
       <div id="probe-target" class="field" style="min-height: auto; margin-bottom: 16px; overflow-wrap: anywhere;"></div>
+      <label for="probe-branch">修复分支</label>
+      <input id="probe-branch" class="field" required maxlength="200" pattern="[A-Za-z0-9][A-Za-z0-9._/-]*" placeholder="例如：fix/flaky-case" autocomplete="off" style="margin-bottom: 16px;">
       <label for="probe-reason">验证说明</label>
-      <textarea id="probe-reason" class="field" required minlength="1" maxlength="500" placeholder="例如：修复已合并 dev3，启动回归验证"></textarea>
+      <textarea id="probe-reason" class="field" required minlength="1" maxlength="500" placeholder="例如：修复已推送，申请合并前验证"></textarea>
       <p id="probe-status" class="action-status" role="status" aria-live="polite"></p>
       <div class="dialog__actions">
         <button class="button" id="probe-cancel" type="button">取消</button>
@@ -47,6 +49,7 @@
   if (!dialog) return;
   const form = document.getElementById('probe-form');
   const target = document.getElementById('probe-target');
+  const branch = document.getElementById('probe-branch');
   const reason = document.getElementById('probe-reason');
   const status = document.getElementById('probe-status');
   const submit = document.getElementById('probe-submit');
@@ -58,18 +61,19 @@
       governanceId = button.dataset.probeGovernance;
       rowVersion = Number(button.dataset.rowVersion);
       target.textContent = button.dataset.caseId;
+      branch.value = '';
       reason.value = '';
       status.textContent = '';
       status.className = 'action-status';
       dialog.showModal();
-      reason.focus();
+      branch.focus();
     });
   });
 
   document.getElementById('probe-cancel').addEventListener('click', () => dialog.close());
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (!reason.value.trim()) return;
+    if (!branch.value.trim() || !reason.value.trim()) return;
     submit.disabled = true;
     status.textContent = '正在创建验证任务…';
     status.className = 'action-status';
@@ -81,6 +85,7 @@
           method: 'POST',
           headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
           body: JSON.stringify({
+            target_branch: branch.value.trim(),
             reason: reason.value.trim(),
             row_version: rowVersion,
             request_id: crypto.randomUUID()
@@ -93,7 +98,9 @@
           attempt_already_active: '该用例已有进行中的验证任务',
           row_version_conflict: '治理状态已更新，请刷新后重试',
           probe_capacity_exhausted: '验证任务已达并发上限，请稍后重试',
-          probe_trigger_disabled: '流水线验证开关已关闭'
+          probe_trigger_disabled: '流水线验证开关已关闭',
+          target_head_unavailable: '无法找到修复分支，请确认已推送到 GitLab',
+          invalid_probe_request: '修复分支或验证说明格式不正确'
         };
         throw new Error(messages[payload?.error?.code] || '创建失败，请检查状态后重试');
       }

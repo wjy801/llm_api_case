@@ -9,7 +9,7 @@
     {%- elif status == 'CONFIRMED' -%}已确认 Flaky
     {%- elif status == 'ACTIVE' -%}待治理
     {%- elif status == 'RECOVERING' -%}验证中
-    {%- elif status == 'READY_TO_CLOSE' -%}可关闭
+    {%- elif status == 'READY_TO_CLOSE' -%}验证通过
     {%- elif status == 'CLOSED' -%}已关闭
     {%- elif status == 'FAILED' -%}验证失败
     {%- elif status == 'INCONCLUSIVE' -%}证据不足
@@ -37,24 +37,20 @@
 {% macro workflow(item) -%}
   <div class="workflow" aria-label="治理流程">
     <div class="workflow-step {% if item.governance_status == 'ACTIVE' %}workflow-step--current{% else %}workflow-step--done{% endif %}">
-      <div class="workflow-step__top"><span class="workflow-step__index">1</span><strong>修复并合并 dev3</strong></div>
-      <small>{% if item.governance_status == 'ACTIVE' %}当前：完成代码修复与合并{% else %}已进入验证阶段{% endif %}</small>
+      <div class="workflow-step__top"><span class="workflow-step__index">1</span><strong>推送修复分支</strong></div>
+      <small>{% if item.governance_status == 'ACTIVE' %}当前：完成修复并推送 GitLab{% else %}已锁定修复提交{% endif %}</small>
     </div>
-    <div class="workflow-step {% if item.governance_status == 'RECOVERING' %}workflow-step--done{% endif %}">
-      <div class="workflow-step__top"><span class="workflow-step__index">2</span><strong>启动流水线</strong></div>
-      <small>{% if item.governance_status == 'RECOVERING' %}Probe 已创建{% else %}等待人工触发{% endif %}</small>
-    </div>
-    <div class="workflow-step {% if item.attempt_status == 'READY_TO_CLOSE' %}workflow-step--done{% elif item.attempt_status in ['FAILED', 'INCONCLUSIVE', 'EXPIRED', 'CANCELLED'] %}workflow-step--attention{% elif item.governance_status == 'RECOVERING' %}workflow-step--current{% endif %}">
-      <div class="workflow-step__top"><span class="workflow-step__index">3</span><strong>收集验证证据</strong></div>
-      <small>
-        {% if item.attempt_status == 'READY_TO_CLOSE' %}已满足关闭条件
-        {% elif item.attempt_counted_passes is not none %}有效通过 {{ item.attempt_counted_passes }}/{{ item.attempt_required_consecutive_passes }}
-        {% else %}等待流水线结果{% endif %}
-      </small>
+    <div class="workflow-step {% if item.attempt_status == 'READY_TO_CLOSE' %}workflow-step--done{% elif item.governance_status == 'RECOVERING' and item.attempt_status in ['FAILED', 'INCONCLUSIVE', 'EXPIRED', 'CANCELLED'] %}workflow-step--attention{% elif item.governance_status == 'RECOVERING' %}workflow-step--current{% endif %}">
+      <div class="workflow-step__top"><span class="workflow-step__index">2</span><strong>验证修复分支</strong></div>
+      <small>{% if item.attempt_status == 'READY_TO_CLOSE' %}Probe 验证通过{% elif item.attempt_target_branch %}正在验证 {{ item.attempt_target_branch }}{% else %}输入分支后启动{% endif %}</small>
     </div>
     <div class="workflow-step {% if item.attempt_status == 'READY_TO_CLOSE' %}workflow-step--current{% endif %}">
-      <div class="workflow-step__top"><span class="workflow-step__index">4</span><strong>人工关闭 Flaky</strong></div>
-      <small>{% if item.attempt_status == 'READY_TO_CLOSE' %}使用 CLI 门禁确认{% else %}验证通过后开放{% endif %}</small>
+      <div class="workflow-step__top"><span class="workflow-step__index">3</span><strong>允许合并 dev3</strong></div>
+      <small>{% if item.attempt_status == 'READY_TO_CLOSE' %}验证已通过，可以合并{% else %}验证通过后开放{% endif %}</small>
+    </div>
+    <div class="workflow-step">
+      <div class="workflow-step__top"><span class="workflow-step__index">4</span><strong>合并并关闭 Flaky</strong></div>
+      <small>{% if item.attempt_status == 'READY_TO_CLOSE' %}合并后使用 CLI 门禁确认{% else %}等待验证与合并{% endif %}</small>
     </div>
   </div>
 {%- endmacro %}

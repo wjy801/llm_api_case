@@ -20,6 +20,7 @@ from quality.flaky_probe import (
     DispatchResult,
     DispatchResultKind,
     FixedJenkinsClient,
+    GitTargetResolver,
     JenkinsObservation,
     JenkinsObservationKind,
     ProbeControlService,
@@ -71,6 +72,13 @@ class FakeJenkins:
 
 def test_create_is_idempotent_and_global_capacity_is_transactional(tmp_path):
     database, control, governance_id = _control(tmp_path)
+    resolved_branches = []
+
+    def resolve_branch(branch):
+        resolved_branches.append(branch)
+        return TARGET_SHA
+
+    control.target_resolver = resolve_branch
     request = _create_request(governance_id)
 
     created = control.create_attempt(request, now=NOW)
@@ -78,6 +86,7 @@ def test_create_is_idempotent_and_global_capacity_is_transactional(tmp_path):
 
     assert created["created"] is True
     assert replay == {**created, "created": False}
+    assert resolved_branches == ["fix/flaky-stage3"]
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM flaky_probe_capacity_slot").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM flaky_probe_plan").fetchone()[0] == 1
@@ -399,6 +408,31 @@ def test_probe_runtime_accepts_explicit_gitlab_remote(tmp_path):
     assert invalid.warning == "invalid Git remote"
 
 
+def test_target_resolver_reads_exact_remote_branch_without_mutating_refs(
+    tmp_path, monkeypatch
+):
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(stdout=f"{TARGET_SHA}\trefs/heads/fix/flaky-stage3\n")
+
+    monkeypatch.setattr("quality.flaky_probe.subprocess.run", run)
+
+    resolved = GitTargetResolver(tmp_path, remote="gitlab").resolve_branch(
+        "fix/flaky-stage3"
+    )
+
+    assert resolved == TARGET_SHA
+    assert calls[0][0] == [
+        "git",
+        "ls-remote",
+        "--exit-code",
+        "gitlab",
+        "refs/heads/fix/flaky-stage3",
+    ]
+
+
 def test_dashboard_lifespan_runs_dispatch_and_reconcile_loop(tmp_path):
     database, _control_service, _governance_id = _control(tmp_path)
     dispatched = threading.Event()
@@ -687,11 +721,22 @@ def test_dashboard_post_enforces_origin_csrf_body_and_idempotent_status(tmp_path
     page = client.get("/governance")
     token = client.cookies.get("flaky_probe_csrf")
     assert page.status_code == 200 and token
-    payload = {"reason": "verify fix", "row_version": 1, "request_id": "12345678-1234-4234-8234-123456789abc"}
+    payload = {
+        "target_branch": "fix/flaky-stage3",
+        "reason": "verify fix",
+        "row_version": 1,
+        "request_id": "12345678-1234-4234-8234-123456789abc",
+    }
     path = f"/api/v1/governances/{governance_id}/probe-attempts"
     headers = {"Origin": "http://dashboard.test", "X-CSRF-Token": token}
     assert client.post(path, json=payload, headers={**headers, "Origin": "http://evil.test"}).status_code == 403
     assert client.post(path, json={**payload, "extra": True}, headers=headers).status_code == 400
+    for invalid_branch in ("dev3", "../dev3", "HEAD", "refs/heads/dev3"):
+        assert client.post(
+            path,
+            json={**payload, "target_branch": invalid_branch},
+            headers=headers,
+        ).status_code == 400
     first = client.post(path, json=payload, headers=headers)
     replay = client.post(path, json=payload, headers=headers)
     assert first.status_code == 201
@@ -787,7 +832,9 @@ def _control(tmp_path):
         controller_commit_sha=CONTROLLER_SHA,
         controller_jenkinsfile_sha256="d" * 64,
     )
-    return database, ProbeControlService(database, runtime, target_resolver=lambda: TARGET_SHA), "governance-stage3"
+    return database, ProbeControlService(
+        database, runtime, target_resolver=lambda _branch: TARGET_SHA
+    ), "governance-stage3"
 
 
 def _seed_governance(database):
@@ -820,6 +867,7 @@ def _seed_governance(database):
 def _create_request(governance_id):
     return ProbeCreateRequest(
         governance_id=governance_id,
+        target_branch="fix/flaky-stage3",
         reason="verify fix",
         row_version=1,
         request_id="12345678-1234-4234-8234-123456789abc",
@@ -851,7 +899,8 @@ def _probe_import(
     finished = started + timedelta(seconds=1)
     run_id = round_row["run_id"]
     run = RunRecord(
-        run_id=run_id, job_name="quality/probe", build_number="7", branch="dev3",
+        run_id=run_id, job_name="quality/probe", build_number="7",
+        branch=plan.target_branch,
         commit_sha=TARGET_SHA, trigger="jenkins", environment=environment,
         start_time=started, end_time=finished, status=RunStatus.FINISHED,
         integrity_status=IntegrityStatus.COMPLETE, run_kind=RunKind.FLAKY_PROBE,

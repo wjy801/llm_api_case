@@ -276,7 +276,7 @@ def _controller_origin_invalid_p0(
         run_id=run_id,
         job_name=str(runtime.job_full_name),
         build_number=build_number,
-        branch="dev3",
+        branch=plan.target_branch,
         commit_sha=plan.target_commit_sha,
         trigger="jenkins",
         environment=plan.environment,

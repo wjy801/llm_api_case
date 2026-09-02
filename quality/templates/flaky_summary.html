@@ -24,7 +24,7 @@
       <div>
         <p class="eyebrow">Quality governance</p>
         <h1>Flaky 治理工作台</h1>
-        <p class="lede">聚焦需要处理的用例，直接查看检测结论、治理进度，并从修复合并推进到流水线验证。</p>
+        <p class="lede">聚焦需要处理的用例，先验证修复分支，通过后再合并 dev3 并完成治理关闭。</p>
       </div>
       <div class="as-of"><span class="live-dot" aria-hidden="true"></span>数据更新于 {{ summary.data_as_of.strftime('%Y-%m-%d %H:%M:%S') }}</div>
     </section>
@@ -33,7 +33,7 @@
       <article class="metric-card metric-card--attention">
         <div class="metric-card__label">待治理</div>
         <div class="metric-card__value">{{ summary.governance_counts.get('ACTIVE', 0) }}</div>
-        <div class="metric-card__hint">等待修复并合并 dev3</div>
+        <div class="metric-card__hint">等待修复分支验证</div>
       </article>
       <article class="metric-card metric-card--progress">
         <div class="metric-card__label">验证中</div>
@@ -80,10 +80,10 @@
         <div><h2>治理路径</h2><p>操作只推进现有治理状态机，不改变检测与关闭规则。</p></div>
       </div>
       <div class="panel flow-guide">
-        <div class="flow-guide__step"><span class="flow-guide__number">01</span><h3>修复并合并 dev3</h3><p>在开发分支修复 Flaky 用例，评审后合并到 dev3。</p></div>
-        <div class="flow-guide__step"><span class="flow-guide__number">02</span><h3>启动流水线验证</h3><p>从当前 dev3 HEAD 创建一次不可变的 Probe 验证计划。</p></div>
-        <div class="flow-guide__step"><span class="flow-guide__number">03</span><h3>收集可信证据</h3><p>按治理规则累计有效通过次数，非计数结果单独记录。</p></div>
-        <div class="flow-guide__step"><span class="flow-guide__number">04</span><h3>人工关闭 Flaky</h3><p>达到 READY_TO_CLOSE 后，通过 CLI 门禁完成关闭。</p></div>
+        <div class="flow-guide__step"><span class="flow-guide__number">01</span><h3>推送修复分支</h3><p>在独立分支修复 Flaky 用例，并将分支推送到 GitLab。</p></div>
+        <div class="flow-guide__step"><span class="flow-guide__number">02</span><h3>验证修复提交</h3><p>锁定修复分支当前提交，启动不可变的 Probe 验证计划。</p></div>
+        <div class="flow-guide__step"><span class="flow-guide__number">03</span><h3>允许合并 dev3</h3><p>只有可信验证满足门槛后，才进入可合并状态。</p></div>
+        <div class="flow-guide__step"><span class="flow-guide__number">04</span><h3>合并并关闭 Flaky</h3><p>合并后由 CLI 核对 dev3，再完成治理关闭。</p></div>
       </div>
     </section>
 
@@ -119,8 +119,8 @@
 
           <div class="case-card__footer">
             <p class="action-hint">
-              {% if item.governance_status == 'ACTIVE' %}确认修复已进入 dev3 后启动验证；系统会记录操作者为 dashboard-anonymous。
-              {% elif item.attempt_status == 'READY_TO_CLOSE' %}可信证据已满足要求。复制命令模板后补充操作人和原因，执行最终关闭。
+              {% if item.governance_status == 'ACTIVE' %}输入已推送到 GitLab 的修复分支，验证通过前不要合并 dev3；操作者记录为 dashboard-anonymous。
+              {% elif item.attempt_status == 'READY_TO_CLOSE' %}修复分支验证已通过。合并 dev3 后复制命令模板，核对提交并完成关闭。
               {% else %}验证任务已启动，可进入详情查看最新证据和事件时间线。{% endif %}
             </p>
             <div class="actions">

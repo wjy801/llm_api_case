@@ -84,6 +84,7 @@ class GovernanceListItem(ReadModel):
     governance_status: str
     attempt_id: str | None
     attempt_status: str | None
+    attempt_target_branch: str | None
     attempt_target_commit_sha: str | None
     attempt_counted_passes: int | None
     attempt_required_consecutive_passes: int | None
@@ -295,6 +296,7 @@ class FlakyReadService:
                    identity.state_epoch, identity.current_detection_generation,
                    latest_attempt.attempt_id AS attempt_id,
                    latest_attempt.status AS attempt_status,
+                   latest_plan.target_branch AS attempt_target_branch,
                    latest_attempt.target_commit_sha AS attempt_target_commit_sha,
                    latest_attempt.counted_passes AS attempt_counted_passes,
                    latest_attempt.required_consecutive_passes
@@ -322,6 +324,8 @@ class FlakyReadService:
                    WHERE attempt.governance_id = governance.governance_id
                    ORDER BY attempt.attempt_no DESC LIMIT 1
               )
+            LEFT JOIN flaky_probe_plan AS latest_plan
+              ON latest_plan.attempt_id = latest_attempt.attempt_id
             {where}
             ORDER BY governance.created_at, governance.governance_id
             LIMIT ?
@@ -595,6 +599,7 @@ def _governance_item(
         governance_status=row["status"],
         attempt_id=row["attempt_id"],
         attempt_status=row["attempt_status"],
+        attempt_target_branch=row["attempt_target_branch"],
         attempt_target_commit_sha=row["attempt_target_commit_sha"],
         attempt_counted_passes=(
             int(row["attempt_counted_passes"])

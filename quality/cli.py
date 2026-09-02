@@ -592,7 +592,7 @@ def _flaky_probe(parsed: argparse.Namespace) -> int:
         runtime,
         target_resolver=GitTargetResolver(
             Path.cwd(), remote=runtime.git_remote
-        ).resolve_dev3,
+        ).resolve_branch,
     )
     now = datetime.now(UTC)
     try:

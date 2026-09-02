@@ -148,10 +148,10 @@ def test_dashboard_home_is_an_unfolded_governance_workbench(tmp_path):
     assert "治理状态" in page.text
     assert "待治理用例" in page.text
     assert "module/smoke/test_html.py::test_case" in page.text
-    assert "修复并合并 dev3" in page.text
-    assert "启动流水线验证" in page.text
-    assert "收集可信证据" in page.text
-    assert "人工关闭 Flaky" in page.text
+    assert "推送修复分支" in page.text
+    assert "验证修复提交" in page.text
+    assert "允许合并 dev3" in page.text
+    assert "合并并关闭 Flaky" in page.text
     assert "验证开关已关闭" in page.text
     assert "<details" not in page.text
     assert "module/smoke/test_pass.py::test_case" not in page.text
@@ -180,6 +180,8 @@ def test_dashboard_home_enables_probe_interaction_without_login(tmp_path):
     assert page.status_code == 200
     assert 'data-probe-governance="governance-html"' in page.text
     assert 'id="probe-dialog"' in page.text
+    assert 'id="probe-branch"' in page.text
+    assert "target_branch: branch.value.trim()" in page.text
     assert "登录" not in page.text
     assert "RBAC" not in page.text
     assert client.cookies.get("flaky_probe_csrf")
