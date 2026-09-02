@@ -49,6 +49,7 @@ from quality.flaky_probe import (
     ProbeControlService,
     load_probe_evidence_key,
     load_probe_runtime_config,
+    validate_git_remote,
 )
 
 
@@ -544,7 +545,12 @@ def _flaky_recovery(parsed: argparse.Namespace) -> int:
         elif parsed.command == "flaky-recovery-close":
             verified_branch_head = parsed.verified_branch_head
             if service.recovery_close_requires_fresh_head(parsed.attempt_id):
-                verified_branch_head = GitTargetResolver(Path.cwd()).resolve_dev3()
+                git_remote = validate_git_remote(
+                    os.environ.get("QUALITY_FLAKY_GIT_REMOTE", "origin")
+                )
+                verified_branch_head = GitTargetResolver(
+                    Path.cwd(), remote=git_remote
+                ).resolve_dev3()
                 evidence_key_id, evidence_secret = load_probe_evidence_key(
                     repository_root=Path.cwd()
                 )
@@ -584,7 +590,9 @@ def _flaky_probe(parsed: argparse.Namespace) -> int:
     service = ProbeControlService(
         Path(parsed.db),
         runtime,
-        target_resolver=GitTargetResolver(Path.cwd()).resolve_dev3,
+        target_resolver=GitTargetResolver(
+            Path.cwd(), remote=runtime.git_remote
+        ).resolve_dev3,
     )
     now = datetime.now(UTC)
     try:

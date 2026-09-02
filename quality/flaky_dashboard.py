@@ -92,7 +92,9 @@ def create_app(
             probe_control = ProbeControlService(
                 database.resolve(),
                 probe_runtime,
-                target_resolver=GitTargetResolver(Path.cwd()).resolve_dev3,
+                target_resolver=GitTargetResolver(
+                    Path.cwd(), remote=probe_runtime.git_remote
+                ).resolve_dev3,
             )
             probe_gateway = probe_gateway or FixedJenkinsClient(probe_runtime)
             if csrf_protector is None and probe_runtime.csrf_secret_file is not None:

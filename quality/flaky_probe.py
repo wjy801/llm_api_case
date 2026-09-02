@@ -292,6 +292,7 @@ class ProbeRuntimeConfig:
     csrf_secret_file: Path | None = None
     evidence_hmac_key_file: Path | None = None
     evidence_key_id: str = "probe-evidence-key-v1"
+    git_remote: str = "origin"
 
 
 @dataclass(frozen=True)
@@ -394,6 +395,9 @@ def load_probe_runtime_config(
             str(values.get("QUALITY_FLAKY_EVIDENCE_KEY_ID", "probe-evidence-key-v1")),
             "evidence key id",
         )
+        git_remote = validate_git_remote(
+            values.get("QUALITY_FLAKY_GIT_REMOTE", "origin")
+        )
     except (ValueError, FlakyStoreError) as error:
         return ProbeRuntimeConfig(
             requested_enabled=True,
@@ -411,6 +415,7 @@ def load_probe_runtime_config(
         csrf_secret_file=csrf,
         evidence_hmac_key_file=evidence,
         evidence_key_id=key_id,
+        git_remote=git_remote,
     )
 
 
@@ -2122,6 +2127,13 @@ def validate_job_full_name(value: object) -> str:
     return text
 
 
+def validate_git_remote(value: object) -> str:
+    text = _required(str(value or ""), "Git remote")
+    if len(text) > 64 or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", text) is None:
+        raise ValueError("invalid Git remote")
+    return text
+
+
 def validate_relative_artifact_path(value: str) -> str:
     text = str(value).replace("\\", "/")
     if (
@@ -2273,5 +2285,6 @@ __all__ = (
     "stable_id",
     "validate_jenkins_origin",
     "validate_job_full_name",
+    "validate_git_remote",
     "validate_relative_artifact_path",
 )

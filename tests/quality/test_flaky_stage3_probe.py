@@ -27,6 +27,7 @@ from quality.flaky_probe import (
     ProbeRuntimeConfig,
     build_probe_envelope,
     canonical_json,
+    load_probe_runtime_config,
     sign_probe_envelope,
 )
 from quality.cli import main as cli_main
@@ -368,6 +369,36 @@ def test_generic_connection_error_is_dispatch_unknown(tmp_path):
     assert result.kind is DispatchResultKind.UNKNOWN
 
 
+def test_probe_runtime_accepts_explicit_gitlab_remote(tmp_path):
+    secret_paths = []
+    for name in ("jenkins.credential", "csrf.key", "evidence.key"):
+        path = tmp_path / name
+        path.write_bytes(b"x" * 48)
+        secret_paths.append(path)
+    values = {
+        "QUALITY_FLAKY_TRIGGER_ENABLE": "1",
+        "QUALITY_FLAKY_JENKINS_ORIGIN": "https://jenkins.example.test",
+        "QUALITY_FLAKY_JENKINS_JOB": "quality-probe",
+        "QUALITY_FLAKY_JENKINS_CREDENTIAL_FILE": str(secret_paths[0]),
+        "QUALITY_FLAKY_CONTROLLER_COMMIT": CONTROLLER_SHA,
+        "QUALITY_FLAKY_CONTROLLER_JENKINSFILE_SHA256": "d" * 64,
+        "QUALITY_FLAKY_CSRF_SECRET_FILE": str(secret_paths[1]),
+        "QUALITY_FLAKY_EVIDENCE_HMAC_KEY_FILE": str(secret_paths[2]),
+        "QUALITY_FLAKY_GIT_REMOTE": "gitlab",
+    }
+
+    runtime = load_probe_runtime_config(values, repository_root=tmp_path / "repository")
+
+    assert runtime.enabled is True
+    assert runtime.git_remote == "gitlab"
+    invalid = load_probe_runtime_config(
+        {**values, "QUALITY_FLAKY_GIT_REMOTE": "../origin"},
+        repository_root=tmp_path / "repository",
+    )
+    assert invalid.enabled is False
+    assert invalid.warning == "invalid Git remote"
+
+
 def test_dashboard_lifespan_runs_dispatch_and_reconcile_loop(tmp_path):
     database, _control_service, _governance_id = _control(tmp_path)
     dispatched = threading.Event()
@@ -611,9 +642,14 @@ def test_cli_stage3_close_fetches_head_and_loads_key_with_switch_off(
     monkeypatch.setenv("QUALITY_FLAKY_TRIGGER_ENABLE", "0")
     monkeypatch.setenv("QUALITY_FLAKY_EVIDENCE_HMAC_KEY_FILE", str(key_file))
     monkeypatch.setenv("QUALITY_FLAKY_EVIDENCE_KEY_ID", "key-v1")
-    monkeypatch.setattr(
-        "quality.cli.GitTargetResolver.resolve_dev3", lambda _self: TARGET_SHA
-    )
+    monkeypatch.setenv("QUALITY_FLAKY_GIT_REMOTE", "gitlab")
+    resolved_remotes = []
+
+    def resolve_target(resolver):
+        resolved_remotes.append(resolver.remote)
+        return TARGET_SHA
+
+    monkeypatch.setattr("quality.cli.GitTargetResolver.resolve_dev3", resolve_target)
 
     exit_code = cli_main(
         [
@@ -628,6 +664,7 @@ def test_cli_stage3_close_fetches_head_and_loads_key_with_switch_off(
     )
 
     assert exit_code == 0
+    assert resolved_remotes == ["gitlab"]
     with sqlite3.connect(database) as connection:
         assert connection.execute(
             "SELECT status FROM flaky_verification_attempt WHERE attempt_id=?",
