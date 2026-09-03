@@ -1,6 +1,11 @@
 import json
 
+import pytest
+
 from quality.cli import main
+
+
+pytestmark = pytest.mark.usefixtures("legacy_flaky_runtime")
 
 
 def test_flaky_cli_import_history_reset_and_db_check(
@@ -63,12 +68,19 @@ def test_flaky_cli_import_history_reset_and_db_check(
     assert reset["previous_epoch"] == 1
     assert reset["new_epoch"] == 2
 
+
+
+def test_flaky_cli_explicit_migrate_and_read_only_check(tmp_path, capsys):
+    database = (tmp_path / "v3.sqlite3").resolve()
+    assert main(["flaky-db-migrate", "--db", str(database)]) == 0
+    migrated = json.loads(capsys.readouterr().out)
+    assert migrated["database_schema_version"] == 4
+    assert migrated["migration_applied"] is True
+
     assert main(["flaky-db-check", "--db", str(database)]) == 0
     checked = json.loads(capsys.readouterr().out)
-    assert checked["schema_version"] == 2
-    assert checked["quick_check"] == "ok"
-    assert checked["run_count"] == 1
-    assert checked["observation_count"] == 1
+    assert checked["database_schema_version"] == 4
+    assert checked["status"] == "OK"
 
 
 def test_flaky_cli_returns_two_for_untrusted_artifact(

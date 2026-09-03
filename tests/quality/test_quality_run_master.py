@@ -26,6 +26,11 @@ QUALITY_ENV_NAMES = (
     "QUALITY_RUN_ID",
     "QUALITY_EXECUTION_ID",
     "QUALITY_OUTPUT_DIR",
+    "QUALITY_FLAKY_AUTO_SKIP_ENABLE",
+    "QUALITY_FLAKY_SKIP_MODE",
+    "QUALITY_FLAKY_SNAPSHOT_MAX_AGE_MINUTES",
+    "QUALITY_FLAKY_DECISION_PLAN_PATH",
+    "QUALITY_FLAKY_DECISION_CHECKSUM",
 )
 
 
@@ -103,11 +108,15 @@ def test_disabled_quality_preserves_existing_environment(monkeypatch):
     assert calls[0]["quality"]["QUALITY_EXECUTION_ID"] == "outside-execution"
 
 
-def test_serial_run_uses_semantic_execution_id_and_restores_environment(monkeypatch):
+def test_serial_run_uses_semantic_execution_id_and_restores_environment(
+    monkeypatch,
+    tmp_path,
+):
+    output_dir = tmp_path / "quality-output"
     monkeypatch.setenv("QUALITY_ENABLE", "1")
     monkeypatch.setenv("QUALITY_RUN_ID", "parent-run")
     monkeypatch.setenv("QUALITY_EXECUTION_ID", "outside-execution")
-    monkeypatch.setenv("QUALITY_OUTPUT_DIR", "quality-output")
+    monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(output_dir))
     monkeypatch.setattr(
         pytest_execution,
         "collect_test_case_items",
@@ -121,13 +130,18 @@ def test_serial_run_uses_semantic_execution_id_and_restores_environment(monkeypa
     quality = calls[0]["quality"]
     assert quality["QUALITY_RUN_ID"] == "parent-run"
     assert quality["QUALITY_EXECUTION_ID"] == "serial-pool"
-    assert quality["QUALITY_OUTPUT_DIR"] == str(run_master.PROJECT_ROOT / "quality-output")
+    assert quality["QUALITY_OUTPUT_DIR"] == str(output_dir)
+    assert quality["QUALITY_FLAKY_DECISION_PLAN_PATH"] == str(
+        output_dir / "flaky-skip-decisions.json"
+    )
+    assert str(quality["QUALITY_FLAKY_DECISION_CHECKSUM"]).startswith("sha256:")
     assert os.environ["QUALITY_EXECUTION_ID"] == "outside-execution"
-    assert os.environ["QUALITY_OUTPUT_DIR"] == "quality-output"
+    assert os.environ["QUALITY_OUTPUT_DIR"] == str(output_dir)
 
 
 def test_parallel_and_serial_stages_share_one_run_id(monkeypatch, tmp_path):
     monkeypatch.setenv("QUALITY_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
     monkeypatch.setattr(pytest_execution, "DEFAULT_ALLURE_RESULTS_DIR", tmp_path / "allure-results")
     monkeypatch.setattr(
         pytest_execution,
@@ -154,12 +168,22 @@ def test_parallel_and_serial_stages_share_one_run_id(monkeypatch, tmp_path):
         "serial-pool",
     ]
     assert {call["quality"]["QUALITY_RUN_ID"] for call in calls} == {"generated-run"}
+    assert len(
+        {
+            call["quality"]["QUALITY_FLAKY_DECISION_CHECKSUM"]
+            for call in calls
+        }
+    ) == 1
     assert all("-pool-1" not in call["quality"]["QUALITY_EXECUTION_ID"] for call in calls)
     assert merges[0].expected_execution_ids == ("parallel-pool", "serial-pool")
 
 
-def test_jenkins_identity_is_used_only_when_job_and_build_are_present(monkeypatch):
+def test_jenkins_identity_is_used_only_when_job_and_build_are_present(
+    monkeypatch,
+    tmp_path,
+):
     monkeypatch.setenv("QUALITY_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
     monkeypatch.setenv("JOB_NAME", "api-case")
     monkeypatch.setenv("BUILD_NUMBER", "42")
     monkeypatch.setattr(
@@ -182,17 +206,19 @@ def test_jenkins_identity_is_used_only_when_job_and_build_are_present(monkeypatc
     assert calls[0]["quality"]["QUALITY_RUN_ID"] == "jenkins-run"
 
 
-def test_collect_only_does_not_generate_or_inject_quality_identity(monkeypatch):
+def test_collect_only_generates_run_identity_and_shadow_audit(monkeypatch, tmp_path):
     monkeypatch.setenv("QUALITY_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(tmp_path / "quality"))
     monkeypatch.setattr(
         pytest_execution,
         "collect_test_case_items",
         lambda path, pytest_args=(): _collection(_case("module/test_sample.py::test_ok")),
     )
+    generated = []
     monkeypatch.setattr(
         orchestration_environment,
         "build_run_id",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("must not generate")),
+        lambda **kwargs: generated.append(kwargs) or "collect-run",
     )
     monkeypatch.setattr(
         pytest_execution.pytest,
@@ -201,6 +227,51 @@ def test_collect_only_does_not_generate_or_inject_quality_identity(monkeypatch):
     )
 
     assert run_master.run(extra_pytest_args=["--collect-only"]) == 0
+    assert generated == [{}]
+    output = tmp_path / "quality"
+    assert (output / "flaky-skip-snapshot.json").is_file()
+    assert (output / "flaky-skip-decisions.json").is_file()
+    assert (output / "flaky-skip-reconciliation.json").is_file()
+
+
+@pytest.mark.parametrize(
+    "blocking_artifact,expected_other_artifact",
+    (
+        ("flaky-skip-snapshot.json", None),
+        ("flaky-skip-decisions.json", "flaky-skip-snapshot.json"),
+    ),
+)
+def test_immutable_shadow_write_failure_does_not_publish_in_memory_artifact(
+    monkeypatch,
+    tmp_path,
+    capsys,
+    blocking_artifact,
+    expected_other_artifact,
+):
+    output = tmp_path / "quality"
+    output.mkdir()
+    blocked = output / blocking_artifact
+    blocked.write_text("existing", encoding="utf-8")
+    monkeypatch.setenv("QUALITY_ENABLE", "1")
+    monkeypatch.setenv("QUALITY_RUN_ID", "run-write-conflict")
+    monkeypatch.setenv("QUALITY_OUTPUT_DIR", str(output))
+    monkeypatch.setattr(
+        pytest_execution,
+        "collect_test_case_items",
+        lambda path, pytest_args=(): _collection(
+            _case("module/test_sample.py::test_ok")
+        ),
+    )
+
+    assert run_master.run(extra_pytest_args=["--collect-only"]) == 0
+
+    assert blocked.read_text(encoding="utf-8") == "existing"
+    if expected_other_artifact is None:
+        assert not (output / "flaky-skip-decisions.json").exists()
+    else:
+        assert (output / expected_other_artifact).is_file()
+    assert not (output / "flaky-skip-reconciliation.json").exists()
+    assert "failed open" in capsys.readouterr().out
 
 
 def test_invalid_quality_enable_fails_open(monkeypatch, capsys):

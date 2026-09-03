@@ -16,6 +16,9 @@ PYTEST_EXIT_NO_TESTS_COLLECTED = 5
 class CollectedTestCase:
     nodeid: str
     markers: frozenset[str]
+    case_id: str | None = None
+    param_hash: str | None = None
+    normalized_case_path: str | None = None
 
     @property
     def is_serial(self) -> bool:

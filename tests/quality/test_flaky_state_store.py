@@ -3,6 +3,8 @@ import sqlite3
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("legacy_flaky_runtime")
+
 from quality.flaky_importer import import_flaky_history, reset_flaky_epoch
 from quality.flaky_models import (
     EpochResetRequest,
@@ -72,7 +74,7 @@ def test_evaluation_is_idempotent_for_the_same_run(
     assert check.transition_count == 1
 
 
-def test_manual_governance_recovery_closes_only_after_five_new_observations(
+def test_normal_observations_never_close_recovering_governance(
     p0_artifact_factory,
     tmp_path,
 ):
@@ -118,15 +120,9 @@ def test_manual_governance_recovery_closes_only_after_five_new_observations(
             "pass",
         )
 
-    assert result.recovered
-    recovered_state = _state(store)
-    assert recovered_state.current_state is FlakyState.STABLE
-    assert (
-        recovered_state.evaluation_anchor_observation_id
-        == recovered_state.latest_observation_id
-    )
-    closed = store.governance(status=GovernanceStatus.CLOSED)[0]
-    assert closed.resolution is GovernanceResolution.RECOVERED
+    assert result.recovered == ()
+    assert store.governance(status=GovernanceStatus.CLOSED) == ()
+    assert store.governance(status=GovernanceStatus.RECOVERING)[0].governance_id
 
 
 def test_epoch_reset_is_blocked_during_open_governance(

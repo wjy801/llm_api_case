@@ -10,6 +10,8 @@ from quality.aggregator import (
 )
 from quality.config import QualityRuntimeConfig
 
+from .quality_run_record import quality_run_contract_fields
+
 
 def merge_quality_facts(
     quality_config: QualityRuntimeConfig,
@@ -20,6 +22,7 @@ def merge_quality_facts(
     junit_files: tuple[Path | None, ...],
 ) -> QualityMergeResult | None:
     try:
+        contract = quality_run_contract_fields()
         return merge_quality_run(
             QualityMergeRequest(
                 run_id=str(quality_config.run_id),
@@ -30,6 +33,7 @@ def merge_quality_facts(
                     path for path in junit_files if path is not None
                 ),
                 run_start_time=start_time,
+                **contract,
             )
         )
     except Exception as error:

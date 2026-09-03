@@ -31,6 +31,11 @@ def run(
         print(f"Invalid pytest arguments: {error}", file=sys.stderr)
         return pytest_execution.PYTEST_EXIT_USAGE_ERROR
 
+    quality_run_lifecycle = quality_lifecycle.create_quality_run_lifecycle()
+    quality_start_time = datetime.now(UTC)
+    quality_run_lifecycle.prepare(quality_start_time)
+    collection_started_at = datetime.now(UTC)
+
     try:
         collection = pytest_execution.collect_test_case_items(
             test_path,
@@ -42,6 +47,7 @@ def run(
             f"{type(error).__name__}: {error}",
             file=sys.stderr,
         )
+        quality_run_lifecycle.record_collection_failure()
         return pytest_execution.PYTEST_EXIT_TESTS_FAILED
 
     if collection.raw_pytest_exit_code != pytest_execution.PYTEST_EXIT_OK:
@@ -52,6 +58,7 @@ def run(
                 pytest_execution.format_collection_error(collection),
                 file=sys.stderr,
             )
+        quality_run_lifecycle.record_collection_failure()
         final_exit_code = collection.raw_pytest_exit_code
         if not argument_plan.collect_only:
             final_exit_code = _write_execution_result(
@@ -72,10 +79,18 @@ def run(
     parallel_cases, serial_cases = scheduling.split_test_cases(
         cases, serial_marker=serial_marker
     )
+    quality_run_lifecycle.prepare_flaky_decisions(
+        cases,
+        parallel_nodeids=parallel_cases,
+        serial_nodeids=serial_cases,
+        collection_started_at=collection_started_at,
+        all_serial=not bool(numprocesses),
+    )
     if argument_plan.collect_only:
         print(f"Parallel pool cases: {len(parallel_cases)}")
         print(f"Serial pool cases: {len(serial_cases)}")
         print(f"{len(cases)} tests collected")
+        quality_run_lifecycle.finalize_flaky_collect_only()
         return pytest_execution.PYTEST_EXIT_OK
 
     allure_lifecycle = pytest_execution.AllureRunLifecycle(
@@ -88,10 +103,6 @@ def run(
         pooled=True,
     )
     allure_lifecycle.prepare()
-
-    quality_run_lifecycle = quality_lifecycle.create_quality_run_lifecycle()
-    quality_start_time = datetime.now(UTC)
-    quality_run_lifecycle.prepare(quality_start_time)
 
     pool_results: list[pytest_execution.PoolExecutionResult] = []
     final_status = quality_lifecycle.RunLifecycleStatus.FINISHED

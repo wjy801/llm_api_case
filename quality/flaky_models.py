@@ -7,14 +7,16 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from quality.flaky_identity import (
+    FLAKY_ENVIRONMENT_RULE_VERSION,
+    FLAKY_EXECUTION_PROFILE_RULE_VERSION,
+    FLAKY_IDENTITY_RULE_VERSION,
+)
 from quality.models import CasePhase, CaseStatus, IssueSeverity
 
 
 FLAKY_IMPORT_SCHEMA_VERSION = "quality.flaky-import.v1"
 FLAKY_IMPORTER_VERSION = "p1-flaky-import.v1"
-FLAKY_IDENTITY_RULE_VERSION = "flaky-identity.v1"
-FLAKY_ENVIRONMENT_RULE_VERSION = "flaky-environment.v1"
-FLAKY_EXECUTION_PROFILE_RULE_VERSION = "flaky-execution-profile.v1"
 FLAKY_OBSERVATION_RULE_VERSION = "flaky-observation.v1"
 FLAKY_EVALUATION_SCHEMA_VERSION = "quality.flaky-evaluation.v1"
 FLAKY_STATE_RULE_VERSION = "flaky-state.v1"

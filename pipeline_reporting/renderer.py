@@ -72,6 +72,7 @@ def render_pipeline_summary(report: PipelineReport) -> str:
         lines.extend(_retry_section(report))
         lines.extend(_timing_section(report))
         lines.extend(_flaky_section(report))
+        lines.extend(_shadow_section(report))
     lines.extend(
         [
             "## 建议动作",
@@ -273,6 +274,53 @@ def _flaky_section(report: PipelineReport) -> list[str]:
                 _table(
                     ("用例", "变化"),
                     tuple((item.case_id, item.change) for item in value.actionable_changes),
+                ),
+                "",
+            ]
+        )
+    return lines
+
+
+def _shadow_section(report: PipelineReport) -> list[str]:
+    value = report.shadow
+    lines = ["## Flaky Shadow 决策", ""]
+    if not value.available:
+        error_code = value.error_code or "decision_artifact_unknown"
+        return [
+            *lines,
+            f"状态：{value.integrity_status}（决策产物不可用，错误码："
+            f"`{_md(error_code)}`）。",
+            "",
+        ]
+    lines.extend(
+        [
+            f"模式：`{_md(value.mode_requested or 'UNKNOWN')}` → "
+            f"`{_md(value.mode_effective or 'UNKNOWN')}`",
+            f"核对：`{_md(value.reconciliation_status or 'UNKNOWN')}`",
+            "",
+            _table(
+                ("RUN", "WOULD_SKIP", "实际治理 Skip", "Fail-open", "完整性"),
+                (
+                    (
+                        str(value.run_count),
+                        str(value.would_skip_count),
+                        "0",
+                        str(value.fail_open_count),
+                        value.integrity_status,
+                    ),
+                ),
+            ),
+            "",
+        ]
+    )
+    if value.error_code:
+        lines.extend([f"错误码：`{_md(value.error_code)}`", ""])
+    if value.reason_counts:
+        lines.extend(
+            [
+                _table(
+                    ("决策原因", "数量"),
+                    tuple((reason, str(count)) for reason, count in value.reason_counts),
                 ),
                 "",
             ]

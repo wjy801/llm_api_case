@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from quality.flaky_models import (
     FlakyStateRecord,
@@ -24,6 +25,16 @@ class StoreInitialization:
     quick_check: str
     migration_applied: bool
     backup_created: bool
+
+
+@dataclass(frozen=True)
+class StoreMigrationResult:
+    previous_schema_version: int
+    schema_version: int
+    migration_applied: bool
+    backup_path: Path | None
+    quick_check: str
+    checksums: dict[int, str]
 
 
 @dataclass(frozen=True)

@@ -60,13 +60,19 @@ def load_sources(run_id: str, output_dir: Path) -> MetricsSources:
         )
 
     p0_manifest = read_json_object(p0_manifest_path, "p0_manifest_invalid")
+    p0_schema_version = run.schema_version
+    p0_manifest_version = (
+        "quality.merge.v1"
+        if p0_schema_version == "quality.v1"
+        else P0_MANIFEST_VERSION
+    )
     require_manifest(
         p0_manifest,
         run_id=run_id,
         status="complete",
         versions={
-            "manifest_version": P0_MANIFEST_VERSION,
-            "schema_version": SCHEMA_VERSION,
+            "manifest_version": p0_manifest_version,
+            "schema_version": p0_schema_version,
         },
         code_prefix="p0",
     )
@@ -172,14 +178,14 @@ def load_sources(run_id: str, output_dir: Path) -> MetricsSources:
             p0_manifest=ArtifactEvidence(
                 path=relative_artifact_path(p0_manifest_path, output_dir),
                 sha256=p0_manifest_hash,
-                schema_version=SCHEMA_VERSION,
-                manifest_version=P0_MANIFEST_VERSION,
+                schema_version=p0_schema_version,
+                manifest_version=p0_manifest_version,
                 merge_version=str(p0_manifest.get("merge_version") or "unknown"),
             ),
             p0_request_metrics=ArtifactEvidence(
                 path=relative_artifact_path(request_metrics_path, output_dir),
                 sha256=p0_request_hash,
-                schema_version=SCHEMA_VERSION,
+                schema_version=p0_schema_version,
             ),
             semantic_manifest=ArtifactEvidence(
                 path=relative_artifact_path(semantic_manifest_path, output_dir),

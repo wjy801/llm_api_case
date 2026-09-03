@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><title>Flaky 治理列表</title>
+{% if csrf_token %}<meta name="flaky-probe-csrf" content="{{ csrf_token }}">{% endif %}
+</head>
+<body>
+<h1>Flaky 治理列表</h1><p>数据时间：{{ page.data_as_of }}</p>
+<p><strong>匿名触发风险：</strong>此页面没有用户身份或审批能力；触发者统一记录为 dashboard-anonymous。</p>
+<table><thead><tr><th>Case</th><th>检测</th><th>治理</th><th>Owner</th><th>到期</th><th>恢复验证</th></tr></thead><tbody>
+{% for item in page.items %}<tr><td><a href="/cases/{{ item.flaky_key }}">{{ item.case_id }}</a></td><td>{% if item.detection_projections %}{% for projection in item.detection_projections %}{{ projection.detection_state }}{% if projection.detection_state == 'STABLE' %}（{% if projection.stable_outcome == 'pass' %}稳定通过{% else %}稳定失败{% endif %}）{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}UNOBSERVED{% endif %}</td><td>{{ item.governance_status }}</td><td>{{ item.owner }}</td><td>{{ item.expires_at }}{% if item.overdue %}（OVERDUE）{% endif %}</td><td>{% if probe_enabled and item.governance_status == 'ACTIVE' %}<button type="button" data-probe-governance="{{ item.governance_id }}" data-row-version="{{ item.row_version }}">触发 Probe</button>{% else %}不可触发{% endif %}</td></tr>{% endfor %}
+</tbody></table>{% if page.next_cursor %}<p>下一页游标：{{ page.next_cursor }}</p>{% endif %}
+{% if csrf_token %}<script>
+document.querySelectorAll('[data-probe-governance]').forEach((button) => button.addEventListener('click', async () => {
+  const reason = window.prompt('请输入恢复验证原因（1-500 字）');
+  if (!reason) return;
+  const requestId = crypto.randomUUID();
+  const csrf = document.querySelector('meta[name="flaky-probe-csrf"]').content;
+  const response = await fetch(`/api/v1/governances/${encodeURIComponent(button.dataset.probeGovernance)}/probe-attempts`, {
+    method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+    body: JSON.stringify({reason, row_version: Number(button.dataset.rowVersion), request_id: requestId})
+  });
+  window.alert(response.ok ? 'Probe 已创建' : 'Probe 创建失败');
+}));
+</script>{% endif %}
+</body></html>

@@ -7,8 +7,15 @@ import sqlite3
 from typing import Sequence
 
 from . import backup
-from .contracts import FlakyStoreError, Migration, StoreInitialization
+from .contracts import (
+    DEFAULT_BUSY_TIMEOUT_MS,
+    FlakyStoreError,
+    Migration,
+    StoreInitialization,
+    StoreMigrationResult,
+)
 from .repository import FlakyRepository, quick_check, utc_text
+from .writer_lock import database_writer_lock
 
 
 MIGRATIONS_DIRECTORY = Path(__file__).resolve().parent / "migrations"
@@ -103,7 +110,7 @@ def apply_migrations(
         ) from error
 
 
-def initialize_store(
+def validate_store_schema(
     connection: sqlite3.Connection,
     repository: FlakyRepository,
     migrations_directory: Path,
@@ -113,17 +120,166 @@ def initialize_store(
     applied = repository.read_applied_migrations(connection)
     validate_applied_migrations(applied, migrations)
     pending = [migration for migration in migrations if migration.version not in applied]
-    backup_created = False
     if pending:
-        backup.create_pre_migration_backup(connection, repository)
-        backup_created = True
-        apply_migrations(connection, pending)
-        applied = repository.read_applied_migrations(connection)
-        validate_applied_migrations(applied, migrations)
-        check = quick_check(connection)
+        raise FlakyStoreError(
+            "schema_migration_required",
+            f"database schema requires migration {pending[0].version}",
+        )
     return StoreInitialization(
         schema_version=max(applied, default=0),
         quick_check=check,
-        migration_applied=bool(pending),
-        backup_created=backup_created,
+        migration_applied=False,
+        backup_created=False,
     )
+
+
+def initialize_store(
+    connection: sqlite3.Connection,
+    repository: FlakyRepository,
+    migrations_directory: Path,
+) -> StoreInitialization:
+    """Compatibility name for runtime validation; it never applies migrations."""
+    return validate_store_schema(connection, repository, migrations_directory)
+
+
+def migrate_store(
+    database_path: str | Path,
+    *,
+    busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
+    migrations_directory: str | Path = MIGRATIONS_DIRECTORY,
+) -> StoreMigrationResult:
+    path = Path(database_path)
+    if not path.is_absolute():
+        raise FlakyStoreError(
+            "invalid_database_path",
+            "Flaky history database path must be absolute",
+        )
+    repository = FlakyRepository(path, busy_timeout_ms=busy_timeout_ms)
+    repository.validate_path(require_existing=False)
+    directory = Path(migrations_directory)
+    with database_writer_lock(path, timeout_ms=busy_timeout_ms):
+        with repository.connection(require_existing=False) as connection:
+            check = quick_check(connection)
+            migrations = load_migrations(directory)
+            applied = repository.read_applied_migrations(connection)
+            validate_applied_migrations(applied, migrations)
+            previous = max(applied, default=0)
+            pending = tuple(
+                migration for migration in migrations if migration.version not in applied
+            )
+            backup_path: Path | None = None
+            if pending:
+                _preflight_v3_migration(repository, connection, previous, pending)
+                _preflight_v4_migration(repository, connection, previous, pending)
+                backup_path = backup.create_pre_migration_backup(connection, repository)
+                apply_migrations(connection, pending)
+                applied = repository.read_applied_migrations(connection)
+                validate_applied_migrations(applied, migrations)
+                check = quick_check(connection)
+            return StoreMigrationResult(
+                previous_schema_version=previous,
+                schema_version=max(applied, default=0),
+                migration_applied=bool(pending),
+                backup_path=backup_path,
+                quick_check=check,
+                checksums=dict(sorted(applied.items())),
+            )
+
+
+def _preflight_v3_migration(
+    repository: FlakyRepository,
+    connection: sqlite3.Connection,
+    previous_version: int,
+    pending: Sequence[Migration],
+) -> None:
+    if not any(migration.version == 3 for migration in pending):
+        return
+    if previous_version >= 2:
+        _validate_v2_for_v3(connection)
+        return
+
+    with repository.in_memory_copy(connection) as preflight:
+        prerequisites = tuple(
+            migration for migration in pending if migration.version < 3
+        )
+        apply_migrations(preflight, prerequisites)
+        _validate_v2_for_v3(preflight)
+
+
+def _validate_v2_for_v3(connection: sqlite3.Connection) -> None:
+    identities: dict[str, tuple[object, ...]] = {}
+    rows = connection.execute(
+        """
+        SELECT flaky_key, epoch_scope_key, case_id, param_hash,
+               environment, execution_profile, state_epoch
+        FROM case_observation
+        UNION ALL
+        SELECT flaky_key, epoch_scope_key, case_id, param_hash,
+               environment, execution_profile, state_epoch
+        FROM flaky_state
+        """
+    ).fetchall()
+    for row in rows:
+        key = str(row["flaky_key"])
+        identity = tuple(row[index] for index in range(1, 7))
+        previous = identities.setdefault(key, identity)
+        if previous != identity:
+            raise FlakyStoreError(
+                "migration_identity_conflict",
+                f"v2 flaky_key {key!r} maps to conflicting identities",
+            )
+    orphan = connection.execute(
+        """
+        SELECT governance.governance_id
+        FROM flaky_governance AS governance
+        LEFT JOIN flaky_state AS state ON state.flaky_key = governance.flaky_key
+        LEFT JOIN case_observation AS observation
+          ON observation.flaky_key = governance.flaky_key
+        WHERE state.flaky_key IS NULL AND observation.flaky_key IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan is not None:
+        raise FlakyStoreError(
+            "migration_orphan_governance",
+            f"v2 governance {orphan['governance_id']!r} has no resolvable identity",
+        )
+
+
+def _preflight_v4_migration(
+    repository: FlakyRepository,
+    connection: sqlite3.Connection,
+    previous_version: int,
+    pending: Sequence[Migration],
+) -> None:
+    """Refuse to guess whether a legacy local Probe was externally dispatched."""
+    if not any(migration.version == 4 for migration in pending):
+        return
+    if previous_version >= 3:
+        _validate_v3_for_v4(connection)
+        return
+
+    with repository.in_memory_copy(connection) as preflight:
+        prerequisites = tuple(
+            migration for migration in pending if migration.version < 4
+        )
+        apply_migrations(preflight, prerequisites)
+        _validate_v3_for_v4(preflight)
+
+
+def _validate_v3_for_v4(connection: sqlite3.Connection) -> None:
+    live = connection.execute(
+        """
+        SELECT attempt.attempt_id
+        FROM flaky_verification_attempt AS attempt
+        LEFT JOIN flaky_probe_trigger AS trigger USING (attempt_id)
+        WHERE attempt.status IN ('ACTIVE', 'READY_TO_CLOSE')
+           OR trigger.status = 'PENDING'
+        LIMIT 1
+        """
+    ).fetchone()
+    if live is not None:
+        raise FlakyStoreError(
+            "migration_live_probe_attempt",
+            "cancel every legacy live Probe attempt before applying migration 0004",
+        )

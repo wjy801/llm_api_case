@@ -2,6 +2,8 @@ import sqlite3
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("legacy_flaky_runtime")
+
 from quality.flaky_importer import (
     build_epoch_scope_key,
     check_flaky_database,
@@ -23,7 +25,7 @@ def _request(artifacts, database):
     )
 
 
-def test_first_import_applies_current_schema_atomically_and_creates_valid_backup(
+def test_explicitly_migrated_legacy_fixture_imports_without_runtime_migration(
     p0_artifact_factory,
     tmp_path,
 ):
@@ -35,8 +37,8 @@ def test_first_import_applies_current_schema_atomically_and_creates_valid_backup
 
     assert result.status is FlakyImportStatus.IMPORTED
     assert result.inserted_count == 1
-    assert result.migration_applied is True
-    assert result.backup_created is True
+    assert result.migration_applied is False
+    assert result.backup_created is False
     assert check.schema_version == 2
     assert check.quick_check == "ok"
     assert check.run_count == 1

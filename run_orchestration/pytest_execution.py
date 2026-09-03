@@ -198,16 +198,37 @@ class _CaseCollector:
         self.duplicate_nodeids: set[str] = set()
 
     def pytest_collection_finish(self, session: pytest.Session) -> None:
+        from quality.pytest_identity import build_pytest_item_identity
+
         seen: set[str] = set()
         for item in session.items:
             if item.nodeid in seen:
                 self.duplicate_nodeids.add(item.nodeid)
                 continue
             seen.add(item.nodeid)
+            try:
+                identity = build_pytest_item_identity(item, session.config.rootpath)
+            except Exception:
+                # Collection is a public Runner capability and may be used for
+                # an explicitly selected file outside pytest's repository
+                # root.  Such a case cannot participate in flaky governance,
+                # but it must still be collected and executed fail-open.
+                self.items.append(
+                    CollectedTestCase(
+                        nodeid=item.nodeid,
+                        markers=frozenset(
+                            marker.name for marker in item.iter_markers()
+                        ),
+                    )
+                )
+                continue
             self.items.append(
                 CollectedTestCase(
                     nodeid=item.nodeid,
                     markers=frozenset(marker.name for marker in item.iter_markers()),
+                    case_id=identity.case_id,
+                    param_hash=identity.param_hash,
+                    normalized_case_path=identity.normalized_case_path,
                 )
             )
 

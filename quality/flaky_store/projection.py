@@ -8,7 +8,6 @@ from quality.flaky import (
     DEFAULT_FLAKY_RULE_CONFIG,
     build_transition_id,
     derive_evidence_window,
-    evaluate_recovery,
     replay_observations,
 )
 from quality.flaky_models import (
@@ -20,8 +19,6 @@ from quality.flaky_models import (
     FlakyState,
     FlakyStateRecord,
     FlakyTransitionRecord,
-    GovernanceResolution,
-    GovernanceStatus,
     ObservationOutcome,
     ProjectionStatus,
     TransitionTrigger,
@@ -221,61 +218,8 @@ def build_projection_plan(
         existing.evaluation_anchor_observation_id if existing is not None else None
     )
     reason_code: str | None = None
-    close_governance_id: str | None = None
-    governance_resolution: GovernanceResolution | None = None
 
-    open_governance = repository.open_governance(connection, flaky_key)
-    if open_governance is not None and open_governance.status is GovernanceStatus.RECOVERING:
-        after_anchor = observations_after_anchor(
-            observations,
-            open_governance.recovery_anchor_observation_id,
-        )
-        recovery = evaluate_recovery(after_anchor, config)
-        if recovery.evidence is not None:
-            evidence = recovery.evidence
-        elif existing is not None:
-            evidence = evidence_from_state(existing, observations, config)
-        if recovery.target_state is None:
-            current_state = FlakyState.RECOVERING
-            detected_state = (
-                existing.detected_state if existing is not None else FlakyState.CONFIRMED
-            )
-            stable_outcome = existing.stable_outcome if existing is not None else None
-            stable_failure_id = (
-                existing.stable_failure_id if existing is not None else None
-            )
-        else:
-            current_state = recovery.target_state
-            detected_state = recovery.target_state
-            stable_outcome = recovery.stable_outcome
-            stable_failure_id = recovery.stable_failure_id
-            reason_code = recovery.reason_code
-            close_governance_id = open_governance.governance_id
-            evaluation_anchor = (
-                latest.observation_id
-                if recovery.target_state is FlakyState.STABLE
-                else existing.evaluation_anchor_observation_id
-                if existing is not None
-                else None
-            )
-            governance_resolution = (
-                GovernanceResolution.RECOVERED
-                if recovery.target_state is FlakyState.STABLE
-                else GovernanceResolution.REGRESSED
-            )
-    elif open_governance is not None:
-        current_state = FlakyState.QUARANTINED
-        detected_state = (
-            FlakyState.CONFIRMED
-            if existing is not None
-            and existing.detected_state is FlakyState.CONFIRMED
-            else automatic.detected_state
-        )
-        stable_outcome = existing.stable_outcome if existing is not None else None
-        stable_failure_id = (
-            existing.stable_failure_id if existing is not None else None
-        )
-    elif existing is not None and existing.current_state is FlakyState.CONFIRMED:
+    if existing is not None and existing.current_state is FlakyState.CONFIRMED:
         current_state = FlakyState.CONFIRMED
         detected_state = FlakyState.CONFIRMED
         stable_outcome = None
@@ -405,8 +349,8 @@ def build_projection_plan(
         state=state,
         transitions=tuple(transitions),
         changed=changed,
-        close_governance_id=close_governance_id,
-        governance_resolution=governance_resolution,
+        close_governance_id=None,
+        governance_resolution=None,
     )
 
 def write_projection_plan(
@@ -418,13 +362,6 @@ def write_projection_plan(
         repository.upsert_state(connection, plan.state)
     for transition in plan.transitions:
         repository.insert_transition(connection, transition)
-    if plan.close_governance_id is not None:
-        repository.close_recovering_governance(
-            connection,
-            plan.close_governance_id,
-            closed_at=plan.state.updated_at,
-            resolution=plan.governance_resolution.value,
-        )
 
 def transition_record(
     *,

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+import re
 from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-SCHEMA_VERSION = "quality.v1"
+SCHEMA_VERSION = "quality.v2"
+LEGACY_SCHEMA_VERSION = "quality.v1"
 
 ManualOverrideValue: TypeAlias = str | int | float | bool | None
 
@@ -16,6 +18,12 @@ class RunStatus(str, Enum):
     FINISHED = "finished"
     INTERRUPTED = "interrupted"
     PARTIAL = "partial"
+
+
+class RunKind(str, Enum):
+    NORMAL = "NORMAL"
+    FLAKY_PROBE = "FLAKY_PROBE"
+    LEGACY_UNKNOWN = "LEGACY_UNKNOWN"
 
 
 class IntegrityStatus(str, Enum):
@@ -94,7 +102,7 @@ class FrozenQualityModel(BaseModel):
 
 
 class VersionedQualityModel(FrozenQualityModel):
-    schema_version: Literal["quality.v1"] = SCHEMA_VERSION
+    schema_version: Literal["quality.v1", "quality.v2"] = SCHEMA_VERSION
 
 
 class IntegrityIssue(VersionedQualityModel):
@@ -135,13 +143,65 @@ class RunRecord(VersionedQualityModel):
     status: RunStatus
     integrity_status: IntegrityStatus
     integrity_issues: tuple[IntegrityIssue, ...] = ()
+    run_kind: RunKind | None = None
+    policy_revision: str | None = None
+    controller_commit_sha: str | None = None
+    attempt_id: str | None = None
+    trigger_id: str | None = None
+    plan_digest: str | None = None
+    round_no: int | None = Field(default=None, ge=1)
+    target_commit_sha: str | None = None
+    jenkins_job_name: str | None = None
+    jenkins_build_number: str | None = None
+    fact_schema_version: str | None = None
+    plugin_version: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _read_legacy_v1(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        if payload.get("schema_version") == LEGACY_SCHEMA_VERSION:
+            payload.update(
+                {
+                    "run_kind": RunKind.LEGACY_UNKNOWN,
+                    "policy_revision": None,
+                    "controller_commit_sha": None,
+                    "attempt_id": None,
+                    "trigger_id": None,
+                    "plan_digest": None,
+                    "round_no": None,
+                    "target_commit_sha": None,
+                    "jenkins_job_name": None,
+                    "jenkins_build_number": None,
+                    "fact_schema_version": None,
+                    "plugin_version": None,
+                }
+            )
+        return payload
 
     @field_validator("run_id", "trigger", "environment")
     @classmethod
     def _validate_required_text(cls, value: str) -> str:
         return _require_non_empty(value)
 
-    @field_validator("job_name", "build_number", "branch", "commit_sha")
+    @field_validator(
+        "job_name",
+        "build_number",
+        "branch",
+        "commit_sha",
+        "policy_revision",
+        "controller_commit_sha",
+        "attempt_id",
+        "trigger_id",
+        "plan_digest",
+        "target_commit_sha",
+        "jenkins_job_name",
+        "jenkins_build_number",
+        "fact_schema_version",
+        "plugin_version",
+    )
     @classmethod
     def _validate_optional_text(cls, value: str | None) -> str | None:
         return _optional_non_empty(value)
@@ -161,6 +221,61 @@ class RunRecord(VersionedQualityModel):
     @model_validator(mode="after")
     def _validate_time_order(self) -> RunRecord:
         _ensure_time_order(self.start_time, self.end_time)
+        if self.schema_version == LEGACY_SCHEMA_VERSION:
+            if self.run_kind is not RunKind.LEGACY_UNKNOWN:
+                raise ValueError("quality.v1 runs must map to LEGACY_UNKNOWN")
+            return self
+        if self.run_kind is None:
+            raise ValueError("quality.v2 run_kind is required")
+        if self.run_kind is RunKind.LEGACY_UNKNOWN:
+            raise ValueError("quality.v2 producers cannot write LEGACY_UNKNOWN")
+        common_required = {
+            "job_name": self.job_name,
+            "build_number": self.build_number,
+            "branch": self.branch,
+            "commit_sha": self.commit_sha,
+            "policy_revision": self.policy_revision,
+            "controller_commit_sha": self.controller_commit_sha,
+            "fact_schema_version": self.fact_schema_version,
+            "plugin_version": self.plugin_version,
+        }
+        probe_fields = {
+            "attempt_id": self.attempt_id,
+            "trigger_id": self.trigger_id,
+            "plan_digest": self.plan_digest,
+            "round_no": self.round_no,
+            "target_commit_sha": self.target_commit_sha,
+            "jenkins_job_name": self.jenkins_job_name,
+            "jenkins_build_number": self.jenkins_build_number,
+        }
+        if self.run_kind is RunKind.NORMAL:
+            present = sorted(name for name, value in probe_fields.items() if value is not None)
+            if present:
+                raise ValueError(
+                    f"NORMAL run must not contain Probe fields: {', '.join(present)}"
+                )
+            if self.commit_sha is not None:
+                _require_sha(self.commit_sha, "commit_sha")
+            if self.controller_commit_sha is not None:
+                _require_sha(self.controller_commit_sha, "controller_commit_sha")
+        else:
+            missing = sorted(
+                name for name, value in common_required.items() if value is None
+            )
+            if missing:
+                raise ValueError(
+                    f"quality.v2 run fields are required: {', '.join(missing)}"
+                )
+            missing_probe = sorted(
+                name for name, value in probe_fields.items() if value is None
+            )
+            if missing_probe:
+                raise ValueError(
+                    f"FLAKY_PROBE fields are required: {', '.join(missing_probe)}"
+                )
+            _require_sha(self.commit_sha, "commit_sha")
+            _require_sha(self.controller_commit_sha, "controller_commit_sha")
+            _require_sha(self.target_commit_sha, "target_commit_sha")
         return self
 
 
@@ -361,3 +476,12 @@ def _require_timezone(value: datetime) -> datetime:
 def _ensure_time_order(start_time: datetime, end_time: datetime | None) -> None:
     if end_time is not None and end_time < start_time:
         raise ValueError("end_time must be greater than or equal to start_time")
+
+
+_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _require_sha(value: str | None, name: str) -> str:
+    if value is None or _SHA_PATTERN.fullmatch(value) is None:
+        raise ValueError(f"{name} must be a 40-character lowercase hexadecimal SHA")
+    return value

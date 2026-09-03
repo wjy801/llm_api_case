@@ -1,0 +1,218 @@
+{
+  "schema_version": "flaky-stage0-contract.v1",
+  "run_kinds": [
+    "NORMAL",
+    "FLAKY_PROBE",
+    "LEGACY_UNKNOWN"
+  ],
+  "identity": {
+    "schema_version": "flaky-identity.v1",
+    "fields": [
+      "case_id",
+      "param_hash",
+      "environment",
+      "execution_profile",
+      "state_epoch"
+    ],
+    "environments": [
+      "china",
+      "overseas"
+    ],
+    "standard_execution_profiles": [
+      "serial",
+      "parallel",
+      "manual-serial",
+      "manual-parallel"
+    ],
+    "key_prefix": "flaky-v1-"
+  },
+  "comparability": {
+    "schema_version": "flaky-comparability.v1",
+    "fields": [
+      "configuration_revision",
+      "environment",
+      "execution_profile",
+      "sut_revision",
+      "test_definition_digest"
+    ],
+    "key_prefix": "flaky-comparability-v1-"
+  },
+  "policy": {
+    "value": {
+      "schema_version": "flaky-governance-policy.v1",
+      "normal_admission_rule_version": "flaky-normal-admission.v1",
+      "probe_evidence_rule_version": "flaky-probe-evidence.v1",
+      "skip_decision_rule_version": "flaky-skip-decision.v1",
+      "required_consecutive_passes": 5,
+      "min_interval_minutes": 30,
+      "max_attempt_age_hours": 72,
+      "max_non_counting_runs": 3,
+      "snapshot_max_age_minutes": 15,
+      "allowed_branches": [
+        "dev3"
+      ],
+      "include_path_prefixes": [
+        "module/smoke/"
+      ],
+      "exclude_path_prefixes": []
+    },
+    "revision": "sha256:54e21bd00acf350a26a9a9e13a2f748f65278c71337453a3c8806632c7e51569"
+  },
+  "normal_admission": {
+    "statuses": [
+      "ELIGIBLE",
+      "INELIGIBLE"
+    ],
+    "run_reason_codes": [
+      [10, "normal_run_kind_mismatch"],
+      [20, "normal_source_job_not_allowed"],
+      [30, "normal_branch_not_allowed"],
+      [40, "normal_environment_not_allowed"],
+      [50, "normal_execution_profile_not_allowed"],
+      [60, "normal_run_not_finished"],
+      [70, "normal_version_incompatible"],
+      [80, "normal_artifact_untrusted"],
+      [90, "normal_integrity_ineligible"],
+      [100, "normal_comparability_missing"],
+      [110, "normal_rerun_unsupported"],
+      [120, "normal_unknown_contract_value"],
+      [1000, "normal_eligible"]
+    ],
+    "case_reason_codes": [
+      [10, "case_lifecycle_invalid"],
+      [20, "case_expected_outcome_excluded"],
+      [30, "case_collection_failure"],
+      [40, "case_failure_evidence_invalid"],
+      [50, "case_infrastructure_failure"],
+      [60, "case_classification_unknown"],
+      [1000, "case_pass_eligible"],
+      [1000, "case_fail_eligible"]
+    ]
+  },
+  "probe_evidence": {
+    "classifications": [
+      "COUNT_PASS",
+      "TRUSTED_FAIL",
+      "NON_COUNTING"
+    ],
+    "reason_codes": [
+      [10, "probe_duplicate_run"],
+      [20, "probe_attempt_inactive"],
+      [30, "probe_plan_mismatch"],
+      [40, "probe_evidence_untrusted"],
+      [50, "probe_rerun_unsupported"],
+      [60, "probe_outcome_not_countable"],
+      [70, "probe_trusted_fail"],
+      [80, "probe_interval_too_short"],
+      [1000, "probe_count_pass"]
+    ]
+  },
+  "skip_decision": {
+    "schema_version": "flaky-skip-decision.v1",
+    "decisions": [
+      "RUN",
+      "WOULD_SKIP",
+      "SKIP"
+    ],
+    "governance_statuses_authorizing_skip": [
+      "ACTIVE",
+      "RECOVERING"
+    ],
+    "detected_states_not_authorizing_skip": [
+      "OBSERVING",
+      "STABLE",
+      "SUSPECTED",
+      "CONFIRMED"
+    ]
+  },
+  "current_replay_cases": [
+    {
+      "id": "R-01",
+      "signatures": ["fail:A"],
+      "expected_state": "OBSERVING",
+      "expected_stable_outcome": null,
+      "expected_transition_reasons": ["first_observation"]
+    },
+    {
+      "id": "R-02",
+      "signatures": ["fail:A", "fail:A", "fail:A"],
+      "expected_state": "STABLE",
+      "expected_stable_outcome": "fail",
+      "expected_transition_reasons": [
+        "first_observation",
+        "consistent_signature_threshold_met"
+      ]
+    },
+    {
+      "id": "R-03",
+      "signatures": ["pass", "fail:A", "fail:A", "pass"],
+      "expected_state": "CONFIRMED",
+      "expected_stable_outcome": null,
+      "expected_transition_reasons": [
+        "first_observation",
+        "outcome_changed",
+        "confirmation_threshold_met"
+      ],
+      "expected_transition_ids": [
+        "transition-v1-d14968200d91852e5beca74e8d58a421d54c94a3e06cd39f2db8e671ca8fb92d",
+        "transition-v1-086b89c9d852893fddc71713081a9e73858f1c435a5adef16fcc5d3f6826c1d6",
+        "transition-v1-09e88fd8f5d1f28b92e1de7b6822b76c8d16e17f6c0b110d0694d7297f73a33f"
+      ]
+    },
+    {
+      "id": "R-04",
+      "signatures": ["fail:A", "fail:B", "fail:A", "fail:B"],
+      "expected_state": "SUSPECTED",
+      "expected_stable_outcome": null,
+      "expected_transition_reasons": [
+        "first_observation",
+        "failure_fingerprint_changed"
+      ]
+    },
+    {
+      "id": "R-05",
+      "signatures": ["pass", "fail:A", "pass", "pass", "pass", "pass", "pass"],
+      "expected_state": "STABLE",
+      "expected_stable_outcome": "pass",
+      "expected_transition_reasons": [
+        "first_observation",
+        "outcome_changed",
+        "suspected_cleared_by_streak"
+      ]
+    },
+    {
+      "id": "R-06",
+      "signatures": ["pass", "fail:A", "fail:A", "pass", "pass", "pass", "pass", "pass"],
+      "expected_state": "CONFIRMED",
+      "expected_stable_outcome": null,
+      "expected_transition_reasons": [
+        "first_observation",
+        "outcome_changed",
+        "confirmation_threshold_met"
+      ]
+    }
+  ],
+  "future_boundary_cases": [
+    {
+      "id": "R-07",
+      "boundary": "comparability cohorts never merge",
+      "expected": "two OBSERVING projections"
+    },
+    {
+      "id": "R-08",
+      "boundary": "infrastructure failures form no observation",
+      "expected_reason": "case_infrastructure_failure"
+    },
+    {
+      "id": "R-09",
+      "boundary": "arrival order does not affect replay",
+      "source_case": "R-03",
+      "input_order": [3, 1, 4, 2]
+    },
+    {
+      "id": "R-10",
+      "boundary": "duplicate run import is idempotent",
+      "expected": "NOOP"
+    }
+  ]
+}

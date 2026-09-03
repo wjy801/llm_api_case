@@ -2,6 +2,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("legacy_flaky_runtime")
+
 from quality.flaky_importer import (
     FlakyImportError,
     fold_case_observations,

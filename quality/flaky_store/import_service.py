@@ -91,11 +91,8 @@ def materialize_observation(
     candidate: CaseObservationCandidate,
     now: datetime,
 ) -> CaseObservation:
-    from quality.flaky_importer import (
-        build_epoch_scope_key,
-        build_flaky_key,
-        build_observation_id,
-    )
+    from quality.flaky_identity import build_epoch_scope_key, build_flaky_key
+    from quality.flaky_importer import build_observation_id
 
     epoch_scope_key = build_epoch_scope_key(
         candidate.case_id,

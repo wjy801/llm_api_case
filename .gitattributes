@@ -1,1 +1,5 @@
 tests/quality/fixtures/** text eol=lf
+quality/flaky_store/migrations/0001_observation_store.sql text eol=crlf
+quality/flaky_store/migrations/0002_flaky_state_machine.sql text eol=crlf
+quality/flaky_store/migrations/0003_v3_state_machine.sql text eol=lf
+quality/flaky_store/migrations/0004_probe_dispatch.sql text eol=lf
